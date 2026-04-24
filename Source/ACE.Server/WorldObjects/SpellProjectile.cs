@@ -841,6 +841,12 @@ namespace ACE.Server.WorldObjects
                     percent = damage / target.Health.MaxValue;
                 }
 
+                // Spell hit clears any stale split arrow kill tracking on the target
+                // Must happen before UpdateVitalDelta so the death message doesn't use the stale flag
+                target.RemoveProperty(PropertyBool.IsSplitArrowKill);
+                target.RemoveProperty(PropertyInstanceId.LastSplitArrowProjectile);
+                target.RemoveProperty(PropertyInstanceId.LastSplitArrowShooter);
+
                 amount = (uint)-target.UpdateVitalDelta(target.Health, (int)-Math.Round(damage));
                 target.DamageHistory.Add(ProjectileSource, Spell.DamageType, amount);
 
