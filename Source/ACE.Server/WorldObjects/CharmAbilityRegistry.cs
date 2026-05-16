@@ -25,7 +25,8 @@ namespace ACE.Server.WorldObjects
         public const int AsheronsFavorAbilityId   = 17;
         public const int ArtisansCharmAbilityId   = 18;
         public const int ShrapnelCharmAbilityId   = 19;
-        public const int AgonyCharmAbilityId      = 20;
+        public const int AgonyCharmAbilityId         = 20;
+        public const int ExplosiveArrowCharmAbilityId = 21;
 
         private static readonly Dictionary<int, AbilityEntry> Registry = new()
         {
@@ -34,8 +35,9 @@ namespace ACE.Server.WorldObjects
             { InfiniteCastingAbilityId, new AbilityEntry(p => p.HasInfiniteCasting, (p, v) => p.HasInfiniteCasting = v, "Infinite Casting") },
             { AsheronsFavorAbilityId,   new AbilityEntry(p => p.HasAsheronsFavor,   (p, v) => p.HasAsheronsFavor   = v, "Asheron's Favor")  },
             { ArtisansCharmAbilityId,   new AbilityEntry(p => p.HasArtisanCharm,    (p, v) => p.HasArtisanCharm    = v, "Artisan's Charm")  },
-            { ShrapnelCharmAbilityId,   new AbilityEntry(p => p.HasShrapnelCharm,   (p, v) => p.HasShrapnelCharm   = v, "Shrapnel Charm")   },
-            { AgonyCharmAbilityId,       new AbilityEntry(p => p.HasAgonyCharm,      (p, v) => p.HasAgonyCharm      = v, "Agony Charm")      },
+            { ShrapnelCharmAbilityId,      new AbilityEntry(p => p.HasShrapnelCharm,        (p, v) => p.HasShrapnelCharm        = v, "Shrapnel Charm")        },
+            { AgonyCharmAbilityId,         new AbilityEntry(p => p.HasAgonyCharm,           (p, v) => p.HasAgonyCharm           = v, "Agony Charm")           },
+            { ExplosiveArrowCharmAbilityId, new AbilityEntry(p => p.HasExplosiveArrowCharm, (p, v) => p.HasExplosiveArrowCharm = v, "Explosive Arrow Charm") },
         };
 
         /// <summary>Returns all registered ability IDs. Prefer this over hardcoded numeric ranges.</summary>
@@ -55,6 +57,8 @@ namespace ACE.Server.WorldObjects
             { 777700022, ShrapnelCharmAbilityId },
             // Agony Charm (Tier 1 only)
             { 777700023, AgonyCharmAbilityId },
+            // Explosive Arrow Charm (Tiers 1–3)
+            { 777700024, ExplosiveArrowCharmAbilityId }, { 777710005, ExplosiveArrowCharmAbilityId }, { 777720005, ExplosiveArrowCharmAbilityId },
         };
 
         /// <summary>
