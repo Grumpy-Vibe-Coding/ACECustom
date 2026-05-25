@@ -1090,6 +1090,14 @@ namespace ACE.Server.WorldObjects
 
             CreateSpellProjectiles(spell, target, weapon, isWeaponSpell, fromProc, damage);
 
+            // Shadow Clone Charm: fire additional projectiles from each clone's position.
+            // Each projectile spawns at the clone's world position and aims at the same target,
+            // giving the visual of the clone casting. ProjectileSource is overridden to the
+            // owner player so damage calculations use the player's full stats and kill XP
+            // is attributed correctly.
+            if (this is Player cloneSourcePlayer && cloneSourcePlayer.HasActiveClones)
+                cloneSourcePlayer.TryFireProjectilesFromClones(spell, target, weapon, isWeaponSpell, fromProc, damage);
+
             // For ring spells cast by a player, apply guaranteed radius-based area damage
             // unless the player has opted into Classic mode (physics collision / multi-hit).
             if (SpellProjectile.GetProjectileSpellType(spell.Id) == ProjectileSpellType.Ring

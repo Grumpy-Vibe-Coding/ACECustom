@@ -38,6 +38,13 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public bool FromProc { get; set; }
 
+        /// <summary>
+        /// True when this projectile was fired by a Shadow Clone on behalf of the owner player.
+        /// Prevents <see cref="Player_Clones.TryApplyCloneDamage"/> from being triggered a second
+        /// time on impact (which would create infinite clone chains).
+        /// </summary>
+        public bool IsCloneProjectile { get; set; } = false;
+
         public int DebugVelocity;
 
         /// <summary>
@@ -1014,7 +1021,11 @@ namespace ACE.Server.WorldObjects
                 // Shadow Clone Charm: mirror spell damage to the player's active clones.
                 // amount = actual health damage dealt (post-mana-barrier, post-modifiers).
                 // Only mirrors PvE hits; targetPlayer == null guard prevents PvP duplication.
-                if (amount > 0 && targetPlayer == null && sourcePlayer != null && sourcePlayer.HasShadowCloneCharm)
+                // Shadow Clone Charm: mirror spell damage — only for the player's own projectile.
+                // Clone-fired projectiles (IsCloneProjectile) already carry their own damage and
+                // must NOT re-trigger this or we'd get an exponential chain.
+                if (amount > 0 && targetPlayer == null && sourcePlayer != null
+                    && sourcePlayer.HasShadowCloneCharm && !IsCloneProjectile)
                     sourcePlayer.TryApplyCloneDamage(target, (float)amount, Spell.DamageType);
 
                 //if (targetPlayer != null && targetPlayer.Fellowship != null)

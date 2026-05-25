@@ -117,6 +117,47 @@ namespace ACE.Server.WorldObjects
                 clone.DealCloneDamage(target, damage, damageType);
         }
 
+        // ── War spell (projectile) mirroring ─────────────────────────────────
+        /// <summary>
+        /// Called from <see cref="WorldObject_Magic.HandleCastSpell_Projectile"/> after the
+        /// player's own projectile is launched.  Fires an identical spell projectile from
+        /// each active clone's position so the bolts visually originate from the clones.
+        ///
+        /// <para>After each projectile is created by the clone (so physics origin and aim
+        /// direction are computed from the clone's position), <see cref="SpellProjectile.ProjectileSource"/>
+        /// is overridden to the owner player so damage calculations, kill XP, and DamageHistory
+        /// attribution all use the player's full stats.</para>
+        ///
+        /// <para><see cref="SpellProjectile.IsCloneProjectile"/> is set to <c>true</c> so
+        /// <see cref="TryApplyCloneDamage"/> is NOT triggered a second time when these
+        /// projectiles hit, which would otherwise create an exponential damage chain.</para>
+        /// </summary>
+        public void TryFireProjectilesFromClones(Spell spell, WorldObject target, WorldObject weapon, bool isWeaponSpell, bool fromProc, uint lifeProjectileDamage)
+        {
+            if (!HasShadowCloneCharm || _activeClones.Count == 0) return;
+            if (target == null || target.Location == null) return;
+
+            foreach (var clone in _activeClones)
+            {
+                if (clone.CurrentLandblock == null) continue;
+
+                // CreateSpellProjectiles called on the clone so that:
+                //   • casterLoc / PhysicsObj.Position  = clone's actual world position
+                //   • velocity direction               = clone → target (correct aim)
+                //   • ProjectileSource                 = clone (overridden below)
+                var projs = clone.CreateSpellProjectiles(spell, target, weapon, isWeaponSpell, fromProc, lifeProjectileDamage);
+                if (projs == null) continue;
+
+                foreach (var proj in projs)
+                {
+                    // Re-attribute to the owner so kill XP / DamageHistory go to the right player.
+                    proj.ProjectileSource = this;
+                    // Mark so the SpellProjectile.DamageTarget hook doesn't spawn more clones.
+                    proj.IsCloneProjectile = true;
+                }
+            }
+        }
+
         // ── Self-buff mirroring ───────────────────────────────────────────────
         /// <summary>
         /// Called when the player casts a beneficial non-projectile spell on
