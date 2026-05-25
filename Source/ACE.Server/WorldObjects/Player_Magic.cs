@@ -1379,6 +1379,12 @@ namespace ACE.Server.WorldObjects
 
                     HandleCastSpell(spell, target, itemCaster, caster, isWeaponSpell);
 
+                    // Shadow Clone Charm: mirror beneficial self-targeted spells to active clones.
+                    // Harmful, projectile, and other-targeted casts are excluded here — the projectile
+                    // path is already handled in SpellProjectile.cs (damage mirroring).
+                    if (HasActiveClones && target == this && spell.IsBeneficial && !spell.IsProjectile)
+                        TryMirrorSelfSpellToClones(spell);
+
                     if (!spell.IsProjectile)
                     {
                         if (spell.IsHarmful)

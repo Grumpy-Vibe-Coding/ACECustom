@@ -117,6 +117,40 @@ namespace ACE.Server.WorldObjects
                 clone.DealCloneDamage(target, damage, damageType);
         }
 
+        // ── Self-buff mirroring ───────────────────────────────────────────────
+        /// <summary>
+        /// Called when the player casts a beneficial non-projectile spell on
+        /// themselves while the Shadow Clone Charm is active.
+        ///
+        /// For <see cref="SpellType.Enchantment"/> spells (attribute/skill buffs,
+        /// protection spells, etc.) the enchantment is applied directly to each
+        /// clone so it receives the buff aura visuals and is formally buffed.
+        ///
+        /// For all other spell types (e.g. <see cref="SpellType.Boost"/> heals)
+        /// only the spell particle effect is replayed on the clone — clones have
+        /// no vitals so there is nothing to restore.
+        /// </summary>
+        public void TryMirrorSelfSpellToClones(Spell spell)
+        {
+            if (!HasShadowCloneCharm || _activeClones.Count == 0) return;
+
+            var weapon = GetEquippedWand();
+
+            foreach (var clone in _activeClones)
+            {
+                // Play the landing particle effect on the clone (the "buff lands" visual).
+                DoSpellEffects(spell, this, clone);
+
+                // For Enchantment-type buffs, actually apply the enchantment to the clone.
+                // This makes the clone glow with buff particles and have the enchantment on record.
+                if (spell.MetaSpellType == SpellType.Enchantment ||
+                    spell.MetaSpellType == SpellType.FellowEnchantment)
+                {
+                    CreateEnchantment(clone, this, weapon, spell);
+                }
+            }
+        }
+
         // ── Animation mirroring ───────────────────────────────────────────────
         /// <summary>
         /// Overrides <see cref="WorldObject.EnqueueBroadcastMotion"/> so that
