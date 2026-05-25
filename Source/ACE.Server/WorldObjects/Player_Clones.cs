@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
 
 using ACE.Database;
 using ACE.Entity;
@@ -123,42 +125,114 @@ namespace ACE.Server.WorldObjects
         // ── War spell (projectile) mirroring ─────────────────────────────────
         /// <summary>
         /// Called from <see cref="WorldObject_Magic.HandleCastSpell_Projectile"/> after the
-        /// player's own projectile is launched.  Fires an identical spell projectile from
-        /// each active clone's position so the bolts visually originate from the clones.
+        /// player's own projectile is launched.
         ///
-        /// <para>After each projectile is created by the clone (so physics origin and aim
-        /// direction are computed from the clone's position), <see cref="SpellProjectile.ProjectileSource"/>
-        /// is overridden to the owner player so damage calculations, kill XP, and DamageHistory
-        /// attribution all use the player's full stats.</para>
+        /// <para><b>Target selection (Penta Cast style):</b> each clone picks a
+        /// <em>different</em> living enemy within 25 m of the player, sorted by distance.
+        /// If fewer unique targets exist than clones, remaining clones fall back to the
+        /// player's primary target.</para>
         ///
-        /// <para><see cref="SpellProjectile.IsCloneProjectile"/> is set to <c>true</c> so
-        /// <see cref="TryApplyCloneDamage"/> is NOT triggered a second time when these
-        /// projectiles hit, which would otherwise create an exponential damage chain.</para>
+        /// <para><b>Physics position fix:</b> <see cref="WorldObject.Location"/> (the
+        /// visual/DB position) and <c>PhysicsObj.Position</c> (used for origin + velocity
+        /// math inside <see cref="WorldObject.CreateSpellProjectiles"/>) are not
+        /// automatically kept in sync for ethereal WorldObjects.  We sync them
+        /// immediately before each clone fires so the bolt spawns at the correct world
+        /// position and aims correctly at the chosen target.</para>
+        ///
+        /// <para><see cref="SpellProjectile.IsCloneProjectile"/> prevents the
+        /// <see cref="TryApplyCloneDamage"/> hook from triggering again on clone hits,
+        /// which would create an exponential damage chain.</para>
         /// </summary>
         public void TryFireProjectilesFromClones(Spell spell, WorldObject target, WorldObject weapon, bool isWeaponSpell, bool fromProc, uint lifeProjectileDamage)
         {
             if (!HasShadowCloneCharm || _activeClones.Count == 0) return;
             if (target == null || target.Location == null) return;
 
-            foreach (var clone in _activeClones)
+            // Build a list of alternative targets — one per clone (Penta Cast approach).
+            // Excludes the player's primary target since the player already hits it.
+            var altTargets = GetNearbyCloneTargets(target, _activeClones.Count, spell);
+
+            for (int i = 0; i < _activeClones.Count; i++)
             {
+                var clone = _activeClones[i];
                 if (clone.CurrentLandblock == null) continue;
 
-                // CreateSpellProjectiles called on the clone so that:
-                //   • casterLoc / PhysicsObj.Position  = clone's actual world position
-                //   • velocity direction               = clone → target (correct aim)
-                //   • ProjectileSource                 = clone (overridden below)
-                var projs = clone.CreateSpellProjectiles(spell, target, weapon, isWeaponSpell, fromProc, lifeProjectileDamage);
+                // Pick a unique target for this clone; fallback to player's target.
+                var cloneTarget = (i < altTargets.Count) ? (WorldObject)altTargets[i] : target;
+                if (cloneTarget.Location == null) continue;
+
+                // ── Physics position fix ──────────────────────────────────────────
+                // Setting WorldObject.Location only updates the DB cache + client packet.
+                // PhysicsObj.Position (used by CreateSpellProjectiles for spawn origin
+                // and velocity direction) is NOT updated automatically for ethereal
+                // WorldObjects. Sync it now so the bolt flies from the right place.
+                SyncClonePhysicsPosition(clone);
+
+                var projs = clone.CreateSpellProjectiles(spell, cloneTarget, weapon, isWeaponSpell, fromProc, lifeProjectileDamage);
                 if (projs == null) continue;
 
                 foreach (var proj in projs)
                 {
-                    // Re-attribute to the owner so kill XP / DamageHistory go to the right player.
-                    proj.ProjectileSource = this;
-                    // Mark so the SpellProjectile.DamageTarget hook doesn't spawn more clones.
-                    proj.IsCloneProjectile = true;
+                    proj.ProjectileSource = this;  // attribute damage/XP to the player
+                    proj.IsCloneProjectile = true; // prevent recursive clone chain
                 }
             }
+        }
+
+        /// <summary>
+        /// Gathers up to <paramref name="count"/> living enemies within 25 m of the
+        /// player, excluding <paramref name="primaryTarget"/> (which the player already
+        /// hits).  Sorted by distance from the player (closest first).
+        /// Mirrors the Penta Cast Charm's candidate-gathering logic.
+        /// </summary>
+        private List<Creature> GetNearbyCloneTargets(WorldObject primaryTarget, int count, Spell spell)
+        {
+            var results = new List<Creature>();
+            var landblock = CurrentLandblock;
+            if (landblock == null || Location == null) return results;
+
+            var allObjects = new List<WorldObject>();
+            allObjects.AddRange(landblock.GetWorldObjectsForPhysicsHandling());
+            foreach (var adj in landblock.Adjacents)
+                if (adj != null) allObjects.AddRange(adj.GetWorldObjectsForPhysicsHandling());
+
+            var uniqueObjects = allObjects.GroupBy(o => o.Guid).Select(g => g.First());
+            var playerGlobal  = Location.ToGlobal(false);
+
+            var candidates = new List<(Creature creature, float dist)>();
+
+            foreach (var obj in uniqueObjects)
+            {
+                if (obj is not Creature creature) continue;
+                if (creature == (Creature)(WorldObject)this) continue;       // skip self
+                if (creature.Guid == primaryTarget.Guid) continue;           // player hits this one
+                if (!creature.IsAlive) continue;
+                if (creature.Location == null) continue;
+                if (!CanDamage(creature)) continue;
+                if (CheckPKStatusVsTarget(creature, spell) != null) continue;
+
+                var dist = Vector3.Distance(playerGlobal, creature.Location.ToGlobal(false));
+                if (dist > 25.0f) continue;
+
+                candidates.Add((creature, dist));
+            }
+
+            candidates.Sort((a, b) => a.dist.CompareTo(b.dist));
+            return candidates.Take(count).Select(c => c.creature).ToList();
+        }
+
+        /// <summary>
+        /// Synchronises a clone's <c>PhysicsObj.Position</c> with its current visual
+        /// <see cref="WorldObject.Location"/> so that <see cref="WorldObject.CreateSpellProjectiles"/>
+        /// uses the correct origin and velocity direction when fired from the clone.
+        /// </summary>
+        private static void SyncClonePhysicsPosition(PlayerClone clone)
+        {
+            if (clone.PhysicsObj?.Position == null || clone.Location == null) return;
+
+            clone.PhysicsObj.Position.ObjCellID        = clone.Location.Cell;
+            clone.PhysicsObj.Position.Frame.Origin      = clone.Location.Pos;
+            clone.PhysicsObj.Position.Frame.Orientation = clone.Location.Rotation;
         }
 
         // ── Self-buff mirroring ───────────────────────────────────────────────
