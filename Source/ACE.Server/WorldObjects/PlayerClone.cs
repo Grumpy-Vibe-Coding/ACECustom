@@ -106,6 +106,11 @@ namespace ACE.Server.WorldObjects
             if (Owner == null || Owner.Location == null || CurrentLandblock == null)
                 return;
 
+            // Mirror the owner's motion state so the clone plays walk/run/combat
+            // animations instead of sliding between position updates.
+            if (Owner.CurrentMotionState != null)
+                EnqueueBroadcastMotion(Owner.CurrentMotionState);
+
             var newPos = CalculateOffsetPosition();
             if (newPos == null) return;
 
@@ -147,12 +152,11 @@ namespace ACE.Server.WorldObjects
         /// <paramref name="target"/>, attributed to the owner so kill XP and
         /// DamageHistory credit flows to the correct player.
         ///
-        /// Should only be called from <see cref="Player_Clones.TryApplyCloneDamage"/>,
-        /// which guards against PvP, dead targets, and inactive clones.
+        /// Should only be called from <see cref="Player_Clones.TryApplyCloneDamage"/>.
         /// </summary>
         public void DealCloneDamage(Creature target, float damage, DamageType damageType)
         {
-            if (target == null || !target.IsAlive || Owner == null || CurrentLandblock == null)
+            if (target == null || !target.IsAlive || Owner == null)
                 return;
 
             // Round to a minimum of 1 to match normal attack behaviour.
