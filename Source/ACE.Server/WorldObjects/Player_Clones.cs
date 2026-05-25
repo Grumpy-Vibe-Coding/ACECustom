@@ -36,7 +36,7 @@ namespace ACE.Server.WorldObjects
 
         // ── Spawn / Despawn ───────────────────────────────────────────────────
         /// <summary>
-        /// Spawns two ethereal clones (left and right) flanking the player.
+        /// Spawns four ethereal clones at the diagonal corners around the player.
         /// Any previously active clones are removed first.
         /// Called when the Shadow Clone Charm is activated.
         /// </summary>
@@ -54,13 +54,16 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            for (int i = 0; i < 2; i++)
-            {
-                bool isLeft = (i == 0);
+            // Offset angles in degrees from the owner's heading.
+            //  +45° = front-left   |  -45° = front-right
+            // +135° = rear-left    | -135° = rear-right
+            float[] cornerAngles = { 45f, -45f, 135f, -135f };
 
+            foreach (var angleDeg in cornerAngles)
+            {
                 var guid  = GuidManager.NewDynamicGuid();
                 var clone = new PlayerClone(weenie, guid);
-                clone.Initialize(this, isLeft);
+                clone.Initialize(this, angleDeg);
 
                 // Add to the landblock — this makes the clone visible to nearby players.
                 LandblockManager.AddObject(clone);

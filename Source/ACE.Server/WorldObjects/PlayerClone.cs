@@ -22,10 +22,22 @@ namespace ACE.Server.WorldObjects
     public class PlayerClone : WorldObject
     {
         // ── Public state ──────────────────────────────────────────────────────
-        public Player Owner       { get; private set; }
-        public bool   IsLeftClone { get; private set; }
+        public Player Owner { get; private set; }
 
-        // Perpendicular offset distance from the owner (in metres).
+        /// <summary>
+        /// Angle (in degrees) added to the owner's heading to determine this
+        /// clone's offset direction.  Positive = counter-clockwise (left side),
+        /// negative = clockwise (right side).
+        /// <list type="bullet">
+        ///   <item>+45°  → front-left corner</item>
+        ///   <item>-45°  → front-right corner</item>
+        ///   <item>+135° → rear-left corner</item>
+        ///   <item>-135° → rear-right corner</item>
+        /// </list>
+        /// </summary>
+        public float OffsetAngleDeg { get; private set; }
+
+        // Distance from the owner centre-point to each clone (metres).
         private const float OffsetDistance = 2.0f;
 
         // ── Constructors ──────────────────────────────────────────────────────
@@ -39,10 +51,10 @@ namespace ACE.Server.WorldObjects
         /// Copies all appearance and physics identifiers from the owner, sets ethereal
         /// physics flags, and places the clone at the correct flanking position.
         /// </summary>
-        public void Initialize(Player owner, bool isLeft)
+        public void Initialize(Player owner, float offsetAngleDeg)
         {
-            Owner       = owner;
-            IsLeftClone = isLeft;
+            Owner          = owner;
+            OffsetAngleDeg = offsetAngleDeg;
 
             // Name matches owner so observers see a recognisable label.
             Name = owner.Name;
@@ -114,8 +126,9 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// Computes a position 2 m to the left or right of the owner,
-        /// perpendicular to the direction the owner is facing.
+        /// Computes a position <see cref="OffsetDistance"/> metres from the owner
+        /// in the direction <see cref="OffsetAngleDeg"/> degrees offset from the
+        /// owner's current heading.
         /// </summary>
         private Position CalculateOffsetPosition()
         {
@@ -127,11 +140,11 @@ namespace ACE.Server.WorldObjects
                 2.0 * (q.W * q.Z + q.X * q.Y),
                 1.0 - 2.0 * (q.Y * q.Y + q.Z * q.Z));
 
-            // Perpendicular angle: left clone = +90°, right clone = −90°.
-            double perpRad = headingRad + (IsLeftClone ? Math.PI / 2.0 : -Math.PI / 2.0);
+            // Apply this clone's angular offset (convert degrees → radians).
+            double offsetRad = headingRad + OffsetAngleDeg * (Math.PI / 180.0);
 
-            var dx = (float)(Math.Sin(perpRad) * OffsetDistance);
-            var dy = (float)(Math.Cos(perpRad) * OffsetDistance);
+            var dx = (float)(Math.Sin(offsetRad) * OffsetDistance);
+            var dy = (float)(Math.Cos(offsetRad) * OffsetDistance);
 
             var newPos  = new Position(Owner.Location);
             newPos.Pos  = new Vector3(Owner.Location.Pos.X + dx,
