@@ -1283,7 +1283,7 @@ namespace ACE.Server.WorldObjects
 
         private static readonly bool EnqueueBroadcastMotion_Physics = true;
 
-        public void EnqueueBroadcastMotion(Motion motion, float? maxRange = null, bool? applyPhysics = null)
+        public virtual void EnqueueBroadcastMotion(Motion motion, float? maxRange = null, bool? applyPhysics = null)
         {
             if (applyPhysics == null)
             {

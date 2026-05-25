@@ -4,6 +4,7 @@ using ACE.Database;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Models;
+using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Managers;
 
@@ -114,6 +115,27 @@ namespace ACE.Server.WorldObjects
 
             foreach (var clone in _activeClones)
                 clone.DealCloneDamage(target, damage, damageType);
+        }
+
+        // ── Animation mirroring ───────────────────────────────────────────────
+        /// <summary>
+        /// Overrides <see cref="WorldObject.EnqueueBroadcastMotion"/> so that
+        /// every motion the player broadcasts (walk, cast, attack, emote, …)
+        /// is immediately forwarded to all active clones.
+        ///
+        /// This is the correct hook for capturing spell-cast animations, which
+        /// fire as one-shot motion packets and are gone before the next tick.
+        /// </summary>
+        public override void EnqueueBroadcastMotion(Motion motion, float? maxRange = null, bool? applyPhysics = null)
+        {
+            // Always run the normal player broadcast first.
+            base.EnqueueBroadcastMotion(motion, maxRange, applyPhysics);
+
+            // Forward to clones if any are active.
+            if (_activeClones.Count == 0) return;
+
+            foreach (var clone in _activeClones)
+                clone.EnqueueBroadcastMotion(motion, maxRange);
         }
     }
 }

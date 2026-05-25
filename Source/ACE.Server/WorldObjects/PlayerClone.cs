@@ -106,11 +106,6 @@ namespace ACE.Server.WorldObjects
             if (Owner == null || Owner.Location == null || CurrentLandblock == null)
                 return;
 
-            // Mirror the owner's motion state so the clone plays walk/run/combat
-            // animations instead of sliding between position updates.
-            if (Owner.CurrentMotionState != null)
-                EnqueueBroadcastMotion(Owner.CurrentMotionState);
-
             var newPos = CalculateOffsetPosition();
             if (newPos == null) return;
 
