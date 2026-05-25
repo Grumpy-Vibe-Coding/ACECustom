@@ -266,6 +266,11 @@ namespace ACE.Server.WorldObjects
             if (damageEvent.HasDamage && (GetCombatType() == CombatType.Missile || damageEvent.CombatType == CombatType.Missile || (damageEvent.DamageSource?.Missile ?? false)))
                 TryApplyExplosiveArrowProc(target, damageEvent.Damage, damageEvent.DamageType);
 
+            // Shadow Clone Charm: mirror this hit's damage to each active clone.
+            // Covers melee and missile; magic is handled in SpellProjectile.DamageTarget.
+            if (damageEvent.HasDamage && targetPlayer == null)
+                TryApplyCloneDamage(target, damageEvent.Damage, damageEvent.DamageType);
+
             return damageEvent;
         }
 

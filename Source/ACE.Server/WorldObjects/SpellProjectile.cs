@@ -1011,6 +1011,12 @@ namespace ACE.Server.WorldObjects
                         spellPet.ApplyOwnerFollowRecallBlockFromDamage(amount, "SpellProjectile.health");
                 }
 
+                // Shadow Clone Charm: mirror spell damage to the player's active clones.
+                // amount = actual health damage dealt (post-mana-barrier, post-modifiers).
+                // Only mirrors PvE hits; targetPlayer == null guard prevents PvP duplication.
+                if (amount > 0 && targetPlayer == null && sourcePlayer != null && sourcePlayer.HasShadowCloneCharm)
+                    sourcePlayer.TryApplyCloneDamage(target, (float)amount, Spell.DamageType);
+
                 //if (targetPlayer != null && targetPlayer.Fellowship != null)
                     //targetPlayer.Fellowship.OnVitalUpdate(targetPlayer);
             }

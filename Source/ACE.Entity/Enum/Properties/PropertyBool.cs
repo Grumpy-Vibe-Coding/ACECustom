@@ -311,6 +311,9 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>ILT Skill #22: Melee attacks scan target resistances, override damage to weakest element, and dynamically match weapon rends.</summary>
         HasPrismaticStrike = 50037,
 
+        /// <summary>ILT Skill #24: Two ethereal shadow clones flank the player and deal identical melee, missile, and magic damage to the same targets.</summary>
+        HasShadowCloneCharm = 50038,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }

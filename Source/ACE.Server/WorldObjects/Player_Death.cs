@@ -153,6 +153,10 @@ namespace ACE.Server.WorldObjects
             bool isSuicide = suicideInProgress;
             IsInDeathProcess = true;
 
+            // Shadow Clone Charm: remove clones immediately on death.
+            if (HasActiveClones)
+                DespawnClones();
+
             if (topDamager?.Guid == Guid && IsPKType)
             {
                 var topDamagerOther = DamageHistory.GetTopDamager(false);
@@ -314,6 +318,17 @@ namespace ACE.Server.WorldObjects
                     OnHealthUpdate();
 
                     IsInDeathProcess = false;
+
+                    // Shadow Clone Charm: re-spawn clones now that the player is alive at
+                    // their respawn location.  Delayed by 1 s so the player is fully placed
+                    // on the landblock before clones are added.
+                    if (HasShadowCloneCharm)
+                    {
+                        var cloneRespawnChain = new ActionChain();
+                        cloneRespawnChain.AddDelaySeconds(1.0);
+                        cloneRespawnChain.AddAction(this, ActionType.PlayerDeath_Teleport, SpawnClones);
+                        cloneRespawnChain.EnqueueChain();
+                    }
 
                     if (IsLoggingOut)
                         LogOut_Final(true);

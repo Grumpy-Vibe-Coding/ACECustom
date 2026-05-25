@@ -644,6 +644,11 @@ namespace ACE.Server.WorldObjects
         public void DoPreTeleportHide()
         {
             if (Teleporting) return;
+
+            // Shadow Clone Charm: remove clones before entering portal space.
+            if (HasActiveClones)
+                DespawnClones();
+
             PlayParticleEffect(PlayScript.Hide, Guid);
         }
 
@@ -724,6 +729,16 @@ namespace ACE.Server.WorldObjects
                 {
                     base.OnTeleportComplete();
                     SchedulePostTeleportVisibilityReconcile();
+
+                    // Shadow Clone Charm: re-spawn clones 1 s after materializing so the
+                    // landblock is ready to accept new WorldObjects.
+                    if (HasShadowCloneCharm && IsAlive)
+                    {
+                        var cloneRespawnChain = new ActionChain();
+                        cloneRespawnChain.AddDelaySeconds(1.0);
+                        cloneRespawnChain.AddAction(this, ActionType.PlayerLocation_OnTeleportComplete, SpawnClones);
+                        cloneRespawnChain.EnqueueChain();
+                    }
                 }
             }
         }

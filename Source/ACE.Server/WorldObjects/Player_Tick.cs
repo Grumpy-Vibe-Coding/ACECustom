@@ -79,6 +79,10 @@ namespace ACE.Server.WorldObjects
 
             actionQueue.RunActions();
 
+            // Shadow Clone Charm: keep clone positions synchronised with the player.
+            if (HasActiveClones && IsAlive)
+                UpdateClonePositions();
+
             if (nextAgeUpdateTime <= currentUnixTime)
             {
                 nextAgeUpdateTime = currentUnixTime + ageUpdateInterval;

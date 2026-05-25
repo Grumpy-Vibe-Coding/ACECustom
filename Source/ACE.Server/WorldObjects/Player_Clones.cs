@@ -1,0 +1,119 @@
+using System.Collections.Generic;
+
+using ACE.Database;
+using ACE.Entity;
+using ACE.Entity.Enum;
+using ACE.Entity.Models;
+using ACE.Server.Entity.Actions;
+using ACE.Server.Managers;
+
+namespace ACE.Server.WorldObjects
+{
+    /// <summary>
+    /// Manages the lifecycle and combat integration of shadow clones
+    /// spawned by the Shadow Clone Charm (ability ID 24).
+    ///
+    /// Clones are spawned when the charm activates, despawned on
+    /// death / teleport, and re-spawned after the player materialises
+    /// at their destination.  Every server tick the clone positions are
+    /// updated to trail the owner.  Each time the player lands a hit,
+    /// <see cref="TryApplyCloneDamage"/> fires identical damage from
+    /// each clone, attributed to the player for XP / DamageHistory.
+    /// </summary>
+    partial class Player
+    {
+        // ── Constants ─────────────────────────────────────────────────────────
+        /// <summary>WCID of the minimal placeholder weenie used to construct clones.</summary>
+        private const uint ShadowCloneWcid = 777700031u;
+
+        // ── Runtime state ─────────────────────────────────────────────────────
+        /// <summary>Live clones currently in the world for this player.</summary>
+        private readonly List<PlayerClone> _activeClones = new();
+
+        /// <summary>True if at least one clone is currently active in the world.</summary>
+        public bool HasActiveClones => _activeClones.Count > 0;
+
+        // ── Spawn / Despawn ───────────────────────────────────────────────────
+        /// <summary>
+        /// Spawns two ethereal clones (left and right) flanking the player.
+        /// Any previously active clones are removed first.
+        /// Called when the Shadow Clone Charm is activated.
+        /// </summary>
+        public void SpawnClones()
+        {
+            DespawnClones(); // clean up stale clones if any
+
+            if (Location == null) return;
+
+            var weenie = DatabaseManager.World.GetCachedWeenie(ShadowCloneWcid);
+            if (weenie == null)
+            {
+                log.Warn($"[ShadowClone] Placeholder weenie {ShadowCloneWcid} not found — " +
+                         $"cannot spawn clones for {Name}. Run the SQL file first.");
+                return;
+            }
+
+            for (int i = 0; i < 2; i++)
+            {
+                bool isLeft = (i == 0);
+
+                var guid  = GuidManager.NewDynamicGuid();
+                var clone = new PlayerClone(weenie, guid);
+                clone.Initialize(this, isLeft);
+
+                // Add to the landblock — this makes the clone visible to nearby players.
+                LandblockManager.AddObject(clone);
+                _activeClones.Add(clone);
+            }
+        }
+
+        /// <summary>
+        /// Destroys all active clones and clears the list.
+        /// Safe to call when no clones exist (no-op).
+        /// </summary>
+        public void DespawnClones()
+        {
+            foreach (var clone in _activeClones)
+                clone.Destroy();
+
+            _activeClones.Clear();
+        }
+
+        // ── Position tracking ─────────────────────────────────────────────────
+        /// <summary>
+        /// Broadcasts updated positions for every active clone.
+        /// Called from <see cref="Player_Tick.Player_Tick"/> on each server heartbeat.
+        /// </summary>
+        public void UpdateClonePositions()
+        {
+            if (_activeClones.Count == 0) return;
+
+            foreach (var clone in _activeClones)
+                clone.UpdatePosition();
+        }
+
+        // ── Damage mirroring ──────────────────────────────────────────────────
+        /// <summary>
+        /// Mirrors a melee, missile, or magic hit to every active clone.
+        /// Each clone applies the same <paramref name="damage"/> and
+        /// <paramref name="damageType"/> to <paramref name="target"/>,
+        /// attributed to this player so XP and kill credit flow correctly.
+        ///
+        /// Guards:
+        /// • Charm must be active (<see cref="HasShadowCloneCharm"/>).
+        /// • At least one clone must be alive in the world.
+        /// • Target must be a living non-player Creature (no PvP mirroring).
+        /// </summary>
+        public void TryApplyCloneDamage(Creature target, float damage, DamageType damageType)
+        {
+            if (!HasShadowCloneCharm)   return;
+            if (_activeClones.Count == 0) return;
+            if (target == null)         return;
+            if (target is Player)       return;  // no PvP clone damage
+            if (!target.IsAlive)        return;
+
+            foreach (var clone in _activeClones)
+                clone.DealCloneDamage(target, damage, damageType);
+        }
+    }
+}

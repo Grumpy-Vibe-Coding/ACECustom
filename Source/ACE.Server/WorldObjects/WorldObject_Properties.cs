@@ -3461,6 +3461,13 @@ namespace ACE.Server.WorldObjects
             set { if (!value) RemoveProperty(PropertyBool.HasPrismaticStrike); else SetProperty(PropertyBool.HasPrismaticStrike, value); }
         }
 
+        /// <summary>True while the Shadow Clone Charm is activated — two ethereal clones flank the player and mirror all damage output (melee, missile, magic).</summary>
+        public bool HasShadowCloneCharm
+        {
+            get => GetProperty(PropertyBool.HasShadowCloneCharm) ?? false;
+            set { if (!value) RemoveProperty(PropertyBool.HasShadowCloneCharm); else SetProperty(PropertyBool.HasShadowCloneCharm, value); }
+        }
+
         /// <summary>Show [Overkill] suffix on kill and death messages. Default ON.</summary>
         public bool ShowOverkill
         {

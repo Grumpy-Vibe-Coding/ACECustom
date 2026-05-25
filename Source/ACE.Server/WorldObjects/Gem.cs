@@ -361,6 +361,10 @@ namespace ACE.Server.WorldObjects
                 if (abilityId == CharmAbilityRegistry.AsheronsFavorAbilityId)
                     player.ApplyAsheronsFavorEnchantments();
 
+                // ILT: Shadow Clone Charm — spawn two ethereal flanking clones
+                if (abilityId == CharmAbilityRegistry.ShadowCloneCharmAbilityId)
+                    player.SpawnClones();
+
                 var activateMsg = BuildActivationMessage(abilityId, CharmLevel ?? 1, true, player);
                 player.Session.Network.EnqueueSend(new GameMessageSystemChat(activateMsg, ChatMessageType.Broadcast));
                 player.Session.Network.EnqueueSend(new GameMessageSound(player.Guid, Sound.HealthUp, 1.0f));
@@ -381,6 +385,10 @@ namespace ACE.Server.WorldObjects
                 // ILT: Asheron's Favor — remove Health + Natural Armor enchantments
                 if (abilityId == CharmAbilityRegistry.AsheronsFavorAbilityId)
                     player.RemoveAsheronsFavorEnchantments();
+
+                // ILT: Shadow Clone Charm — destroy both flanking clones
+                if (abilityId == CharmAbilityRegistry.ShadowCloneCharmAbilityId)
+                    player.DespawnClones();
 
                 var deactivateMsg = BuildActivationMessage(abilityId, CharmLevel ?? 1, false, player);
                 player.Session.Network.EnqueueSend(new GameMessageSystemChat(deactivateMsg, ChatMessageType.Broadcast));
@@ -522,6 +530,13 @@ namespace ACE.Server.WorldObjects
                 return activating
                     ? "Prismatic Strike Charm activated. Your melee attacks will strike with the element or physical force your target is most vulnerable to."
                     : "Prismatic Strike Charm deactivated. Attacks will deal damage normally.";
+            }
+
+            if (abilityId == CharmAbilityRegistry.ShadowCloneCharmAbilityId)
+            {
+                return activating
+                    ? "Shadow Clone Charm activated. Two ethereal clones now flank you, mirroring every melee, missile, and magic strike."
+                    : "Shadow Clone Charm deactivated. The shadow clones have faded.";
             }
 
             var name = CharmAbilityRegistry.GetDisplayName(abilityId) ?? "Ability";
