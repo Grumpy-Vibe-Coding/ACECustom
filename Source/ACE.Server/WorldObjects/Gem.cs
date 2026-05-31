@@ -49,12 +49,6 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public override void ActOnUse(WorldObject activator)
         {
-            if (activator is Player testPlayer && TestCharacterGem.IsTestCharacterGem(this))
-            {
-                TestCharacterGem.UseGem(testPlayer, this);
-                return;
-            }
-
             // Monster Capture System - POC: Handle capture crystals
             if (activator is Player player && MonsterCapture.IsCaptureCrystal(this))
             {

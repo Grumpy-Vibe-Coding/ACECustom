@@ -4,53 +4,98 @@ using ACE.Common;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Server.Command;
 using ACE.Server.Entity;
 using ACE.Server.Factories;
-using ACE.Server.Managers;
+using ACE.Server.Network;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
+using ACE.Server.WorldObjects;
 using ACE.Server.WorldObjects.Entity;
 
-namespace ACE.Server.WorldObjects
+namespace ACE.Server.Command.Handlers
 {
-    public static class TestCharacterGem
+    public static class TestCharacterCommands
     {
-        public const uint Tier11StatsGemWcid = 777902011;
-        public const uint Tier11ArmorGemWcid = 777902012;
-        public const uint Tier11WeaponsGemWcid = 777902013;
-
-        public static bool IsTestCharacterGem(WorldObject gem)
+        [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
+            "Boost character stats, spells, skills, or spawn gear and weapons for Tier 11 endgame testing.",
+            "Usage: /testchar <tier>  |  /testchar stats <tier>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]")]
+        public static void HandleTestChar(Session session, params string[] parameters)
         {
-            return gem.WeenieClassId == Tier11StatsGemWcid ||
-                   gem.WeenieClassId == Tier11ArmorGemWcid ||
-                   gem.WeenieClassId == Tier11WeaponsGemWcid;
-        }
+            var player = session.Player;
+            if (player == null) return;
 
-        public static void UseGem(Player player, WorldObject gem)
-        {
-            if (player.Account.AccessLevel < (uint)AccessLevel.Developer)
+            if (parameters.Length == 1)
             {
-                player.SendTransientError("This item is restricted to Developers and above.");
-                return;
-            }
+                // Full booster package (stats + gear + weapons)
+                var tier = parameters[0].ToUpper();
+                if (tier != "T11" && tier != "11")
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat("Currently only Tier 11 is supported. Usage: /testchar T11", ChatMessageType.System));
+                    return;
+                }
 
-            if (gem.WeenieClassId == Tier11StatsGemWcid)
-            {
                 ConfigureStatsAndSpells(player);
-                player.SendMessage("Character stats, skills, augmentations, and spellbook configured for Tier 11!");
-            }
-            else if (gem.WeenieClassId == Tier11ArmorGemWcid)
-            {
                 SpawnArmor(player);
-                player.SendMessage("Prismatic GSA armor generated in your inventory.");
-            }
-            else if (gem.WeenieClassId == Tier11WeaponsGemWcid)
-            {
-                SpawnWeapons(player);
-                player.SendMessage("Complete set of 28 elemental weapons generated in your inventory.");
-            }
+                SpawnWeapons(player, null);
 
-            player.SaveBiotaToDatabase();
+                player.SendMessage("Character fully configured, geared, and equipped for Tier 11!");
+                player.SaveBiotaToDatabase();
+            }
+            else if (parameters.Length >= 2)
+            {
+                var sub = parameters[0].ToLower();
+                var tier = parameters[1].ToUpper();
+
+                if (tier != "T11" && tier != "11")
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Currently only Tier 11 is supported. Usage: /testchar {sub} T11", ChatMessageType.System));
+                    return;
+                }
+
+                if (sub == "stats")
+                {
+                    ConfigureStatsAndSpells(player);
+                    player.SendMessage("Character stats, skills, augmentations, and spells configured for Tier 11!");
+                    player.SaveBiotaToDatabase();
+                }
+                else if (sub == "gear")
+                {
+                    SpawnArmor(player);
+                    player.SendMessage("Prismatic GSA armor generated in your inventory.");
+                    player.SaveBiotaToDatabase();
+                }
+                else if (sub == "weapons")
+                {
+                    string style = null;
+                    if (parameters.Length >= 3)
+                    {
+                        var argStyle = parameters[2].ToUpper();
+                        if (argStyle == "UA" || argStyle == "2H" || argStyle == "BOW" || argStyle == "WAND")
+                        {
+                            style = argStyle;
+                        }
+                        else
+                        {
+                            session.Network.EnqueueSend(new GameMessageSystemChat("Invalid weapon style. Supported styles: UA, 2H, Bow, Wand.", ChatMessageType.System));
+                            return;
+                        }
+                    }
+
+                    SpawnWeapons(player, style);
+                    var styleLabel = style != null ? $"{style} " : "";
+                    player.SendMessage($"Tier 11 {styleLabel}weapons generated in your inventory.");
+                    player.SaveBiotaToDatabase();
+                }
+                else
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat("Unknown subcommand. Usage: /testchar <tier> | /testchar [stats|gear|weapons] <tier> [style]", ChatMessageType.System));
+                }
+            }
+            else
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /testchar <tier> | /testchar [stats|gear|weapons] <tier> [style]", ChatMessageType.System));
+            }
         }
 
         private static void ConfigureStatsAndSpells(Player player)
@@ -138,7 +183,6 @@ namespace ACE.Server.WorldObjects
             }
 
             // 3. Set Custom Augmentations (Luminance Augmentations)
-            // Crit: 5,000 | Item: 3,500 | Life: 3,500 | War: 3,500 | Void: 3,500 | Dur: 3,000 | Spec: 100 | Sum: 1,100 | Mel: 3,500 | Mis: 3,500
             player.LuminanceAugmentCreatureCount = 5000;
             player.LuminanceAugmentItemCount = 3500;
             player.LuminanceAugmentLifeCount = 3500;
@@ -184,7 +228,6 @@ namespace ACE.Server.WorldObjects
 
         private static void SpawnArmor(Player player)
         {
-            // 6. Spawn Prismatic GSA Armor Suit
             var armorWcids = new List<uint>()
             {
                 14594, // helmprismatic
@@ -209,9 +252,8 @@ namespace ACE.Server.WorldObjects
             }
         }
 
-        private static void SpawnWeapons(Player player)
+        private static void SpawnWeapons(Player player, string targetStyle)
         {
-            // 7. Spawn Complete Set of Weapons (28 total)
             var weaponBases = new Dictionary<string, (uint wcid, string baseName)>()
             {
                 { "UA", (29651, "Spiked Knuckles") },
@@ -236,6 +278,10 @@ namespace ACE.Server.WorldObjects
                 var weaponType = baseKvp.Key;
                 var baseWcid = baseKvp.Value.wcid;
                 var baseName = baseKvp.Value.baseName;
+
+                // If style filter is provided, skip non-matching styles
+                if (targetStyle != null && !weaponType.Equals(targetStyle, StringComparison.OrdinalIgnoreCase))
+                    continue;
 
                 foreach (var element in elements)
                 {
