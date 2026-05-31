@@ -12,13 +12,14 @@ using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.WorldObjects;
 using ACE.Server.WorldObjects.Entity;
+using ACE.Entity.Models;
 
 namespace ACE.Server.Command.Handlers
 {
     public static class TestCharacterCommands
     {
         [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
-            "Boost character stats, spells, skills, or spawn gear and weapons for Tier 11 endgame testing.",
+            "Boost character stats/gear/weapons to Tier 11, or reset character back to a fresh level 1 Tier 0.",
             "Usage: /testchar <tier>  |  /testchar stats <tier>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]")]
         public static void HandleTestChar(Session session, params string[] parameters)
         {
@@ -29,9 +30,17 @@ namespace ACE.Server.Command.Handlers
             {
                 // Full booster package (stats + gear + weapons)
                 var tier = parameters[0].ToUpper();
+                if (tier == "T0" || tier == "0")
+                {
+                    ResetToTier0(player);
+                    player.SendMessage("Character successfully reset to Tier 0 baseline! Please log out and back in to completely refresh your client spellbook.");
+                    player.SaveBiotaToDatabase();
+                    return;
+                }
+
                 if (tier != "T11" && tier != "11")
                 {
-                    session.Network.EnqueueSend(new GameMessageSystemChat("Currently only Tier 11 is supported. Usage: /testchar T11", ChatMessageType.System));
+                    session.Network.EnqueueSend(new GameMessageSystemChat("Currently only T11 and T0 are supported. Usage: /testchar T11 or /testchar T0", ChatMessageType.System));
                     return;
                 }
 
@@ -47,9 +56,32 @@ namespace ACE.Server.Command.Handlers
                 var sub = parameters[0].ToLower();
                 var tier = parameters[1].ToUpper();
 
+                if (tier == "T0" || tier == "0")
+                {
+                    if (sub == "stats")
+                    {
+                        ResetToTier0(player);
+                        player.SendMessage("Character stats, skills, augmentations, and spellbook reset to Tier 0 baseline! Please log out and back in to completely refresh your client spellbook.");
+                        player.SaveBiotaToDatabase();
+                    }
+                    else if (sub == "gear")
+                    {
+                        session.Network.EnqueueSend(new GameMessageSystemChat("No gear is defined for Tier 0.", ChatMessageType.System));
+                    }
+                    else if (sub == "weapons")
+                    {
+                        session.Network.EnqueueSend(new GameMessageSystemChat("No weapons are defined for Tier 0.", ChatMessageType.System));
+                    }
+                    else
+                    {
+                        session.Network.EnqueueSend(new GameMessageSystemChat("Unknown subcommand. Usage: /testchar <tier> | /testchar [stats|gear|weapons] <tier> [style]", ChatMessageType.System));
+                    }
+                    return;
+                }
+
                 if (tier != "T11" && tier != "11")
                 {
-                    session.Network.EnqueueSend(new GameMessageSystemChat($"Currently only Tier 11 is supported. Usage: /testchar {sub} T11", ChatMessageType.System));
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Currently only T11 and T0 are supported. Usage: /testchar {sub} T11", ChatMessageType.System));
                     return;
                 }
 
@@ -95,6 +127,97 @@ namespace ACE.Server.Command.Handlers
             else
             {
                 session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /testchar <tier> | /testchar [stats|gear|weapons] <tier> [style]", ChatMessageType.System));
+            }
+        }
+
+        private static void ResetToTier0(Player player)
+        {
+            // 1. Reset Base Attributes to 10 starting value and 0 raised ranks
+            foreach (var attrType in player.Attributes.Keys)
+            {
+                if (!player.Attributes.TryGetValue(attrType, out var attr))
+                    continue;
+
+                attr.StartingValue = 10;
+                player.SetAttributeRank(attr, 0);
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateAttribute(player, attr));
+            }
+
+            // 2. Reset Secondary Vitals to 10 starting value and 0 raised ranks
+            foreach (var vitalType in player.Vitals.Keys)
+            {
+                if (!player.Vitals.TryGetValue(vitalType, out var vital))
+                    continue;
+
+                vital.StartingValue = 10;
+                vital.Ranks = 0;
+                vital.ExperienceSpent = 0;
+                vital.Current = vital.MaxValue;
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateVital(player, vital));
+            }
+
+            // 3. Reset Level to 1
+            player.Level = 1;
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Level, 1));
+
+            // 4. Reset Experience and Luminance to 0
+            player.AvailableExperience = 0;
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.AvailableExperience, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.TotalExperience, 0));
+
+            player.AvailableLuminance = 0;
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.AvailableLuminance, 0));
+
+            // 5. Reset Skill Credits to 46 (starting amount)
+            player.AvailableSkillCredits = 46;
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.AvailableSkillCredits, 46));
+
+            // 6. Reset all Skills to Untrained with 0 ranks and 0 spent XP
+            foreach (var skill in player.Skills.Values)
+            {
+                skill.AdvancementClass = SkillAdvancementClass.Untrained;
+                skill.InitLevel = 0;
+                skill.Ranks = 0;
+                skill.ExperienceSpent = 0;
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(player, skill));
+            }
+
+            // 7. Reset Custom Augmentations (Luminance Augmentations) to 0
+            player.LuminanceAugmentCreatureCount = 0;
+            player.LuminanceAugmentItemCount = 0;
+            player.LuminanceAugmentLifeCount = 0;
+            player.LuminanceAugmentWarCount = 0;
+            player.LuminanceAugmentVoidCount = 0;
+            player.LuminanceAugmentSpellDurationCount = 0;
+            player.LuminanceAugmentSpecializeCount = 0;
+            player.LuminanceAugmentSummonCount = 0;
+            player.LuminanceAugmentMeleeCount = 0;
+            player.LuminanceAugmentMissileCount = 0;
+
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugCreatureCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugLifeCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugWarCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugVoidCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugDurationCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSpecializeCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSummonCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMeleeCount, 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMissileCount, 0));
+
+            // 8. Reset Retail Augmentations to 0
+            foreach (var kvp in AugmentationDevice.MaxAugs)
+            {
+                var augProp = AugmentationDevice.AugProps[kvp.Key];
+                player.SetProperty(augProp, 0);
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, augProp, 0));
+            }
+
+            // 9. Purge all known Spells from the spellbook
+            var spellsToClear = player.Biota.GetKnownSpellsIds(player.BiotaDatabaseLock);
+            foreach (var spellId in spellsToClear)
+            {
+                player.RemoveKnownSpell((uint)spellId);
             }
         }
 
