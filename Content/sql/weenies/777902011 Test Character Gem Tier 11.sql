@@ -16,6 +16,7 @@ VALUES (777902011,    11, 1)  /* IgnoreCollisions */
 
 INSERT INTO `weenie_properties_int` (`object_Id`, `type`, `value`)
 VALUES (777902011,     1, 2048) /* ItemType - Gem */
+     , (777902011,     3,    0) /* PaletteTemplate - None/Rainbow */
      , (777902011,     5,    5) /* EncumbranceVal */
      , (777902011,     8,    5) /* Mass */
      , (777902011,    16,    8) /* ItemUseable - Contained */
@@ -24,6 +25,10 @@ VALUES (777902011,     1, 2048) /* ItemType - Gem */
      , (777902011,    83,    2) /* ActivationResponse - Use */
      , (777902011,    93, 1044) /* PhysicsState */
      , (777902011,   114,    1); /* Attuned */
+
+DELETE FROM `weenie_properties_float` WHERE `object_Id` = 777902011;
+INSERT INTO `weenie_properties_float` (`object_Id`, `type`, `value`)
+VALUES (777902011,   12,  0.0); /* Shade - 0.0 */
 
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`, `type`, `value`)
 VALUES (777902011,    1, 33554460)  /* Setup - Gem Mesh */

@@ -220,8 +220,7 @@ namespace ACE.Server.WorldObjects
                 }
             }
 
-            // 8. Consume the Gem
-            player.TryConsumeFromInventoryWithNetworking(gem, 1);
+            // 8. Consume the Gem (Skipped: Unlimited Uses)
 
             // 9. Notify and Save
             player.SendMessage("Character configured for Tier 11! Spelled up, base attributes scaled, GSA armor, and 28 elemental weapons generated.");
