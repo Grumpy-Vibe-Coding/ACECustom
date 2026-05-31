@@ -162,6 +162,9 @@ namespace ACE.Server
             log.Info($"Initializing ConfigManager with {configFile}...");
             ConfigManager.Initialize(configFile);
 
+            log.Info("Ensuring emote damage_type columns (shard + world)...");
+            EmoteDamageTypeSchema.EnsureColumns();
+
             log.Info("Initializing ModManager...");
             ModManager.Initialize();
 
@@ -275,9 +278,6 @@ namespace ACE.Server
             }
             else
                 log.Info("DAT Patching Disabled...");
-
-            log.Info("Ensuring emote damage_type columns (shard + world)...");
-            EmoteDamageTypeSchema.EnsureColumns();
 
             log.Info("Initializing DatabaseManager...");
             DatabaseManager.Initialize();

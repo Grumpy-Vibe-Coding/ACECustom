@@ -3475,6 +3475,13 @@ namespace ACE.Server.WorldObjects
             set { if (!value) RemoveProperty(PropertyBool.HasForkCharm); else SetProperty(PropertyBool.HasForkCharm, value); }
         }
 
+        /// <summary>True while the Far Shot Charm is activated.</summary>
+        public bool HasFarShotCharm
+        {
+            get => GetProperty(PropertyBool.HasFarShotCharm) ?? false;
+            set { if (!value) RemoveProperty(PropertyBool.HasFarShotCharm); else SetProperty(PropertyBool.HasFarShotCharm, value); }
+        }
+
         /// <summary>Show [Overkill] suffix on kill and death messages. Default ON.</summary>
         public bool ShowOverkill
         {

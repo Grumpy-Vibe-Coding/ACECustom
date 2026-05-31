@@ -38,7 +38,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`, `type`, `value`) VALUES
 (777700300,   114,     1),  -- Attuned
 (777700300, 50000,    26),  -- CharmGrantsAbility: ID 26 = Auto Rebuff
 (777700300, 50005,     1),  -- CharmLevel: 1
-(777700300, 50006,     1);  -- CharmMaxLevel: 1
+(777700300, 50006,     1),  -- CharmMaxLevel: 1
+(777700300, 50060, 1780282800); -- ItemExpirationTimestamp: Sunday May 31, 2026 11:00 PM EST
 
 -- Strings
 INSERT INTO `weenie_properties_string` (`object_Id`, `type`, `value`) VALUES

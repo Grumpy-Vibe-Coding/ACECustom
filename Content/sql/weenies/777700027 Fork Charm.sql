@@ -30,7 +30,8 @@ VALUES (777700027,     1, 2048) /* ItemType - Gem */
      , (777700027,   114,    1) /* Attuned */
      , (777700027, 50000,   27) /* CharmGrantsAbility - ID 27 = Fork */
      , (777700027, 50005,    1) /* CharmLevel - 1 */
-     , (777700027, 50006,    3); /* CharmMaxLevel - 3 tiers */
+     , (777700027, 50006,    3) /* CharmMaxLevel - 3 tiers */
+     , (777700027, 50060, 1780282800); /* ItemExpirationTimestamp - Sunday May 31, 2026 11:00 PM EST */
 
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`, `type`, `value`)
 VALUES (777700027,    1, 33554556)  /* Setup - Coffer/Chest */

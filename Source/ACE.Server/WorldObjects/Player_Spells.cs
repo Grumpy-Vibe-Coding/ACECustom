@@ -786,7 +786,9 @@ namespace ACE.Server.WorldObjects
             // cleans up bugged chars with dangling item set spells
             // from previous bugs
 
-            var allPossessions = GetAllPossessions().ToDictionary(i => i.Guid, i => i);
+            var allPossessions = new Dictionary<ObjectGuid, WorldObject>();
+            foreach (var item in GetAllPossessions())
+                allPossessions[item.Guid] = item;
 
             // this is a legacy method, but is still a decent failsafe to catch any existing issues
 

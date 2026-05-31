@@ -547,6 +547,19 @@ namespace ACE.Server.Entity
                 Damage *= splitMultiplier;
             }
 
+            // Apply Far Shot Charm final damage percentage multiplier
+            if (CombatType == CombatType.Missile && Attacker is Player player && player.HasFarShotCharm && CharmSettingsManager.FarShot.Enabled)
+            {
+                player.ActiveCharmLevels.TryGetValue(CharmAbilityRegistry.FarShotAbilityId, out var tier);
+                var damageMultiplier = tier switch
+                {
+                    2 => CharmSettingsManager.FarShot.T2Damage,
+                    3 => CharmSettingsManager.FarShot.T3Damage,
+                    _ => CharmSettingsManager.FarShot.T1Damage
+                };
+                Damage *= damageMultiplier;
+            }
+
             // NEW: Apply enrage damage reduction to the final output damage if the defender is a mob and enraged
             if (defender.IsEnraged && !(defender is Player))
             {

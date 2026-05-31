@@ -93,6 +93,25 @@ namespace ACE.Server.WorldObjects
                 player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateVital(player, vital));
             }
 
+            // 2.5 Set Level and Maximize All Skills
+            player.Level = 1100;
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Level, 1100));
+
+            foreach (var skill in player.Skills.Values)
+            {
+                skill.AdvancementClass = SkillAdvancementClass.Specialized;
+                skill.InitLevel = 10;
+
+                var skillXPTable = Player.GetSkillXPTable(SkillAdvancementClass.Specialized);
+                if (skillXPTable != null)
+                {
+                    skill.Ranks = (ushort)(skillXPTable.Count - 1);
+                    skill.ExperienceSpent = skillXPTable[skillXPTable.Count - 1];
+                }
+
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(player, skill));
+            }
+
             // 3. Set Custom Augmentations (Luminance Augmentations)
             // Crit: 5,000 | Item: 3,500 | Life: 3,500 | War: 3,500 | Void: 3,500 | Dur: 3,000 | Spec: 100 | Sum: 1,100 | Mel: 3,500 | Mis: 3,500
             player.LuminanceAugmentCreatureCount = 5000;
