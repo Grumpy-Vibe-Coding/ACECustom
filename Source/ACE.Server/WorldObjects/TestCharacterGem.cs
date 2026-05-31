@@ -15,11 +15,15 @@ namespace ACE.Server.WorldObjects
 {
     public static class TestCharacterGem
     {
-        public const uint Tier11GemWcid = 777902011;
+        public const uint Tier11StatsGemWcid = 777902011;
+        public const uint Tier11ArmorGemWcid = 777902012;
+        public const uint Tier11WeaponsGemWcid = 777902013;
 
         public static bool IsTestCharacterGem(WorldObject gem)
         {
-            return gem.WeenieClassId == Tier11GemWcid;
+            return gem.WeenieClassId == Tier11StatsGemWcid ||
+                   gem.WeenieClassId == Tier11ArmorGemWcid ||
+                   gem.WeenieClassId == Tier11WeaponsGemWcid;
         }
 
         public static void UseGem(Player player, WorldObject gem)
@@ -30,6 +34,27 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (gem.WeenieClassId == Tier11StatsGemWcid)
+            {
+                ConfigureStatsAndSpells(player);
+                player.SendMessage("Character stats, skills, augmentations, and spellbook configured for Tier 11!");
+            }
+            else if (gem.WeenieClassId == Tier11ArmorGemWcid)
+            {
+                SpawnArmor(player);
+                player.SendMessage("Prismatic GSA armor generated in your inventory.");
+            }
+            else if (gem.WeenieClassId == Tier11WeaponsGemWcid)
+            {
+                SpawnWeapons(player);
+                player.SendMessage("Complete set of 28 elemental weapons generated in your inventory.");
+            }
+
+            player.SaveBiotaToDatabase();
+        }
+
+        private static void ConfigureStatsAndSpells(Player player)
+        {
             // 1. Set Base Attributes
             // Base Attributes: Strength 460, Endurance 460, Coordination 580, Quickness 550, Focus 550, Self 510
             var attributeTargets = new Dictionary<PropertyAttribute, uint>()
@@ -155,7 +180,10 @@ namespace ACE.Server.WorldObjects
                     player.Session.Network.EnqueueSend(new GameEventMagicUpdateSpell(player.Session, (ushort)spellID));
                 }
             }
+        }
 
+        private static void SpawnArmor(Player player)
+        {
             // 6. Spawn Prismatic GSA Armor Suit
             var armorWcids = new List<uint>()
             {
@@ -179,10 +207,11 @@ namespace ACE.Server.WorldObjects
                     player.TryCreateInInventoryWithNetworking(armorItem);
                 }
             }
+        }
 
+        private static void SpawnWeapons(Player player)
+        {
             // 7. Spawn Complete Set of Weapons (28 total)
-            // styles: UA (29651), 2H (29671), Bow (29639), Wand (29661)
-            // elements: Slash, Pierce, Bludgeon, Cold, Fire, Acid, Electric
             var weaponBases = new Dictionary<string, (uint wcid, string baseName)>()
             {
                 { "UA", (29651, "Spiked Knuckles") },
@@ -219,12 +248,6 @@ namespace ACE.Server.WorldObjects
                     }
                 }
             }
-
-            // 8. Consume the Gem (Skipped: Unlimited Uses)
-
-            // 9. Notify and Save
-            player.SendMessage("Character configured for Tier 11! Spelled up, base attributes scaled, GSA armor, and 28 elemental weapons generated.");
-            player.SaveBiotaToDatabase();
         }
     }
 }

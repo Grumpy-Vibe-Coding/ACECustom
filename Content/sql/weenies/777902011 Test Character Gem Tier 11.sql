@@ -37,5 +37,5 @@ VALUES (777902011,    1, 33554460)  /* Setup - Gem Mesh */
      , (777902011,   48, 100676435); /* IconUnderlay */
 
 INSERT INTO `weenie_properties_string` (`object_Id`, `type`, `value`)
-VALUES (777902011,  1, 'Tier 11 Test Character Gem')
-     , (777902011, 14, 'Double-click to transform your character into an endgame Tier 11 test character. WARNING: Sets base attributes to 460/580/550/510, vitals to 685/900/920, all custom and retail augs to max, all spells learned, and spawns full GSA armor + 28 elemental weapons. Developer use only.');
+VALUES (777902011,  1, 'Tier 11 Test Character Gem (Stats & Spells)')
+     , (777902011, 14, 'Double-click to transform your character into an endgame Tier 11 test character. Sets base attributes to 460/580/550/510, vitals to 685/900/920, all custom and retail augs to max, and learns all spells. Developer use only.');
