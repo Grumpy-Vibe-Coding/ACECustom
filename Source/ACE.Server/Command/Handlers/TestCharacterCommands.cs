@@ -994,20 +994,20 @@ namespace ACE.Server.Command.Handlers
 
             var charmWcids = new List<uint>()
             {
-                777700001, 777710004, 777720004, // Mana Barrier (T1-T3)
-                777700019,                       // Infinite Casting (T1)
-                777700020, 777710002, 777720002, // Asheron's Favor (T1-T3)
-                777700021, 777710003, 777720003, // Artisan's Charm (T1-T3)
-                777700022,                       // Shrapnel (T1)
-                777700023,                       // Agony (T1)
-                777700025, 777710005, 777720005, // Explosive Arrow (T1-T3)
-                777700024,                       // Split Cast (T1)
-                777700026,                       // Omni Strike (T1)
-                78780030,                        // Summon Essence Refill (T1)
-                78780031,                        // Universal Summoning Mastery (T1)
-                777700300,                       // Auto-Rebuff (T1)
-                777700027, 777710007, 777720007, // Fork (T1-T3)
-                777700028, 777710008, 777720008  // Far Shot (T1-T3)
+                777700001,  // Mana Barrier (T1)
+                777700019,  // Infinite Casting (T1)
+                777700020,  // Asheron's Favor (T1)
+                777700021,  // Artisan's Charm (T1)
+                777700022,  // Shrapnel (T1)
+                777700023,  // Agony (T1)
+                777700025,  // Explosive Arrow (T1)
+                777700024,  // Split Cast (T1)
+                777700026,  // Omni Strike (T1)
+                78780030,   // Summon Essence Refill (T1)
+                78780031,   // Universal Summoning Mastery (T1)
+                777700300,  // Auto-Rebuff (T1)
+                777700027,  // Fork (T1)
+                777700028   // Far Shot (T1)
             };
 
             foreach (var wcid in charmWcids)
@@ -1022,12 +1022,12 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
-            // 20x Charm Catalyst
+            // 1000x Charm Catalyst
             var catalyst = WorldObjectFactory.CreateNewWorldObject(777700010);
             if (catalyst != null)
             {
-                catalyst.SetProperty(PropertyInt.StackSize, 20);
-                catalyst.SetProperty(PropertyInt.EncumbranceVal, (catalyst.StackUnitEncumbrance ?? 5) * 20);
+                catalyst.SetProperty(PropertyInt.StackSize, 1000);
+                catalyst.SetProperty(PropertyInt.EncumbranceVal, (catalyst.StackUnitEncumbrance ?? 5) * 1000);
                 if (rucksack != null)
                     rucksack.TryAddToInventory(catalyst);
                 else
