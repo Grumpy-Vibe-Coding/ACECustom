@@ -49,6 +49,8 @@ namespace ACE.Server.Entity
         /// </summary>
         public readonly List<DateTime> SpawnQueue = new List<DateTime>();
 
+        private List<ACE.Entity.Position> poissonPoints;
+
         /// <summary>
         /// Returns TRUE if this profile is a placeholder object
         /// Placeholder objects are used for linkable generators,
@@ -175,6 +177,7 @@ namespace ACE.Server.Entity
         /// </summary>
         public void Enqueue(int numObjects = 1)
         {
+            var staggerMax = ServerConfig.generator_initial_spawn_stagger_max.Value;
             for (var i = 0; i < numObjects; i++)
             {
                 /*if (MaxObjectsSpawned)
@@ -182,7 +185,13 @@ namespace ACE.Server.Entity
                     log.Debug($"{_generator.Name}.Enqueue({numObjects}): max objects reached");
                     break;
                 }*/
-                SpawnQueue.Add(GetSpawnTime());
+                var spawnTime = GetSpawnTime();
+                if (FirstSpawn && staggerMax > 0.0 && numObjects > 1)
+                {
+                    var offsetSeconds = i * (staggerMax / numObjects);
+                    spawnTime = spawnTime.AddSeconds(offsetSeconds);
+                }
+                SpawnQueue.Add(spawnTime);
             }
         }
 
@@ -320,6 +329,12 @@ namespace ACE.Server.Entity
                 if (RegenLocationType.HasFlag(RegenLocationType.Specific))
                     success = Spawn_Specific(obj);
 
+                else if (RegenLocationType.HasFlag(RegenLocationType.LandblockGrid))
+                    success = Spawn_LandblockGrid(obj);
+
+                else if (RegenLocationType.HasFlag(RegenLocationType.PoissonScatter))
+                    success = Spawn_PoissonScatter(obj);
+
                 else if (RegenLocationType.HasFlag(RegenLocationType.Scatter))
                     success = Spawn_Scatter(obj);
 
@@ -430,6 +445,9 @@ namespace ACE.Server.Entity
             obj.ScatterPos = new SetPosition(new Physics.Common.Position(obj.Location), SetPositionFlags.RandomScatter, genRadius);
 
             var success = obj.EnterWorld();
+
+            if (success)
+                obj.Home = new ACE.Entity.Position(obj.Location);
 
             obj.ScatterPos = null;
 
@@ -658,10 +676,116 @@ namespace ACE.Server.Entity
             CleanupProfile();
         }
 
+        public bool Spawn_LandblockGrid(WorldObject obj)
+        {
+            int gridRows = 8;
+            int gridCols = 8;
+            float cellWidth = 192.0f / gridCols;
+            float cellHeight = 192.0f / gridRows;
+
+            var random = new Random((int)Generator.Guid.Full);
+            var cellOrder = new List<int>();
+            for (int i = 0; i < gridRows * gridCols; i++)
+                cellOrder.Add(i);
+
+            for (int i = cellOrder.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                var temp = cellOrder[i];
+                cellOrder[i] = cellOrder[j];
+                cellOrder[j] = temp;
+            }
+
+            int slotIndex = Spawned.Count;
+            int cellIndex = cellOrder[slotIndex % cellOrder.Count];
+            int col = cellIndex % gridCols;
+            int row = cellIndex / gridCols;
+
+            var offsets = new (float x, float y)[]
+            {
+                (0.0f, 0.0f),
+                (-6.0f, 0.0f), (6.0f, 0.0f), (0.0f, -6.0f), (0.0f, 6.0f),
+                (-6.0f, -6.0f), (-6.0f, 6.0f), (6.0f, -6.0f), (6.0f, 6.0f)
+            };
+
+            ACE.Entity.Position validPos = null;
+
+            foreach (var offset in offsets)
+            {
+                var testPos = new ACE.Entity.Position(Generator.Location);
+                testPos.PositionX = col * cellWidth + cellWidth / 2.0f + offset.x;
+                testPos.PositionY = row * cellHeight + cellHeight / 2.0f + offset.y;
+                testPos.PositionZ = testPos.GetTerrainZ() + 0.05f;
+                testPos.LandblockId = new LandblockId(testPos.GetCell());
+
+                if (testPos.IsWalkable() && testPos.Landblock == Generator.Location.Landblock)
+                {
+                    validPos = testPos;
+                    break;
+                }
+            }
+
+            if (validPos == null)
+            {
+                var fallbackPos = new ACE.Entity.Position(Generator.Location);
+                fallbackPos.PositionZ = fallbackPos.GetTerrainZ() + 0.05f;
+                if (fallbackPos.IsWalkable())
+                    validPos = fallbackPos;
+            }
+
+            if (validPos == null)
+                return false;
+
+            obj.Location = validPos;
+            obj.Home = new ACE.Entity.Position(obj.Location);
+
+            return obj.EnterWorld();
+        }
+
+        public bool Spawn_PoissonScatter(WorldObject obj)
+        {
+            var poisson = GetPoissonPoints();
+            if (poisson == null || poisson.Count == 0)
+                return Spawn_Scatter(obj);
+
+            int slotIndex = Spawned.Count;
+            var targetPos = poisson[slotIndex % poisson.Count];
+
+            obj.Location = new ACE.Entity.Position(targetPos);
+            obj.Home = new ACE.Entity.Position(obj.Location);
+
+            return obj.EnterWorld();
+        }
+
+        private List<ACE.Entity.Position> GetPoissonPoints()
+        {
+            if (poissonPoints != null)
+                return poissonPoints;
+
+            float genRadius = (float)(Generator.GetProperty(PropertyFloat.GeneratorRadius) ?? 96.0f);
+            if (genRadius <= 0) genRadius = 96.0f;
+
+            float r = 16.0f;
+            if (MaxCreate > 0)
+            {
+                float area = (float)Math.PI * genRadius * genRadius;
+                float maxPossibleR = (float)Math.Sqrt(area / (MaxCreate * 1.5f));
+                r = Math.Clamp(maxPossibleR, 8.0f, 30.0f);
+            }
+
+            poissonPoints = PoissonDiskSampler.GeneratePoints(Generator.Location, genRadius, r, (pos) =>
+            {
+                return pos.IsWalkable() && pos.Landblock == Generator.Location.Landblock;
+            });
+
+            return poissonPoints;
+        }
+
         private void CleanupProfile()
         {
             Spawned.Clear();
             SpawnQueue.Clear();
+            poissonPoints = null;
 
             NextAvailable = DateTime.UtcNow;
 

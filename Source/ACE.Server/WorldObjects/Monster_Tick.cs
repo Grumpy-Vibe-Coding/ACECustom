@@ -1,7 +1,9 @@
 using System;
 using System.Diagnostics;
+using System.Numerics;
 
 using ACE.Entity.Enum;
+using ACE.Server.Entity;
 using ACE.Server.Managers;
 
 namespace ACE.Server.WorldObjects
@@ -31,7 +33,8 @@ namespace ACE.Server.WorldObjects
         {
             return AttackTarget == null && 
                    MonsterState == State.Idle && 
-                   DamageHistory.IsEmpty;
+                   DamageHistory.IsEmpty &&
+                   (Home == null || Location.Pos.Equals(Home.Pos) || Vector3.DistanceSquared(Home.ToGlobal(false), Location.ToGlobal(false)) <= HomeRadiusSq);
         }
 
         /// <summary>
