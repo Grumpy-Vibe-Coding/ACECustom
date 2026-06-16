@@ -15,8 +15,7 @@ INSERT INTO `weenie_properties_int` (`object_Id`, `type`, `value`)
 VALUES (777700101,   1,        0) /* ItemType - None */
      , (777700101,  81,        3) /* MaxGeneratedObjects - 3 active charms max */
      , (777700101,  82,        3) /* InitGeneratedObjects - Spawns 3 charms initially */
-     , (777700101,  93,     1044) /* PhysicsState - Ethereal/IgnoreCollisions */
-     , (777700101, 50060, 1780887600) /* ItemExpirationTimestamp - Sunday June 7, 2026 11:00 PM EST */;
+     , (777700101,  93,     1044); /* PhysicsState - Ethereal/IgnoreCollisions */
 
 -- 3. Float Properties (RegenerationInterval set to 2 seconds)
 INSERT INTO `weenie_properties_float` (`object_Id`, `type`, `value`)

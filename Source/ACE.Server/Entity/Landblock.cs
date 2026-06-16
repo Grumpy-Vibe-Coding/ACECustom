@@ -99,7 +99,8 @@ namespace ACE.Server.Entity
 
         private readonly ConcurrentDictionary<ObjectGuid, WorldObject> worldObjects = new ConcurrentDictionary<ObjectGuid, WorldObject>();
         private readonly ConcurrentDictionary<ObjectGuid, WorldObject> pendingAdditions = new ConcurrentDictionary<ObjectGuid, WorldObject>();
-        private readonly List<ObjectGuid> pendingRemovals = new List<ObjectGuid>();
+        private readonly object pendingRemovalsLock = new object();
+        private readonly HashSet<ObjectGuid> pendingRemovals = new HashSet<ObjectGuid>();
 
         // Cache used for Tick efficiency
         public readonly List<Player> players = new List<Player>();
@@ -1081,11 +1082,47 @@ namespace ACE.Server.Entity
             }
         }
 
+        private bool HasPendingRemovals()
+        {
+            lock (pendingRemovalsLock)
+                return pendingRemovals.Count > 0;
+        }
+
+        private bool IsPendingRemoval(ObjectGuid guid)
+        {
+            lock (pendingRemovalsLock)
+                return pendingRemovals.Contains(guid);
+        }
+
+        private void QueuePendingRemoval(ObjectGuid guid)
+        {
+            lock (pendingRemovalsLock)
+                pendingRemovals.Add(guid);
+        }
+
+        private void CancelPendingRemoval(ObjectGuid guid)
+        {
+            lock (pendingRemovalsLock)
+                pendingRemovals.Remove(guid);
+        }
+
+        private ObjectGuid[] SnapshotPendingRemovals()
+        {
+            lock (pendingRemovalsLock)
+                return pendingRemovals.Count == 0 ? Array.Empty<ObjectGuid>() : pendingRemovals.ToArray();
+        }
+
+        private bool TryClaimPendingRemoval(ObjectGuid guid)
+        {
+            lock (pendingRemovalsLock)
+                return pendingRemovals.Remove(guid);
+        }
+
         private void ProcessPendingWorldObjectAdditionsAndRemovals()
         {
             // Early exit optimization - this method is called 11 times per tick
             // Most calls find nothing to process, so avoid the iteration overhead
-            if (pendingAdditions.IsEmpty && pendingRemovals.Count == 0)
+            if (pendingAdditions.IsEmpty && !HasPendingRemovals())
                 return;
             
             if (!pendingAdditions.IsEmpty)
@@ -1110,10 +1147,15 @@ namespace ACE.Server.Entity
                 pendingAdditions.Clear();
             }
 
-            if (pendingRemovals.Count > 0)
+            var removals = SnapshotPendingRemovals();
+            if (removals.Length > 0)
             {
-                foreach (var objectGuid in pendingRemovals)
+                foreach (var objectGuid in removals)
                 {
+                    // Skip if another thread (or a re-add) cancelled this removal after the snapshot.
+                    if (!TryClaimPendingRemoval(objectGuid))
+                        continue;
+
                     if (worldObjects.Remove(objectGuid, out var wo))
                     {
                         if (wo is Player player)
@@ -1134,8 +1176,6 @@ namespace ACE.Server.Entity
                         }
                     }
                 }
-
-                pendingRemovals.Clear();
             }
         }
 
@@ -1336,7 +1376,7 @@ namespace ACE.Server.Entity
 
             // Defensive: If a player is already resident in this landblock (and not pending removal), do not re-add/re-init physics or re-notify.
             // This prevents accidental high-frequency re-add call sites from spamming CreateObject tracking.
-            if (alreadyPresent && wo is Player alreadyHerePlayer && ReferenceEquals(alreadyHerePlayer.CurrentLandblock, this) && !pendingRemovals.Contains(wo.Guid))
+            if (alreadyPresent && wo is Player alreadyHerePlayer && ReferenceEquals(alreadyHerePlayer.CurrentLandblock, this) && !IsPendingRemoval(wo.Guid))
                 return true;
 
             wo.CurrentLandblock = this;
@@ -1376,7 +1416,7 @@ namespace ACE.Server.Entity
             if (!worldObjects.ContainsKey(wo.Guid))
                 pendingAdditions[wo.Guid] = wo;
             else
-                pendingRemovals.Remove(wo.Guid);
+                CancelPendingRemoval(wo.Guid);
 
             // broadcast to nearby players
             if (!alreadyPresent)
@@ -1467,7 +1507,7 @@ namespace ACE.Server.Entity
             }
 
             if (worldObjects.TryGetValue(objectId, out var wo))
-                pendingRemovals.Add(objectId);
+                QueuePendingRemoval(objectId);
             else if (!pendingAdditions.Remove(objectId, out wo))
             {
                 if (showError)
@@ -1552,7 +1592,7 @@ namespace ACE.Server.Entity
         /// </summary>
         public WorldObject GetObject(ObjectGuid guid, bool searchAdjacents = true, bool searchVariations = false)
         {
-            if (pendingRemovals.Contains(guid))
+            if (IsPendingRemoval(guid))
                 return null;
 
             if (worldObjects.TryGetValue(guid, out var worldObject) || pendingAdditions.TryGetValue(guid, out worldObject))

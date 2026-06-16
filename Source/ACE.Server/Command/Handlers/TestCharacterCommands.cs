@@ -21,8 +21,8 @@ namespace ACE.Server.Command.Handlers
     public static class TestCharacterCommands
     {
         [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
-            "Boost character stats/gear/weapons to Tier 11 or Tier 10, reset character back to a fresh level 1 Tier 0, or spawn custom ability charms.",
-            "Usage: /testchar <tier>  |  /testchar charms  |  /testchar stats <tier>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>")]
+            "Boost character stats/gear/weapons to Tier 11 or Tier 10, or reset to Tier 0.",
+            "Usage: /testchar <T11|T10|T0>  |  /testchar stats <T11|T10>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>  |  /testchar charms")]
         public static void HandleTestChar(Session session, params string[] parameters)
         {
             var player = session.Player;
@@ -30,15 +30,6 @@ namespace ACE.Server.Command.Handlers
 
             if (parameters.Length == 1)
             {
-                var arg = parameters[0].ToLower();
-                if (arg == "charms")
-                {
-                    SpawnCharms(player);
-                    player.SendMessage("Ability Charms Pack containing every tier of custom charms has been generated.");
-                    player.SaveBiotaToDatabase();
-                    return;
-                }
-
                 // Full booster package (stats + gear + weapons)
                 var tier = parameters[0].ToUpper();
                 if (tier == "T0" || tier == "0")
@@ -49,94 +40,119 @@ namespace ACE.Server.Command.Handlers
                     return;
                 }
 
-                if (tier != "T11" && tier != "11" && tier != "T10" && tier != "10")
+                bool isT10 = (tier == "T10" || tier == "10");
+                if (!isT10 && tier != "T11" && tier != "11")
                 {
-                    session.Network.EnqueueSend(new GameMessageSystemChat("Currently only T11, T10, and T0 are supported. Usage: /testchar T11, /testchar T10 or /testchar T0", ChatMessageType.System));
+                    session.Network.EnqueueSend(new GameMessageSystemChat("Supported tiers: T11, T10, T0. Usage: /testchar T11 or /testchar T10 or /testchar T0", ChatMessageType.System));
                     return;
                 }
-
-                bool isT10 = (tier == "T10" || tier == "10");
-                string gearTier = isT10 ? "T10" : "T11";
 
                 if (isT10)
                     ConfigureStatsAndSpellsT10(player);
                 else
                     ConfigureStatsAndSpells(player);
 
-                CreateCustomBow(player, DamageType.Cold, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Fire, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Electric, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Acid, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Slash, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Pierce, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Bludgeon, true, null, gearTier);
-                CreateCustomBow(player, DamageType.Nether, true, null, gearTier);
+                CreateCustomBow(player, DamageType.Cold, true);
+                CreateCustomBow(player, DamageType.Fire, true);
+                CreateCustomBow(player, DamageType.Electric, true);
+                CreateCustomBow(player, DamageType.Acid, true);
+                CreateCustomBow(player, DamageType.Slash, true);
+                CreateCustomBow(player, DamageType.Pierce, true);
+                CreateCustomBow(player, DamageType.Bludgeon, true);
+                CreateCustomBow(player, DamageType.Nether, true);
 
-                CreateCustomUA(player, DamageType.Cold, null, gearTier);
-                CreateCustomUA(player, DamageType.Fire, null, gearTier);
-                CreateCustomUA(player, DamageType.Electric, null, gearTier);
-                CreateCustomUA(player, DamageType.Acid, null, gearTier);
-                CreateCustomUA(player, DamageType.Slash, null, gearTier);
-                CreateCustomUA(player, DamageType.Pierce, null, gearTier);
-                CreateCustomUA(player, DamageType.Bludgeon, null, gearTier);
-                CreateCustomUA(player, DamageType.Nether, null, gearTier);
+                CreateCustomUA(player, DamageType.Cold);
+                CreateCustomUA(player, DamageType.Fire);
+                CreateCustomUA(player, DamageType.Electric);
+                CreateCustomUA(player, DamageType.Acid);
+                CreateCustomUA(player, DamageType.Slash);
+                CreateCustomUA(player, DamageType.Pierce);
+                CreateCustomUA(player, DamageType.Bludgeon);
+                CreateCustomUA(player, DamageType.Nether);
 
-                CreateCustomWand(player, DamageType.Cold, null, gearTier);
-                CreateCustomWand(player, DamageType.Fire, null, gearTier);
-                CreateCustomWand(player, DamageType.Electric, null, gearTier);
-                CreateCustomWand(player, DamageType.Acid, null, gearTier);
-                CreateCustomWand(player, DamageType.Slash, null, gearTier);
-                CreateCustomWand(player, DamageType.Pierce, null, gearTier);
-                CreateCustomWand(player, DamageType.Bludgeon, null, gearTier);
-                CreateCustomWand(player, DamageType.Nether, null, gearTier);
+                CreateCustomWand(player, DamageType.Cold);
+                CreateCustomWand(player, DamageType.Fire);
+                CreateCustomWand(player, DamageType.Electric);
+                CreateCustomWand(player, DamageType.Acid);
+                CreateCustomWand(player, DamageType.Slash);
+                CreateCustomWand(player, DamageType.Pierce);
+                CreateCustomWand(player, DamageType.Bludgeon);
+                CreateCustomWand(player, DamageType.Nether);
 
                 // Spawn booster packs 7 down to 3 empty
                 for (int i = 7; i >= 3; i--)
                 {
+                    var packName = $"Booster Pack {i}";
+                    if (HasItemNamed(player, packName)) continue;
                     var emptyBag = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
                     if (emptyBag != null)
                     {
-                        emptyBag.Name = $"Booster Pack {i}";
-                        emptyBag.SetProperty(PropertyString.Name, $"Booster Pack {i}");
-                        AddItemToInventory(player, emptyBag);
+                        emptyBag.Name = packName;
+                        emptyBag.SetProperty(PropertyString.Name, packName);
+                        player.TryCreateInInventoryWithNetworking(emptyBag);
                     }
                 }
 
                 // Spawn Booster Pack 2 containing hilts
-                var bag2 = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-                if (bag2 != null)
+                var bag2 = player.GetAllPossessionsDeep().OfType<Container>().FirstOrDefault(c => c.Name == "Booster Pack 2");
+                if (bag2 == null)
                 {
-                    bag2.Name = "Booster Pack 2";
-                    bag2.SetProperty(PropertyString.Name, "Booster Pack 2");
+                    bag2 = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
+                    if (bag2 != null)
+                    {
+                        bag2.Name = "Booster Pack 2";
+                        bag2.SetProperty(PropertyString.Name, "Booster Pack 2");
+                        SpawnHilts(player, bag2);
+                        player.TryCreateInInventoryWithNetworking(bag2);
+                    }
+                }
+                else
+                {
                     SpawnHilts(player, bag2);
-                    AddItemToInventory(player, bag2);
                 }
 
                 // Spawn Booster Pack 1 containing portal gems
-                var bag1 = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-                if (bag1 != null)
+                var bag1 = player.GetAllPossessionsDeep().OfType<Container>().FirstOrDefault(c => c.Name == "Booster Pack 1");
+                if (bag1 == null)
                 {
-                    bag1.Name = "Booster Pack 1";
-                    bag1.SetProperty(PropertyString.Name, "Booster Pack 1");
+                    bag1 = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
+                    if (bag1 != null)
+                    {
+                        bag1.Name = "Booster Pack 1";
+                        bag1.SetProperty(PropertyString.Name, "Booster Pack 1");
+                        SpawnTeleportGems(player, bag1);
+                        player.TryCreateInInventoryWithNetworking(bag1);
+                    }
+                }
+                else
+                {
                     SpawnTeleportGems(player, bag1);
-                    AddItemToInventory(player, bag1);
                 }
 
+                var gearTier = isT10 ? "T10" : "T11";
                 SpawnOlthoiShadowArmor(player, gearTier);
                 SpawnCustomUndergarmentsAndCloak(player, gearTier);
                 SpawnCustomJewelry(player, gearTier);
 
                 // Add and auto-equip Infinite Deadly Prismatic Arrow
-                var arrow = WorldObjectFactory.CreateNewWorldObject(4395100);
-                if (arrow != null)
+                bool hasArrow = player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == 4395100);
+                if (!hasArrow)
                 {
-                    AddItemToInventory(player, arrow);
+                    var arrow = WorldObjectFactory.CreateNewWorldObject(4395100);
+                    if (arrow != null)
+                    {
+                        AddItemToInventory(player, arrow);
+                    }
                 }
 
                 // Add Aetherias
-                SpawnAndEquipAetherias(player);
+                SpawnAetherias(player);
 
-                player.SendMessage($"Character successfully configured with {gearTier} stats, elemental weapons, equipped VoD Olthoi Infused Shadow armor (No Cloak), custom undergarments, custom cloak, custom jewelry, Infinite Arrow, and Aetherias!");
+                // Add all charms (T1) + Charm Catalysts
+                SpawnCharms(player);
+
+                var tierLabel = isT10 ? "Tier 10" : "Tier 11";
+                player.SendMessage($"Character fully configured with {tierLabel} stats, elemental weapons, Olthoi Infused Shadow armor, custom undergarments, cloak, jewelry, Infinite Arrow, Aetherias, and all ability charms!");
                 player.SaveBiotaToDatabase();
             }
             else if (parameters.Length >= 2)
@@ -167,14 +183,12 @@ namespace ACE.Server.Command.Handlers
                     return;
                 }
 
-                if (tier != "T11" && tier != "11" && tier != "T10" && tier != "10")
+                bool isT10 = (tier == "T10" || tier == "10");
+                if (!isT10 && tier != "T11" && tier != "11")
                 {
-                    session.Network.EnqueueSend(new GameMessageSystemChat($"Currently only T11, T10, and T0 are supported. Usage: /testchar {sub} T11 or /testchar {sub} T10", ChatMessageType.System));
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Supported tiers: T11, T10, T0. Usage: /testchar {sub} T11 or /testchar {sub} T10", ChatMessageType.System));
                     return;
                 }
-
-                bool isT10 = (tier == "T10" || tier == "10");
-                string gearTier = isT10 ? "T10" : "T11";
 
                 if (sub == "stats")
                 {
@@ -182,27 +196,33 @@ namespace ACE.Server.Command.Handlers
                         ConfigureStatsAndSpellsT10(player);
                     else
                         ConfigureStatsAndSpells(player);
-                    player.SendMessage($"Character stats, skills, augmentations, and spells configured for {gearTier}!");
+                    var statsTierLabel = isT10 ? "Tier 10" : "Tier 11";
+                    player.SendMessage($"Character stats, skills, augmentations, and spells configured for {statsTierLabel}!");
                     player.SaveBiotaToDatabase();
                 }
                 else if (sub == "gear")
                 {
+                    var gearTier = isT10 ? "T10" : "T11";
                     SpawnArmor(player);
                     SpawnOlthoiShadowArmor(player, gearTier);
                     SpawnCustomUndergarmentsAndCloak(player, gearTier);
                     SpawnCustomJewelry(player, gearTier);
 
                     // Add and auto-equip Infinite Deadly Prismatic Arrow
-                    var arrow = WorldObjectFactory.CreateNewWorldObject(4395100);
-                    if (arrow != null)
+                    bool hasArrow = player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == 4395100);
+                    if (!hasArrow)
                     {
-                        AddItemToInventory(player, arrow);
+                        var arrow = WorldObjectFactory.CreateNewWorldObject(4395100);
+                        if (arrow != null)
+                        {
+                            AddItemToInventory(player, arrow);
+                        }
                     }
 
                     // Add Aetherias
-                    SpawnAndEquipAetherias(player);
+                    SpawnAetherias(player);
 
-                    player.SendMessage($"Prismatic GSA armor, Olthoi Infused Shadow armor (No Cloak), custom undergarments, custom cloak, custom jewelry, Infinite Arrow, and Aetherias generated and equipped for {gearTier}.");
+                    player.SendMessage("Prismatic GSA armor, Olthoi Infused Shadow armor (No Cloak), custom undergarments, custom cloak, custom jewelry, Infinite Arrow, and Aetherias generated and equipped.");
                     player.SaveBiotaToDatabase();
                 }
                 else if (sub == "weapons")
@@ -222,15 +242,21 @@ namespace ACE.Server.Command.Handlers
                         }
                     }
 
-                    SpawnWeapons(player, style, gearTier);
+                    SpawnWeapons(player, style);
                     var styleLabel = style != null ? $"{style} " : "";
-                    player.SendMessage($"{gearTier} {styleLabel}weapons generated in your inventory.");
+                    player.SendMessage($"Weapons generated in your inventory.");
                     player.SaveBiotaToDatabase();
                 }
                 else if (sub == "gems")
                 {
                     SpawnTeleportGems(player);
                     player.SendMessage("Custom Teleport Gems generated in your inventory.");
+                    player.SaveBiotaToDatabase();
+                }
+                else if (sub == "charms")
+                {
+                    SpawnCharms(player);
+                    player.SendMessage("All ability charms (T1) and Charm Catalysts added to your inventory.");
                     player.SaveBiotaToDatabase();
                 }
                 else if (sub == "print")
@@ -381,15 +407,15 @@ namespace ACE.Server.Command.Handlers
         private static void ConfigureStatsAndSpells(Player player)
         {
             // 1. Set Base Attributes
-            // Grumpy Old Man attributes rounded to nearest 10th: Strength 460, Endurance 460, Coordination 570, Quickness 550, Focus 550, Self 510
+            // Base Attributes: Strength 450, Endurance 450, Coordination 575, Quickness 450, Focus 450, Self 450
             var attributeTargets = new Dictionary<PropertyAttribute, uint>()
             {
-                { PropertyAttribute.Strength, 460 },
-                { PropertyAttribute.Endurance, 460 },
-                { PropertyAttribute.Coordination, 570 },
-                { PropertyAttribute.Quickness, 550 },
-                { PropertyAttribute.Focus, 550 },
-                { PropertyAttribute.Self, 510 },
+                { PropertyAttribute.Strength, 450 },
+                { PropertyAttribute.Endurance, 450 },
+                { PropertyAttribute.Coordination, 575 },
+                { PropertyAttribute.Quickness, 450 },
+                { PropertyAttribute.Focus, 450 },
+                { PropertyAttribute.Self, 450 },
             };
 
             foreach (var kvp in attributeTargets)
@@ -410,12 +436,12 @@ namespace ACE.Server.Command.Handlers
             }
 
             // 2. Set Secondary Vitals (Max)
-            // Grumpy Old Man vitals rounded to nearest 10th: Max Health 450, Max Stamina 430, Max Mana 400
+            // Secondary Vitals: Max Health 700, Max Stamina 900, Max Mana 900
             var vitalTargets = new Dictionary<PropertyAttribute2nd, uint>()
             {
-                { PropertyAttribute2nd.MaxHealth, 450 },
-                { PropertyAttribute2nd.MaxStamina, 430 },
-                { PropertyAttribute2nd.MaxMana, 400 },
+                { PropertyAttribute2nd.MaxHealth, 700 },
+                { PropertyAttribute2nd.MaxStamina, 900 },
+                { PropertyAttribute2nd.MaxMana, 900 },
             };
 
             foreach (var kvp in vitalTargets)
@@ -453,7 +479,7 @@ namespace ACE.Server.Command.Handlers
                 skill.InitLevel = 10;
 
                 var skillXPTable = Player.GetSkillXPTable(SkillAdvancementClass.Specialized);
-                if (skillXPTable != null)
+                if (skillXPTable != null && skillXPTable.Count > 0)
                 {
                     skill.Ranks = (ushort)(skillXPTable.Count - 1);
                     skill.ExperienceSpent = skillXPTable[skillXPTable.Count - 1];
@@ -511,115 +537,26 @@ namespace ACE.Server.Command.Handlers
             // 7. Set Enlightenment to 325
             player.Enlightenment = 325;
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 325));
-
-            // 8. Spawn spell components
-            SpawnSpellComponents(player);
-
-            // 9. Spawn Eternal Mana Charge (Infinite Mana Stone)
-            var manaCharge = WorldObjectFactory.CreateNewWorldObject(30254);
-            if (manaCharge != null)
-            {
-                AddItemToInventory(player, manaCharge);
-            }
         }
 
         private static void ConfigureStatsAndSpellsT10(Player player)
         {
-            // 1. Set Base Attributes
-            // Raw Cigam attributes rounded to nearest 10th: strength 410, endurance 530, coordination 550, quickness 440, focus 550, self 540
-            var attributeTargets = new Dictionary<PropertyAttribute, uint>()
-            {
-                { PropertyAttribute.Strength, 410 },
-                { PropertyAttribute.Endurance, 530 },
-                { PropertyAttribute.Coordination, 550 },
-                { PropertyAttribute.Quickness, 440 },
-                { PropertyAttribute.Focus, 550 },
-                { PropertyAttribute.Self, 540 },
-            };
+            // Same as T11 but with lower luminance augs and ENL 300
+            // Reuse T11 to set all attributes, vitals, skills, retail augs, and spells
+            ConfigureStatsAndSpells(player);
 
-            foreach (var kvp in attributeTargets)
-            {
-                var attrType = kvp.Key;
-                var targetValue = kvp.Value;
-                if (!player.Attributes.TryGetValue(attrType, out var attr))
-                    continue;
-
-                // Set innate StartingValue to 100
-                attr.StartingValue = 100;
-                
-                // Ranks = Target - 100
-                uint ranks = targetValue > 100 ? targetValue - 100 : 0;
-                player.SetAttributeRank(attr, ranks);
-                
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateAttribute(player, attr));
-            }
-
-            // 2. Set Secondary Vitals (Max)
-            // Raw Cigam vitals rounded to nearest 10th: Max Health 460, Max Stamina 390, Max Mana 270
-            var vitalTargets = new Dictionary<PropertyAttribute2nd, uint>()
-            {
-                { PropertyAttribute2nd.MaxHealth, 460 },
-                { PropertyAttribute2nd.MaxStamina, 390 },
-                { PropertyAttribute2nd.MaxMana, 270 },
-            };
-
-            foreach (var kvp in vitalTargets)
-            {
-                var vitalType = kvp.Key;
-                var targetValue = kvp.Value;
-                if (!player.Vitals.TryGetValue(vitalType, out var vital))
-                    continue;
-
-                // Clear CP ranks
-                vital.Ranks = 0;
-                vital.ExperienceSpent = 0;
-
-                // Adjust starting value based on current base attribute formulas, etc.
-                int baseFormula = (int)AttributeFormula.GetFormula(player, vitalType, true);
-                int enlBonus = (int)vital.EnlBonus;
-                int gearBonus = (int)vital.GearBonus;
-                
-                int startingValue = (int)targetValue - baseFormula - enlBonus - gearBonus;
-                vital.StartingValue = (uint)Math.Max(1, startingValue);
-                
-                // Fully restore current vital value
-                vital.Current = vital.MaxValue;
-                
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateVital(player, vital));
-            }
-
-            // 2.5 Set Level and Maximize All Skills
-            player.Level = 1300;
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Level, 1300));
-
-            foreach (var skill in player.Skills.Values)
-            {
-                skill.AdvancementClass = SkillAdvancementClass.Specialized;
-                skill.InitLevel = 10;
-
-                var skillXPTable = Player.GetSkillXPTable(SkillAdvancementClass.Specialized);
-                if (skillXPTable != null)
-                {
-                    skill.Ranks = (ushort)(skillXPTable.Count - 1);
-                    skill.ExperienceSpent = skillXPTable[skillXPTable.Count - 1];
-                }
-
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(player, skill));
-            }
-
-            // 3. Set Custom Augmentations (Luminance Augmentations)
+            // Override luminance augs for T10
             player.LuminanceAugmentCreatureCount = 4000;
             player.LuminanceAugmentItemCount = 2000;
-            player.LuminanceAugmentLifeCount = 2350;
+            player.LuminanceAugmentLifeCount = 2000;
             player.LuminanceAugmentWarCount = 1750;
             player.LuminanceAugmentVoidCount = 1750;
-            player.LuminanceAugmentSpellDurationCount = 1000;
-            player.LuminanceAugmentSpecializeCount = 90;
+            player.LuminanceAugmentSpellDurationCount = 1750;
+            player.LuminanceAugmentSpecializeCount = 100;
             player.LuminanceAugmentSummonCount = 1100;
             player.LuminanceAugmentMeleeCount = 1750;
             player.LuminanceAugmentMissileCount = 1750;
 
-            // Sync updated custom augs to the client
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugCreatureCount, player.LuminanceAugmentCreatureCount ?? 0));
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, player.LuminanceAugmentItemCount ?? 0));
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugLifeCount, player.LuminanceAugmentLifeCount ?? 0));
@@ -631,62 +568,9 @@ namespace ACE.Server.Command.Handlers
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMeleeCount, player.LuminanceAugmentMeleeCount ?? 0));
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMissileCount, player.LuminanceAugmentMissileCount ?? 0));
 
-            // 4. Set Retail Augmentations to max/acquired
-            foreach (var kvp in AugmentationDevice.MaxAugs)
-            {
-                var type = kvp.Key;
-                var maxVal = kvp.Value;
-                var augProp = AugmentationDevice.AugProps[type];
-                player.SetProperty(augProp, maxVal);
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, augProp, maxVal));
-            }
-
-            // 5. Learn All Spells Silently
-            foreach (var spellID in Player.PlayerSpellTable)
-            {
-                if (player.AddKnownSpell(spellID))
-                {
-                    player.Session.Network.EnqueueSend(new GameEventMagicUpdateSpell(player.Session, (ushort)spellID));
-                }
-            }
-
-            // 6. Enable Aetheria Slots
-            player.UpdateProperty(player, PropertyInt.AetheriaBitfield, (int)AetheriaBitfield.All);
-
-            // 7. Set Enlightenment to 300
+            // Override Enlightenment to 300
             player.Enlightenment = 300;
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 300));
-
-            // 8. Spawn spell components
-            SpawnSpellComponents(player);
-
-            // 9. Spawn Eternal Mana Charge (Infinite Mana Stone)
-            var manaCharge = WorldObjectFactory.CreateNewWorldObject(30254);
-            if (manaCharge != null)
-            {
-                AddItemToInventory(player, manaCharge);
-            }
-        }
-
-        private static void SpawnSpellComponents(Player player)
-        {
-            var scarabIds = new List<uint> { 686, 687, 688, 689, 690, 691, 8897, 37155 }; // Copper, Gold, Silver, Iron, Pyreal, Lead, Platinum, Mana
-            foreach (var wcid in scarabIds)
-            {
-                var scarab = WorldObjectFactory.CreateNewWorldObject(wcid);
-                if (scarab != null)
-                {
-                    scarab.SetStackSize(100);
-                    AddItemToInventory(player, scarab);
-                }
-            }
-
-            var taper = WorldObjectFactory.CreateNewWorldObject(20631); // Prismatic Taper
-            if (taper != null)
-            {
-                taper.SetStackSize(1000);
-                AddItemToInventory(player, taper);
-            }
         }
 
         private static void SpawnArmor(Player player)
@@ -707,11 +591,11 @@ namespace ACE.Server.Command.Handlers
 
             foreach (var wcid in armorWcids)
             {
+                bool alreadyHas = player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == wcid);
+                if (alreadyHas) continue;
                 var armorItem = WorldObjectFactory.CreateNewWorldObject(wcid);
                 if (armorItem != null)
-                {
-                    AddItemToInventory(player, armorItem);
-                }
+                    player.TryCreateInInventoryWithNetworking(armorItem);
             }
         }
 
@@ -732,14 +616,13 @@ namespace ACE.Server.Command.Handlers
 
             foreach (var kvp in armorNames)
             {
+                if (HasItemNamed(player, kvp.Value)) continue;
                 var item = WorldObjectFactory.CreateNewWorldObject(kvp.Key);
                 if (item != null)
                 {
                     item.Name = kvp.Value;
                     item.SetProperty(PropertyString.Name, kvp.Value);
-                    item.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
- 
-                    // Auto-equip all 9 pieces
+                    item.SetProperty(PropertyInt.MaterialType, 0);
                     AddItemToInventory(player, item);
                 }
             }
@@ -747,19 +630,21 @@ namespace ACE.Server.Command.Handlers
 
         private static void SpawnCustomUndergarmentsAndCloak(Player player, string tier = "T11")
         {
-            // 1. Shirt: "Shirt (Test)" (WCID 28607)
+            var shirtName = $"{tier} Shirt";
+            if (!HasItemNamed(player, shirtName))
+            {
             var shirt = WorldObjectFactory.CreateNewWorldObject(28607);
             if (shirt != null)
             {
-                shirt.Name = $"{tier} Shirt (Test)";
-                shirt.SetProperty(PropertyString.Name, $"{tier} Shirt (Test)");
+                shirt.Name = shirtName;
+                shirt.SetProperty(PropertyString.Name, shirtName);
                 shirt.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 shirt.SetProperty(PropertyInt.Value, 11519);
                 shirt.SetProperty(PropertyInt.Mass, 75);
                 shirt.SetProperty(PropertyInt.EncumbranceVal, 75);
                 shirt.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 shirt.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                shirt.SetProperty(PropertyInt.WieldDifficulty, 370);
+                shirt.SetProperty(PropertyInt.WieldDifficulty, 725);
                 shirt.SetProperty(PropertyInt.ItemWorkmanship, 7);
                 shirt.SetProperty(PropertyInt.ItemSpellcraft, 750);
                 shirt.SetProperty(PropertyInt.ItemCurMana, 3240);
@@ -783,20 +668,23 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, shirt);
             }
+            }
  
-            // 2. Pants: "Pants (Test)" (WCID 2599)
+            var pantsName = $"{tier} Pants";
+            if (!HasItemNamed(player, pantsName))
+            {
             var pants = WorldObjectFactory.CreateNewWorldObject(2599);
             if (pants != null)
             {
-                pants.Name = $"{tier} Pants (Test)";
-                pants.SetProperty(PropertyString.Name, $"{tier} Pants (Test)");
+                pants.Name = pantsName;
+                pants.SetProperty(PropertyString.Name, pantsName);
                 pants.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 pants.SetProperty(PropertyInt.Value, 13948);
                 pants.SetProperty(PropertyInt.Mass, 90);
                 pants.SetProperty(PropertyInt.EncumbranceVal, 135);
                 pants.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 pants.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                pants.SetProperty(PropertyInt.WieldDifficulty, 370);
+                pants.SetProperty(PropertyInt.WieldDifficulty, 725);
                 pants.SetProperty(PropertyInt.ItemWorkmanship, 8);
                 pants.SetProperty(PropertyInt.ItemSpellcraft, 750);
                 pants.SetProperty(PropertyInt.ItemCurMana, 3240);
@@ -820,13 +708,16 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, pants);
             }
+            }
  
-            // 3. Cloak: "Cloak (Test)" (WCID 227190032)
+            var cloakName = $"{tier} Cloak";
+            if (!HasItemNamed(player, cloakName))
+            {
             var cloak = WorldObjectFactory.CreateNewWorldObject(227190032);
             if (cloak != null)
             {
-                cloak.Name = $"{tier} Cloak (Test)";
-                cloak.SetProperty(PropertyString.Name, $"{tier} Cloak (Test)");
+                cloak.Name = cloakName;
+                cloak.SetProperty(PropertyString.Name, cloakName);
                 cloak.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 cloak.SetProperty(PropertyInt.Value, 2500);
                 cloak.SetProperty(PropertyInt.Mass, 0);
@@ -851,23 +742,26 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, cloak);
             }
+            }
         }
  
         private static void SpawnCustomJewelry(Player player, string tier = "T11")
         {
-            // 1. Left Bracelet: "Bracelet (Test)" (WCID 21392)
+            var leftBraceletName = $"{tier} Bracelet 1";
+            if (!HasItemNamed(player, leftBraceletName))
+            {
             var leftBracelet = WorldObjectFactory.CreateNewWorldObject(21392);
             if (leftBracelet != null)
             {
-                leftBracelet.Name = $"{tier} Bracelet 1 (Test)";
-                leftBracelet.SetProperty(PropertyString.Name, $"{tier} Bracelet 1 (Test)");
+                leftBracelet.Name = leftBraceletName;
+                leftBracelet.SetProperty(PropertyString.Name, leftBraceletName);
                 leftBracelet.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 leftBracelet.SetProperty(PropertyInt.Value, 150);
                 leftBracelet.SetProperty(PropertyInt.Mass, 60);
                 leftBracelet.SetProperty(PropertyInt.EncumbranceVal, 150);
                 leftBracelet.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 leftBracelet.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                leftBracelet.SetProperty(PropertyInt.WieldDifficulty, 370);
+                leftBracelet.SetProperty(PropertyInt.WieldDifficulty, 725);
                 leftBracelet.SetProperty(PropertyInt.ItemWorkmanship, 6);
                 leftBracelet.SetProperty(PropertyInt.ItemSpellcraft, 3870);
                 leftBracelet.SetProperty(PropertyInt.ItemCurMana, 1196);
@@ -876,7 +770,7 @@ namespace ACE.Server.Command.Handlers
                 leftBracelet.SetProperty(PropertyInt.GemCount, 2);
                 leftBracelet.SetProperty(PropertyInt.GemType, 49);
                 leftBracelet.SetProperty(PropertyInt.GearMaxHealth, 100);
-                leftBracelet.ValidLocations = EquipMask.WristWear;
+                leftBracelet.ValidLocations = EquipMask.WristWearLeft;
  
                 // Spells
                 leftBracelet.Biota.ClearSpells(leftBracelet.BiotaDatabaseLock);
@@ -888,20 +782,23 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, leftBracelet);
             }
+            }
  
-            // 2. Right Bracelet: "Bracelet (Test)" (WCID 21392)
+            var rightBraceletName = $"{tier} Bracelet 2";
+            if (!HasItemNamed(player, rightBraceletName))
+            {
             var rightBracelet = WorldObjectFactory.CreateNewWorldObject(21392);
             if (rightBracelet != null)
             {
-                rightBracelet.Name = $"{tier} Bracelet 2 (Test)";
-                rightBracelet.SetProperty(PropertyString.Name, $"{tier} Bracelet 2 (Test)");
+                rightBracelet.Name = rightBraceletName;
+                rightBracelet.SetProperty(PropertyString.Name, rightBraceletName);
                 rightBracelet.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 rightBracelet.SetProperty(PropertyInt.Value, 150);
                 rightBracelet.SetProperty(PropertyInt.Mass, 60);
                 rightBracelet.SetProperty(PropertyInt.EncumbranceVal, 150);
                 rightBracelet.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 rightBracelet.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                rightBracelet.SetProperty(PropertyInt.WieldDifficulty, 370);
+                rightBracelet.SetProperty(PropertyInt.WieldDifficulty, 725);
                 rightBracelet.SetProperty(PropertyInt.ItemWorkmanship, 6);
                 rightBracelet.SetProperty(PropertyInt.ItemSpellcraft, 3825);
                 rightBracelet.SetProperty(PropertyInt.ItemCurMana, 1392);
@@ -910,7 +807,7 @@ namespace ACE.Server.Command.Handlers
                 rightBracelet.SetProperty(PropertyInt.GemCount, 4);
                 rightBracelet.SetProperty(PropertyInt.GemType, 33);
                 rightBracelet.SetProperty(PropertyInt.GearMaxHealth, 100);
-                rightBracelet.ValidLocations = EquipMask.WristWear;
+                rightBracelet.ValidLocations = EquipMask.WristWearRight;
  
                 // Spells
                 rightBracelet.Biota.ClearSpells(rightBracelet.BiotaDatabaseLock);
@@ -922,20 +819,23 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, rightBracelet);
             }
+            }
  
-            // 3. Left Ring: "Ring (Test)" (WCID 21394)
+            var leftRingName = $"{tier} Ring 1";
+            if (!HasItemNamed(player, leftRingName))
+            {
             var leftRing = WorldObjectFactory.CreateNewWorldObject(21394);
             if (leftRing != null)
             {
-                leftRing.Name = $"{tier} Ring 1 (Test)";
-                leftRing.SetProperty(PropertyString.Name, $"{tier} Ring 1 (Test)");
+                leftRing.Name = leftRingName;
+                leftRing.SetProperty(PropertyString.Name, leftRingName);
                 leftRing.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 leftRing.SetProperty(PropertyInt.Value, 30);
                 leftRing.SetProperty(PropertyInt.Mass, 20);
                 leftRing.SetProperty(PropertyInt.EncumbranceVal, 30);
                 leftRing.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 leftRing.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                leftRing.SetProperty(PropertyInt.WieldDifficulty, 370);
+                leftRing.SetProperty(PropertyInt.WieldDifficulty, 725);
                 leftRing.SetProperty(PropertyInt.ItemWorkmanship, 7);
                 leftRing.SetProperty(PropertyInt.ItemSpellcraft, 4315);
                 leftRing.SetProperty(PropertyInt.ItemCurMana, 1166);
@@ -944,7 +844,7 @@ namespace ACE.Server.Command.Handlers
                 leftRing.SetProperty(PropertyInt.GemCount, 3);
                 leftRing.SetProperty(PropertyInt.GemType, 49);
                 leftRing.SetProperty(PropertyInt.GearMaxHealth, 100);
-                leftRing.ValidLocations = EquipMask.FingerWear;
+                leftRing.ValidLocations = EquipMask.FingerWearLeft;
  
                 // Spells
                 leftRing.Biota.ClearSpells(leftRing.BiotaDatabaseLock);
@@ -956,20 +856,23 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, leftRing);
             }
+            }
  
-            // 4. Right Ring: "Ring (Test)" (WCID 21394)
+            var rightRingName = $"{tier} Ring 2";
+            if (!HasItemNamed(player, rightRingName))
+            {
             var rightRing = WorldObjectFactory.CreateNewWorldObject(21394);
             if (rightRing != null)
             {
-                rightRing.Name = $"{tier} Ring 2 (Test)";
-                rightRing.SetProperty(PropertyString.Name, $"{tier} Ring 2 (Test)");
+                rightRing.Name = rightRingName;
+                rightRing.SetProperty(PropertyString.Name, rightRingName);
                 rightRing.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 rightRing.SetProperty(PropertyInt.Value, 30);
                 rightRing.SetProperty(PropertyInt.Mass, 20);
                 rightRing.SetProperty(PropertyInt.EncumbranceVal, 30);
                 rightRing.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 rightRing.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                rightRing.SetProperty(PropertyInt.WieldDifficulty, 370);
+                rightRing.SetProperty(PropertyInt.WieldDifficulty, 725);
                 rightRing.SetProperty(PropertyInt.ItemWorkmanship, 7);
                 rightRing.SetProperty(PropertyInt.ItemSpellcraft, 4273);
                 rightRing.SetProperty(PropertyInt.ItemCurMana, 1399);
@@ -978,7 +881,7 @@ namespace ACE.Server.Command.Handlers
                 rightRing.SetProperty(PropertyInt.GemCount, 3);
                 rightRing.SetProperty(PropertyInt.GemType, 39);
                 rightRing.SetProperty(PropertyInt.GearMaxHealth, 100);
-                rightRing.ValidLocations = EquipMask.FingerWear;
+                rightRing.ValidLocations = EquipMask.FingerWearRight;
  
                 // Spells
                 rightRing.Biota.ClearSpells(rightRing.BiotaDatabaseLock);
@@ -990,20 +893,23 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, rightRing);
             }
+            }
  
-            // 5. Necklace: "Necklace (Test)" (WCID 27445)
+            var necklaceName = $"{tier} Necklace";
+            if (!HasItemNamed(player, necklaceName))
+            {
             var necklace = WorldObjectFactory.CreateNewWorldObject(27445);
             if (necklace != null)
             {
-                necklace.Name = $"{tier} Necklace (Test)";
-                necklace.SetProperty(PropertyString.Name, $"{tier} Necklace (Test)");
+                necklace.Name = necklaceName;
+                necklace.SetProperty(PropertyString.Name, necklaceName);
                 necklace.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 necklace.SetProperty(PropertyInt.Value, 90);
                 necklace.SetProperty(PropertyInt.Mass, 60);
                 necklace.SetProperty(PropertyInt.EncumbranceVal, 90);
                 necklace.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 necklace.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                necklace.SetProperty(PropertyInt.WieldDifficulty, 370);
+                necklace.SetProperty(PropertyInt.WieldDifficulty, 725);
                 necklace.SetProperty(PropertyInt.ItemWorkmanship, 8);
                 necklace.SetProperty(PropertyInt.ItemSpellcraft, 4370);
                 necklace.SetProperty(PropertyInt.ItemCurMana, 2138);
@@ -1024,20 +930,23 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, necklace);
             }
+            }
  
-            // 6. Trinket: "Trinket (Test)" (WCID 41483)
+            var trinketName = $"{tier} Trinket";
+            if (!HasItemNamed(player, trinketName))
+            {
             var trinket = WorldObjectFactory.CreateNewWorldObject(41483);
             if (trinket != null)
             {
-                trinket.Name = $"{tier} Trinket (Test)";
-                trinket.SetProperty(PropertyString.Name, $"{tier} Trinket (Test)");
+                trinket.Name = trinketName;
+                trinket.SetProperty(PropertyString.Name, trinketName);
                 trinket.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                 trinket.SetProperty(PropertyInt.Value, 100);
                 trinket.SetProperty(PropertyInt.Mass, 60);
                 trinket.SetProperty(PropertyInt.EncumbranceVal, 100);
                 trinket.SetProperty(PropertyInt.WieldRequirements, (int)WieldRequirement.RawSkill);
                 trinket.SetProperty(PropertyInt.WieldSkillType, (int)Skill.MeleeDefense);
-                trinket.SetProperty(PropertyInt.WieldDifficulty, 370);
+                trinket.SetProperty(PropertyInt.WieldDifficulty, 725);
                 trinket.SetProperty(PropertyInt.ItemWorkmanship, 8);
                 trinket.SetProperty(PropertyInt.ItemSpellcraft, 339);
                 trinket.SetProperty(PropertyInt.ItemCurMana, 1266);
@@ -1058,28 +967,140 @@ namespace ACE.Server.Command.Handlers
  
                 AddItemToInventory(player, trinket);
             }
+            }
+        }
+
+        private static void SpawnCharms(Player player)
+        {
+            if (HasItemNamed(player, "Ability Charms Pack")) return;
+
+            var rucksack = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
+            if (rucksack != null)
+            {
+                rucksack.Name = "Ability Charms Pack";
+                rucksack.SetProperty(PropertyString.Name, "Ability Charms Pack");
+                rucksack.SetProperty(PropertyInt.MaterialType, 0);
+            }
+
+            var charmWcids = new List<uint>()
+            {
+                777700001, 777710004, 777720004, // Mana Barrier (T1-T3)
+                777700019,                       // Infinite Casting (T1)
+                777700020, 777710002, 777720002, // Asheron's Favor (T1-T3)
+                777700021, 777710003, 777720003, // Artisan's Charm (T1-T3)
+                777700022,                       // Shrapnel (T1)
+                777700023,                       // Agony (T1)
+                777700025, 777710005, 777720005, // Explosive Arrow (T1-T3)
+                777700024,                       // Split Cast (T1)
+                777700026,                       // Omni Strike (T1)
+                78780030,                        // Summon Essence Refill (T1)
+                78780031,                        // Universal Summoning Mastery (T1)
+                777700300,                       // Auto-Rebuff (T1)
+                777700027, 777710007, 777720007, // Fork (T1-T3)
+                777700028, 777710008, 777720008  // Far Shot (T1-T3)
+            };
+
+            foreach (var wcid in charmWcids)
+            {
+                var charm = WorldObjectFactory.CreateNewWorldObject(wcid);
+                if (charm != null)
+                {
+                    if (rucksack != null)
+                        rucksack.TryAddToInventory(charm);
+                    else
+                        player.TryCreateInInventoryWithNetworking(charm);
+                }
+            }
+
+            // 20x Charm Catalyst
+            var catalyst = WorldObjectFactory.CreateNewWorldObject(777700010);
+            if (catalyst != null)
+            {
+                catalyst.SetProperty(PropertyInt.StackSize, 20);
+                catalyst.SetProperty(PropertyInt.EncumbranceVal, (catalyst.StackUnitEncumbrance ?? 5) * 20);
+                if (rucksack != null)
+                    rucksack.TryAddToInventory(catalyst);
+                else
+                    player.TryCreateInInventoryWithNetworking(catalyst);
+            }
+
+            if (rucksack != null)
+            {
+                player.TryCreateInInventoryWithNetworking(rucksack);
+            }
+
+            SpawnSpellcastingConsumables(player);
+        }
+
+        private static void SpawnSpellcastingConsumables(Player player)
+        {
+            var possessions = player.GetAllPossessionsDeep().ToList();
+
+            // 1. Tapers (1000 Prismatic Tapers)
+            var targetTapers = 1000;
+            var currentTapers = possessions.Where(i => i.WeenieClassId == 20631).Sum(i => i.StackSize ?? 1);
+            if (currentTapers < targetTapers)
+            {
+                var needed = targetTapers - currentTapers;
+                while (needed > 0)
+                {
+                    var taper = WorldObjectFactory.CreateNewWorldObject(20631);
+                    if (taper == null) break;
+                    var maxStack = taper.MaxStackSize ?? 1000;
+                    var toSpawn = Math.Min(needed, maxStack);
+                    taper.SetStackSize(toSpawn);
+                    player.TryCreateInInventoryWithNetworking(taper);
+                    needed -= toSpawn;
+                }
+            }
+
+            // 2. Scarabs (100 of each standard spellcasting scarab)
+            var scarabWcids = new List<uint> { 691, 689, 686, 688, 687, 690, 8897, 37155 };
+            var targetScarabs = 100;
+
+            foreach (var wcid in scarabWcids)
+            {
+                var currentScarabs = possessions.Where(i => i.WeenieClassId == wcid).Sum(i => i.StackSize ?? 1);
+                if (currentScarabs < targetScarabs)
+                {
+                    var needed = targetScarabs - currentScarabs;
+                    while (needed > 0)
+                    {
+                        var scarab = WorldObjectFactory.CreateNewWorldObject(wcid);
+                        if (scarab == null) break;
+                        var maxStack = scarab.MaxStackSize ?? 100;
+                        var toSpawn = Math.Min(needed, maxStack);
+                        scarab.SetStackSize(toSpawn);
+                        player.TryCreateInInventoryWithNetworking(scarab);
+                        needed -= toSpawn;
+                    }
+                }
+            }
         }
 
         private static void AddItemToInventory(Player player, WorldObject item)
         {
-            if (player.Inventory.Values.Any(i => i.Name == item.Name) || player.EquippedObjects.Values.Any(i => i.Name == item.Name))
-            {
-                return;
-            }
             player.TryCreateInInventoryWithNetworking(item);
         }
 
-        private static void SpawnAndEquipAetherias(Player player)
+        private static bool HasItemNamed(Player player, string name)
+        {
+            return player.GetAllPossessionsDeep().Any(i => i.Name == name);
+        }
+
+        private static void SpawnAetherias(Player player)
         {
             // Enable Aetheria slots
             player.UpdateProperty(player, PropertyInt.AetheriaBitfield, (int)AetheriaBitfield.All);
 
-            // 1. Blue Aetheria of Growth (Level 10)
+            // 1. Blue Aetheria
+            if (!HasItemNamed(player, "Blue Aetheria"))
+            {
             var blueAetheria = WorldObjectFactory.CreateNewWorldObject(42635);
             if (blueAetheria != null)
             {
-                blueAetheria.Name = "Blue Aetheria (Test)";
-                blueAetheria.SetProperty(PropertyString.Name, "Blue Aetheria (Test)");
+                blueAetheria.Name = "Blue Aetheria";
+                blueAetheria.SetProperty(PropertyString.Name, "Blue Aetheria");
                 blueAetheria.SetProperty(PropertyString.LongDesc, "This aetheria's sigil now shows on the surface.");
                 blueAetheria.SetProperty(PropertyInt.EquipmentSetId, (int)EquipmentSet.AetheriaGrowth);
                 blueAetheria.SetProperty(PropertyDataId.Icon, 100690944); // 0x06006C00 Blue Growth icon
@@ -1101,13 +1122,16 @@ namespace ACE.Server.Command.Handlers
 
                 AddItemToInventory(player, blueAetheria);
             }
+            }
 
-            // 2. Yellow Aetheria of Fury (Level 8)
+            // 2. Yellow Aetheria
+            if (!HasItemNamed(player, "Yellow Aetheria"))
+            {
             var yellowAetheria = WorldObjectFactory.CreateNewWorldObject(42637);
             if (yellowAetheria != null)
             {
-                yellowAetheria.Name = "Yellow Aetheria (Test)";
-                yellowAetheria.SetProperty(PropertyString.Name, "Yellow Aetheria (Test)");
+                yellowAetheria.Name = "Yellow Aetheria";
+                yellowAetheria.SetProperty(PropertyString.Name, "Yellow Aetheria");
                 yellowAetheria.SetProperty(PropertyString.LongDesc, "This aetheria's sigil now shows on the surface.");
                 yellowAetheria.SetProperty(PropertyInt.EquipmentSetId, (int)EquipmentSet.AetheriaFury);
                 yellowAetheria.SetProperty(PropertyDataId.Icon, 100690931); // 0x06006BF3 Yellow Fury icon
@@ -1129,13 +1153,16 @@ namespace ACE.Server.Command.Handlers
 
                 AddItemToInventory(player, yellowAetheria);
             }
+            }
 
-            // 3. Red Aetheria of Fury (Level 8)
+            // 3. Red Aetheria
+            if (!HasItemNamed(player, "Red Aetheria"))
+            {
             var redAetheria = WorldObjectFactory.CreateNewWorldObject(42636);
             if (redAetheria != null)
             {
-                redAetheria.Name = "Red Aetheria (Test)";
-                redAetheria.SetProperty(PropertyString.Name, "Red Aetheria (Test)");
+                redAetheria.Name = "Red Aetheria";
+                redAetheria.SetProperty(PropertyString.Name, "Red Aetheria");
                 redAetheria.SetProperty(PropertyString.LongDesc, "This aetheria's sigil now shows on the surface.");
                 redAetheria.SetProperty(PropertyInt.EquipmentSetId, (int)EquipmentSet.AetheriaFury);
                 redAetheria.SetProperty(PropertyDataId.Icon, 100690948); // 0x06006C04 Red Fury icon
@@ -1157,16 +1184,19 @@ namespace ACE.Server.Command.Handlers
 
                 AddItemToInventory(player, redAetheria);
             }
+            }
         }
 
-        private static void SpawnWeapons(Player player, string targetStyle, string tier = "T11")
+        private static void SpawnWeapons(Player player, string targetStyle)
         {
+            var rucksackName = "Weapons Pack";
+            if (HasItemNamed(player, rucksackName)) return;
             var rucksack = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
             if (rucksack != null)
             {
-                rucksack.Name = $"{tier} Weapons Pack";
-                rucksack.SetProperty(PropertyString.Name, $"{tier} Weapons Pack");
-                rucksack.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
+                rucksack.Name = rucksackName;
+                rucksack.SetProperty(PropertyString.Name, rucksackName);
+                rucksack.SetProperty(PropertyInt.MaterialType, 0);
             }
 
             var weaponBases = new Dictionary<string, (uint wcid, string baseName)>()
@@ -1203,15 +1233,15 @@ namespace ACE.Server.Command.Handlers
                 {
                     if (weaponType.Equals("Bow", StringComparison.OrdinalIgnoreCase))
                     {
-                        CreateCustomBow(player, element, true, rucksack, tier);
+                        CreateCustomBow(player, element, true, rucksack);
                     }
                     else if (weaponType.Equals("UA", StringComparison.OrdinalIgnoreCase))
                     {
-                        CreateCustomUA(player, element, rucksack, tier);
+                        CreateCustomUA(player, element, rucksack);
                     }
                     else if (weaponType.Equals("Wand", StringComparison.OrdinalIgnoreCase))
                     {
-                        CreateCustomWand(player, element, rucksack, tier);
+                        CreateCustomWand(player, element, rucksack);
                     }
                     else
                     {
@@ -1221,8 +1251,8 @@ namespace ACE.Server.Command.Handlers
                             weapon.SetProperty(PropertyInt.DamageType, (int)element);
                             var elementLabel = GetElementLabel(element);
                             string label = weaponType.Equals("2H", StringComparison.OrdinalIgnoreCase) ? "2H" : baseName;
-                            weapon.Name = $"{tier} {elementLabel} {label} (Test)";
-                            weapon.SetProperty(PropertyString.Name, $"{tier} {elementLabel} {label} (Test)");
+                            weapon.Name = $"{elementLabel} {label} (Test)";
+                            weapon.SetProperty(PropertyString.Name, $"{elementLabel} {label} (Test)");
                             weapon.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
                             if (rucksack != null)
                                 rucksack.TryAddToInventory(weapon);
@@ -1240,20 +1270,21 @@ namespace ACE.Server.Command.Handlers
 
             if (rucksack != null)
             {
-                AddItemToInventory(player, rucksack);
+                player.TryCreateInInventoryWithNetworking(rucksack);
             }
         }
 
-        private static void CreateCustomBow(Player player, DamageType element, bool includeRend = true, Container destination = null, string tier = "T11")
+        private static void CreateCustomBow(Player player, DamageType element, bool includeRend = true, Container destination = null)
         {
-            uint baseWcid = 46139; // Atlan Bow template to avoid material prefix
+            uint baseWcid = 46139;
+            string elementLabel = GetElementLabel(element);
+            var expectedName = $"{elementLabel} Bow (Test)";
+            if (HasItemNamed(player, expectedName)) return;
 
             var bow = WorldObjectFactory.CreateNewWorldObject(baseWcid);
             if (bow == null) return;
-
-            string elementLabel = GetElementLabel(element);
-            bow.Name = $"{tier} {elementLabel} Bow (Test)";
-            bow.SetProperty(PropertyString.Name, $"{tier} {elementLabel} Bow (Test)");
+            bow.Name = $"{elementLabel} Bow (Test)";
+            bow.SetProperty(PropertyString.Name, $"{elementLabel} Bow (Test)");
             bow.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
 
             // Get matching rend background underlay
@@ -1304,11 +1335,11 @@ namespace ACE.Server.Command.Handlers
 
             if (includeRend)
             {
-                bow.SetProperty(PropertyString.LongDesc, $"{tier} {elementLabel} Bow (Test) of Swift Killer, set with 1 Emerald");
+                bow.SetProperty(PropertyString.LongDesc, $"{elementLabel} Bow (Test) of Swift Killer, set with 1 Emerald");
             }
             else
             {
-                bow.SetProperty(PropertyString.LongDesc, $"{tier} {elementLabel} Bow (Test) of Swift Killer");
+                bow.SetProperty(PropertyString.LongDesc, $"{elementLabel} Bow (Test) of Swift Killer");
             }
 
             // Int Properties
@@ -1353,18 +1384,18 @@ namespace ACE.Server.Command.Handlers
             if (destination != null)
                 destination.TryAddToInventory(bow);
             else
-                AddItemToInventory(player, bow);
+                player.TryCreateInInventoryWithNetworking(bow);
         }
 
-        private static void CreateCustomUA(Player player, DamageType element, Container destination = null, string tier = "T11")
+        private static void CreateCustomUA(Player player, DamageType element, Container destination = null)
         {
-            uint baseWcid = 6171; // Peerless Atlan Claw template to avoid material prefix
+            uint baseWcid = 6171;
+            string elementLabel = GetElementLabel(element);
+            string weaponName = $"{elementLabel} UA (Test)";
+            if (HasItemNamed(player, weaponName)) return;
 
             var claw = WorldObjectFactory.CreateNewWorldObject(baseWcid);
             if (claw == null) return;
-
-            string elementLabel = GetElementLabel(element);
-            string weaponName = $"{tier} {elementLabel} UA (Test)";
 
             claw.Name = weaponName;
             claw.SetProperty(PropertyString.Name, weaponName);
@@ -1468,18 +1499,18 @@ namespace ACE.Server.Command.Handlers
             if (destination != null)
                 destination.TryAddToInventory(claw);
             else
-                AddItemToInventory(player, claw);
+                player.TryCreateInInventoryWithNetworking(claw);
         }
 
-        private static void CreateCustomWand(Player player, DamageType element, Container destination = null, string tier = "T11")
+        private static void CreateCustomWand(Player player, DamageType element, Container destination = null)
         {
-            uint baseWcid = 46122; // Atlan Wand template to avoid material prefix
+            uint baseWcid = 46122;
+            string elementLabel = GetElementLabel(element);
+            string weaponName = $"{elementLabel} Wand (Test)";
+            if (HasItemNamed(player, weaponName)) return;
 
             var wand = WorldObjectFactory.CreateNewWorldObject(baseWcid);
             if (wand == null) return;
-
-            string elementLabel = GetElementLabel(element);
-            string weaponName = $"{tier} {elementLabel} Wand (Test)";
 
             wand.Name = weaponName;
             wand.SetProperty(PropertyString.Name, weaponName);
@@ -1561,12 +1592,16 @@ namespace ACE.Server.Command.Handlers
             if (destination != null)
                 destination.TryAddToInventory(wand);
             else
-                AddItemToInventory(player, wand);
+                player.TryCreateInInventoryWithNetworking(wand);
         }
 
         private static void SpawnHilts(Player player, Container destination = null)
         {
-            for (int i = 0; i < 10; i++)
+            var existingHiltCount = player.GetAllPossessionsDeep().Count(i => i.WeenieClassId == 719220045);
+            if (existingHiltCount >= 10) return;
+
+            int toSpawn = 10 - existingHiltCount;
+            for (int i = 0; i < toSpawn; i++)
             {
                 var hilt = WorldObjectFactory.CreateNewWorldObject(719220045);
                 if (hilt != null)
@@ -1574,7 +1609,7 @@ namespace ACE.Server.Command.Handlers
                     if (destination != null)
                         destination.TryAddToInventory(hilt);
                     else
-                        AddItemToInventory(player, hilt);
+                        player.TryCreateInInventoryWithNetworking(hilt);
                 }
             }
         }
@@ -1652,66 +1687,23 @@ namespace ACE.Server.Command.Handlers
                 227190153,  // Mellas Court Recall Gem
                 227190155,  // Valorya Gate Recall Gem
                 227190156,  // Vesper Gate Recall Gem
-                227190157,  // Winthur Gate Recall Gem
-                777700029   // Tou Tou Prestige Portal Gem
+                227190157   // Winthur Gate Recall Gem
             };
+
+            var playerWcids = new HashSet<uint>(player.GetAllPossessionsDeep().Select(i => i.WeenieClassId));
 
             foreach (var wcid in gemWcids)
             {
+                if (playerWcids.Contains(wcid)) continue;
+
                 var gem = WorldObjectFactory.CreateNewWorldObject(wcid);
                 if (gem != null)
                 {
                     if (destination != null)
                         destination.TryAddToInventory(gem);
                     else
-                        AddItemToInventory(player, gem);
+                        player.TryCreateInInventoryWithNetworking(gem);
                 }
-            }
-        }
-
-        private static void SpawnCharms(Player player)
-        {
-            var rucksack = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-            if (rucksack != null)
-            {
-                rucksack.Name = "Ability Charms Pack";
-                rucksack.SetProperty(PropertyString.Name, "Ability Charms Pack");
-                rucksack.SetProperty(PropertyInt.MaterialType, 0);
-            }
-
-            var charmWcids = new List<uint>()
-            {
-                777700001, 777710004, 777720004, // Mana Barrier (T1-T3)
-                777700019,                       // Infinite Casting (T1)
-                777700020, 777710002, 777720002, // Asheron's Favor (T1-T3)
-                777700021, 777710003, 777720003, // Artisan's Charm (T1-T3)
-                777700022,                       // Shrapnel (T1)
-                777700023,                       // Agony (T1)
-                777700025, 777710005, 777720005, // Explosive Arrow (T1-T3)
-                777700024,                       // Split Cast (T1)
-                777700026,                       // Omni Strike (T1)
-                78780030,                        // Summon Essence Refill (T1)
-                78780031,                        // Universal Summoning Mastery (T1)
-                777700300,                       // Auto-Rebuff (T1)
-                777700027, 777710007, 777720007, // Fork (T1-T3)
-                777700028, 777710008, 777720008  // Far Shot (T1-T3)
-            };
-
-            foreach (var wcid in charmWcids)
-            {
-                var charm = WorldObjectFactory.CreateNewWorldObject(wcid);
-                if (charm != null)
-                {
-                    if (rucksack != null)
-                        rucksack.TryAddToInventory(charm);
-                    else
-                        AddItemToInventory(player, charm);
-                }
-            }
-
-            if (rucksack != null)
-            {
-                AddItemToInventory(player, rucksack);
             }
         }
     }
