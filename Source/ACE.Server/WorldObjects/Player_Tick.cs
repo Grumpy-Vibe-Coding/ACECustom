@@ -165,6 +165,39 @@ namespace ACE.Server.WorldObjects
 
             PhysicsObj.ObjMaint.DestroyObjects();
 
+            if (AlwaysAetheriaProc)
+            {
+                EnsureAlwaysAetheriaProcEnchantments();
+            }
+
+            if (IsTrackingDamageTaken)
+            {
+                var elapsed = currentUnixTime - DamageTakenTrackingStartTimestamp;
+                if (elapsed >= DamageTakenRollingWindowSeconds)
+                {
+                    StopDamageTracking();
+                }
+                else if (currentUnixTime - DamageTakenLastPrintTimestamp >= 15.0)
+                {
+                    DamageTakenLastPrintTimestamp = currentUnixTime;
+                    PrintDamageTakenStats(currentUnixTime);
+                }
+            }
+
+            if (IsTrackingDamageDealt)
+            {
+                var elapsed = currentUnixTime - DamageDealtTrackingStartTimestamp;
+                if (elapsed >= DamageDealtRollingWindowSeconds)
+                {
+                    StopDamageDealtTracking();
+                }
+                else if (currentUnixTime - DamageDealtLastPrintTimestamp >= 15.0)
+                {
+                    DamageDealtLastPrintTimestamp = currentUnixTime;
+                    PrintDamageDealtStats(currentUnixTime);
+                }
+            }
+
             // Check if we're due for our periodic SavePlayer
             if (LastRequestedDatabaseSave == DateTime.MinValue)
                 LastRequestedDatabaseSave = DateTime.UtcNow;

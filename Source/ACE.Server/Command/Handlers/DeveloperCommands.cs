@@ -967,6 +967,205 @@ namespace ACE.Server.Command.Handlers
             session.Player.UpdateVital(session.Player.Mana, 1);
         }
 
+        [CommandHandler("unkillable", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Toggles or sets unkillable state.", "[on|off|true|false|enable|disable]")]
+        public static void HandleUnkillable(Session session, params string[] parameters)
+        {
+            var player = session.Player;
+            bool newValue;
+
+            if (parameters == null || parameters.Length == 0)
+            {
+                newValue = !player.IsUnkillable;
+            }
+            else
+            {
+                var arg = parameters[0].ToLower();
+                if (arg == "on" || arg == "true" || arg == "enable")
+                    newValue = true;
+                else if (arg == "off" || arg == "false" || arg == "disable")
+                    newValue = false;
+                else
+                {
+                    ChatPacket.SendServerMessage(session, "Usage: /unkillable [on|off|true|false|enable|disable]", ChatMessageType.Broadcast);
+                    return;
+                }
+            }
+
+            player.IsUnkillable = newValue;
+            var stateStr = newValue ? "ON" : "OFF";
+            ChatPacket.SendServerMessage(session, $"Unkillable mode is now {stateStr}.", ChatMessageType.Broadcast);
+
+            if (newValue && player.Health.Current == 0)
+            {
+                player.UpdateVital(player.Health, 1);
+            }
+        }
+ 
+        [CommandHandler("alwaysaetheriaproc", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Toggles always proc aetheria mode.", "[on|off|true|false|enable|disable]")]
+        public static void HandleAlwaysAetheriaProc(Session session, params string[] parameters)
+        {
+            var player = session.Player;
+            bool newValue;
+ 
+            if (parameters == null || parameters.Length == 0)
+            {
+                newValue = !player.AlwaysAetheriaProc;
+            }
+            else
+            {
+                var arg = parameters[0].ToLower();
+                if (arg == "on" || arg == "true" || arg == "enable")
+                    newValue = true;
+                else if (arg == "off" || arg == "false" || arg == "disable")
+                    newValue = false;
+                else
+                {
+                    ChatPacket.SendServerMessage(session, "Usage: /alwaysaetheriaproc [on|off|true|false|enable|disable]", ChatMessageType.Broadcast);
+                    return;
+                }
+            }
+ 
+            player.AlwaysAetheriaProc = newValue;
+            var stateStr = newValue ? "ON" : "OFF";
+            ChatPacket.SendServerMessage(session, $"Always Aetheria Proc mode is now {stateStr}.", ChatMessageType.Broadcast);
+        }
+ 
+        [CommandHandler("alwaysproc", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Alias for alwaysaetheriaproc - Toggles always proc aetheria mode.", "[on|off|true|false|enable|disable]")]
+        public static void HandleAlwaysProcAlias(Session session, params string[] parameters)
+        {
+            HandleAlwaysAetheriaProc(session, parameters);
+        }
+ 
+        [CommandHandler("aetheriaproc", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Alias for alwaysaetheriaproc - Toggles always proc aetheria mode.", "[on|off|true|false|enable|disable]")]
+        public static void HandleAetheriaProcAlias(Session session, params string[] parameters)
+        {
+            HandleAlwaysAetheriaProc(session, parameters);
+        }
+
+        [CommandHandler("avgdamagetaken", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Toggles rolling damage taken tracking.", "[window_minutes|off]")]
+        public static void HandleAvgDamageTaken(Session session, params string[] parameters)
+        {
+            var player = session.Player;
+            if (player == null) return;
+
+            if (parameters == null || parameters.Length == 0)
+            {
+                if (player.IsTrackingDamageTaken)
+                {
+                    player.StopDamageTracking();
+                }
+                else
+                {
+                    player.StartDamageTracking(5.0);
+                }
+                return;
+            }
+
+            var arg = parameters[0].ToLower();
+            if (arg == "reset" || arg == "clear")
+            {
+                if (player.IsTrackingDamageTaken)
+                {
+                    player.ResetDamageTracking();
+                }
+                else
+                {
+                    ChatPacket.SendServerMessage(session, "Damage tracking is not currently active.", ChatMessageType.Broadcast);
+                }
+                return;
+            }
+
+            if (arg == "off" || arg == "stop" || arg == "disable" || arg == "false")
+            {
+                if (player.IsTrackingDamageTaken)
+                {
+                    player.StopDamageTracking();
+                }
+                else
+                {
+                    ChatPacket.SendServerMessage(session, "Damage tracking is not currently active.", ChatMessageType.Broadcast);
+                }
+                return;
+            }
+
+            if (double.TryParse(parameters[0], out var windowMinutes))
+            {
+                if (windowMinutes <= 0.0)
+                {
+                    ChatPacket.SendServerMessage(session, "Window size must be greater than 0.", ChatMessageType.Broadcast);
+                    return;
+                }
+
+                player.StartDamageTracking(windowMinutes);
+            }
+            else
+            {
+                ChatPacket.SendServerMessage(session, "Usage: /avgdamagetaken [window_minutes|off]", ChatMessageType.Broadcast);
+            }
+        }
+
+        [CommandHandler("avgdamagedealt", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Toggles rolling damage dealt tracking.", "[window_minutes|off]")]
+        public static void HandleAvgDamageDealt(Session session, params string[] parameters)
+        {
+            var player = session.Player;
+            if (player == null) return;
+
+            if (parameters == null || parameters.Length == 0)
+            {
+                if (player.IsTrackingDamageDealt)
+                {
+                    player.StopDamageDealtTracking();
+                }
+                else
+                {
+                    player.StartDamageDealtTracking(5.0);
+                }
+                return;
+            }
+
+            var arg = parameters[0].ToLower();
+            if (arg == "reset" || arg == "clear")
+            {
+                if (player.IsTrackingDamageDealt)
+                {
+                    player.ResetDamageDealtTracking();
+                }
+                else
+                {
+                    ChatPacket.SendServerMessage(session, "Damage dealt tracking is not currently active.", ChatMessageType.Broadcast);
+                }
+                return;
+            }
+
+            if (arg == "off" || arg == "stop" || arg == "disable" || arg == "false")
+            {
+                if (player.IsTrackingDamageDealt)
+                {
+                    player.StopDamageDealtTracking();
+                }
+                else
+                {
+                    ChatPacket.SendServerMessage(session, "Damage dealt tracking is not currently active.", ChatMessageType.Broadcast);
+                }
+                return;
+            }
+
+            if (double.TryParse(parameters[0], out var windowMinutes))
+            {
+                if (windowMinutes <= 0.0)
+                {
+                    ChatPacket.SendServerMessage(session, "Window size must be greater than 0.", ChatMessageType.Broadcast);
+                    return;
+                }
+
+                player.StartDamageDealtTracking(windowMinutes);
+            }
+            else
+            {
+                ChatPacket.SendServerMessage(session, "Usage: /avgdamagedealt [window_minutes|off]", ChatMessageType.Broadcast);
+            }
+        }
+
 
         // ==================================
         // Create Objects in Player Inventory

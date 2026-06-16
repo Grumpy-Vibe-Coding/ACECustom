@@ -92,6 +92,16 @@ namespace ACE.Server.Entity
 
             if (amount == 0) return;
 
+            if (Creature is Player player && player.IsTrackingDamageTaken)
+            {
+                player.RecordDamageTaken(amount);
+            }
+
+            if (attacker is Player attackerPlayer && attackerPlayer.IsTrackingDamageDealt)
+            {
+                attackerPlayer.RecordDamageDealt(amount);
+            }
+
             var entry = new DamageHistoryEntry(Creature, attacker.Guid, damageType, -(int)amount);
             Log.Add(entry);
 

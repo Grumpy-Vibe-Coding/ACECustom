@@ -117,7 +117,54 @@ namespace ACE.Server.WorldObjects
 
             var vulnMod = EnchantmentManager.GetVulnerabilityResistanceMod(damageType);
 
+            var maxVuln = GetProperty(PropertyFloat.MaxVulnMultiplier);
+            if (maxVuln.HasValue)
+            {
+                var maxVulnVal = (float)maxVuln.Value;
+
+                WorldObject caster = null;
+                if (attacker != null)
+                {
+                    caster = attacker;
+                    if (attacker.ProjectileSource != null)
+                        caster = attacker.ProjectileSource;
+                }
+
+                var lifeAugs = (caster as Creature)?.LuminanceAugmentLifeCount ?? 0;
+                
+                float capVal;
+                if (attacker is SpellProjectile)
+                {
+                    capVal = (maxVulnVal * 2.0f) + (lifeAugs / 1000.0f) * 2.0f;
+                }
+                else
+                {
+                    capVal = maxVulnVal + (lifeAugs / 1000.0f);
+                }
+
+                if (vulnMod > capVal)
+                    vulnMod = capVal;
+            }
+
             var naturalResistMod = GetNaturalResistance(damageType);
+
+            double bypassPct = 0.0;
+            if (weapon != null)
+                bypassPct = Math.Max(bypassPct, weapon.GetProperty(PropertyFloat.BypassPlayerProtectionsPercentage) ?? 0.0);
+            if (attacker != null)
+            {
+                bypassPct = Math.Max(bypassPct, attacker.GetProperty(PropertyFloat.BypassPlayerProtectionsPercentage) ?? 0.0);
+                if (attacker.ProjectileSource != null)
+                    bypassPct = Math.Max(bypassPct, attacker.ProjectileSource.GetProperty(PropertyFloat.BypassPlayerProtectionsPercentage) ?? 0.0);
+            }
+
+            if (bypassPct > 0.0)
+            {
+                bypassPct = Math.Clamp(bypassPct, 0.0, 1.0);
+                float reduction = 1.0f - protMod;
+                reduction *= (1.0f - (float)bypassPct);
+                protMod = 1.0f - reduction;
+            }
 
             // protection mod becomes either life protection or natural resistance,
             // whichever is more powerful (more powerful = lower value here)
@@ -152,6 +199,14 @@ namespace ACE.Server.WorldObjects
 
                 protMod = GetNegativeRatingMod(addProt);
                 vulnMod = GetPositiveRatingMod(addVuln);
+            }
+
+            // NEW: flat life prot cap for all players
+            if (this is Player)
+            {
+                var floor = (float)ServerConfig.life_prot_floor.Value;
+                if (floor > 0f)
+                    protMod = Math.Max(protMod, floor);
             }
 
             return protMod * vulnMod;

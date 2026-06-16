@@ -570,6 +570,18 @@ namespace ACE.Server.WorldObjects
             if (spell.VitalDamageType == DamageType.Health && tryBoost < 0)
             {
                 float fDamage = -tryBoost;
+
+                // NEW: Tier Mitigation Multiplier
+                if (targetCreature is Player tierPlayer && ServerConfig.tier_mit_enabled.Value)
+                {
+                    var augSum = (tierPlayer.LuminanceAugmentCreatureCount ?? 0)
+                               + (tierPlayer.LuminanceAugmentItemCount ?? 0)
+                               + (tierPlayer.LuminanceAugmentLifeCount ?? 0);
+
+                    var mult = DamageEvent.GetTierMitMultiplier(augSum);
+                    fDamage *= (float)mult;
+                }
+
                 if (targetCreature is Player targetPlayerMB)
                     mbResult = targetPlayerMB.TryAbsorbWithManaBarrier(ref fDamage, DamageType.Health);
                 else if (targetCreature.HasManaBarrier)
@@ -854,6 +866,18 @@ namespace ACE.Server.WorldObjects
             if (isDrain && spell.Source == PropertyAttribute2nd.Health && srcVitalChange > 0)
             {
                 float fDamage = srcVitalChange;
+
+                // NEW: Tier Mitigation Multiplier
+                if (transferSource is Player tierPlayer && ServerConfig.tier_mit_enabled.Value)
+                {
+                    var augSum = (tierPlayer.LuminanceAugmentCreatureCount ?? 0)
+                               + (tierPlayer.LuminanceAugmentItemCount ?? 0)
+                               + (tierPlayer.LuminanceAugmentLifeCount ?? 0);
+
+                    var mult = DamageEvent.GetTierMitMultiplier(augSum);
+                    fDamage *= (float)mult;
+                }
+
                 mbResult = transferSource.TryAbsorbWithManaBarrier(ref fDamage, DamageType.Health);
                 srcVitalChange = (uint)Math.Round(fDamage);
 

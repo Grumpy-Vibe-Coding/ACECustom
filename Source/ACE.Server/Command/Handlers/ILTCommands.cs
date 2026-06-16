@@ -89,38 +89,36 @@ namespace ACE.Server.Command.Handlers
                             $"Unknown option '{parameters[argIndex]}'. Usage: /ilt {usageName} [on | off]", ChatMessageType.System));
                         return;
                     }
-
-                    if (classic)
-                        player.SetProperty(PropertyBool.ClassicRingAoe, true);
-                    else
-                        player.RemoveProperty(PropertyBool.ClassicRingAoe);  // absent = New mode (default)
-
-                    player.SaveBiotaToDatabase(enqueueSave: true);
-
-                    if (classic)
-                    {
-                        var msg = "[Smart Ring] Disabled\n" +
-                                  "  • Reverted to Classic Physics Mode\n" +
-                                  "  • Allows multi-hits\n" +
-                                  "  • Fixed number of projectiles\n" +
-                                  "  • Rings can miss targets";
-                        session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.System));
-                    }
-                    else
-                    {
-                        var msg = "[Smart Ring] Enabled\n" +
-                                  $"  • Radius: {SmartRingSettingsManager.Radius.ToString("0.0", CultureInfo.InvariantCulture)}\n" +
-                                  $"  • Height: {SmartRingSettingsManager.Height.ToString("0.0", CultureInfo.InvariantCulture)}\n" +
-                                  $"  • Double Proc Chance: {(SmartRingSettingsManager.DoubleChance * 100.0f).ToString("0.0", CultureInfo.InvariantCulture)}%\n" +
-                                  $"  • Triple Proc Chance: {(SmartRingSettingsManager.TripleChance * 100.0f).ToString("0.0", CultureInfo.InvariantCulture)}%";
-                        session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.System));
-                    }
                 }
                 else
                 {
-                    var usageName = sub == "ringmode" ? "ringmode" : (argIndex == 2 ? "smart ring" : "smartring");
-                    session.Network.EnqueueSend(new GameMessageSystemChat(
-                        $"Usage: /ilt {usageName} [on | off]", ChatMessageType.System));
+                    classic = !classic;
+                }
+
+                if (classic)
+                    player.SetProperty(PropertyBool.ClassicRingAoe, true);
+                else
+                    player.RemoveProperty(PropertyBool.ClassicRingAoe);  // absent = New mode (default)
+
+                player.SaveBiotaToDatabase(enqueueSave: true);
+
+                if (classic)
+                {
+                    var msg = "[Smart Ring] Disabled\n" +
+                              "  • Reverted to Classic Physics Mode\n" +
+                              "  • Allows multi-hits\n" +
+                              "  • Fixed number of projectiles\n" +
+                              "  • Rings can miss targets";
+                    session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.System));
+                }
+                else
+                {
+                    var msg = "[Smart Ring] Enabled\n" +
+                              $"  • Radius: {SmartRingSettingsManager.Radius.ToString("0.0", CultureInfo.InvariantCulture)}\n" +
+                              $"  • Height: {SmartRingSettingsManager.Height.ToString("0.0", CultureInfo.InvariantCulture)}\n" +
+                              $"  • Double Proc Chance: {(SmartRingSettingsManager.DoubleChance * 100.0f).ToString("0.0", CultureInfo.InvariantCulture)}%\n" +
+                              $"  • Triple Proc Chance: {(SmartRingSettingsManager.TripleChance * 100.0f).ToString("0.0", CultureInfo.InvariantCulture)}%";
+                    session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.System));
                 }
             }
             else if (sub == "dmgformat")
@@ -397,6 +395,26 @@ namespace ACE.Server.Command.Handlers
                 if (inBlast.Count == 0)
                     session.Network.EnqueueSend(new GameMessageSystemChat("  No creatures in blast range.", ChatMessageType.System));
             }
+            else if (sub == "dev")
+            {
+                if (session.AccessLevel < AccessLevel.Developer)
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat("You do not have access to developer subcommands.", ChatMessageType.System));
+                    return;
+                }
+
+                session.Network.EnqueueSend(new GameMessageSystemChat("=== ILT Custom Developer Commands ===", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("  /testchar <tier> | /testchar [stats|gear|weapons|gems] <tier>", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("      Boost character stats/gear/weapons to Tier 11, Tier 10, or reset to Tier 0.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("  /unkillable [on|off]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("      Toggle unkillable status for testing.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("  /alwaysaetheriaproc [on|off]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("      Toggle 100% proc rate on all equipped Aetherias.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("  /avgdamagetaken [window_minutes|off]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("      Toggle tracking player average damage taken over a rolling window.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("  /avgdamagedealt [window_minutes|off]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("      Toggle tracking player average damage dealt over a rolling window.", ChatMessageType.System));
+            }
             else
             {
                 var dmgLabel  = player.DamageNumberFormat switch { 1 => "commas", 2 => "short", _ => "default" };
@@ -419,6 +437,11 @@ namespace ACE.Server.Command.Handlers
                 session.Network.EnqueueSend(new GameMessageSystemChat($"      View all valid targets and parameters for your next ring spell.", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat($"  /ilt arrowdebug  [Admin only]", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat($"      Appraise a creature, then run this to see all targets caught in the Explosive Arrow blast radius (15m/10m).", ChatMessageType.System));
+                if (session.AccessLevel >= AccessLevel.Developer)
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat("  /ilt dev", ChatMessageType.System));
+                    session.Network.EnqueueSend(new GameMessageSystemChat("      View a list of custom ILT developer commands.", ChatMessageType.System));
+                }
             }
         }
     }

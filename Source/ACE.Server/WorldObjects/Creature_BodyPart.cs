@@ -33,14 +33,40 @@ namespace ACE.Server.WorldObjects
             {
                 effectiveArmorVsType = GetEffectiveArmorVsType(damageType, armorLayers, attacker, weapon, armorRendingMod);
 
-                return SkillFormula.CalcArmorMod(effectiveArmorVsType);
+                var armorMod = SkillFormula.CalcArmorMod(effectiveArmorVsType);
+                var maxVuln = Creature.GetProperty(PropertyFloat.MaxVulnMultiplier);
+                if (maxVuln.HasValue)
+                {
+                    var baseCap = (float)maxVuln.Value;
+                    WorldObject caster = null;
+                    if (attacker != null)
+                    {
+                        caster = attacker;
+                        if (attacker.ProjectileSource != null)
+                            caster = attacker.ProjectileSource;
+                    }
+                    var lifeAugs = (caster as Creature)?.LuminanceAugmentLifeCount ?? 0;
+                    var capVal = baseCap + (lifeAugs / 1000.0f);
+
+                    if (armorMod > capVal)
+                        armorMod = capVal;
+                }
+                return armorMod;
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.Message);
                 
             }
-            return SkillFormula.CalcArmorMod(effectiveArmorVsType);
+            var fallbackMod = SkillFormula.CalcArmorMod(effectiveArmorVsType);
+            var maxVulnFallback = Creature.GetProperty(PropertyFloat.MaxVulnMultiplier);
+            if (maxVulnFallback.HasValue)
+            {
+                var baseCap = (float)maxVulnFallback.Value;
+                if (fallbackMod > baseCap)
+                    fallbackMod = baseCap;
+            }
+            return fallbackMod;
         }
 
         public float GetEffectiveArmorVsType(DamageType damageType, List<WorldObject> armorLayers, Creature attacker, WorldObject weapon, float armorRendingMod = 1.0f)

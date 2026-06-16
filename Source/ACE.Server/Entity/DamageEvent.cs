@@ -135,6 +135,8 @@ namespace ACE.Server.Entity
 
         public float Damage;
 
+        public double TierMitMultiplier = 1.0;
+
         public bool GeneralFailure;
 
         /// <summary>Flat luminance melee/missile damage bonus added to base damage (for diagnostics).</summary>
@@ -587,6 +589,18 @@ namespace ACE.Server.Entity
                 //Console.WriteLine($"[DEBUG] Final Mob Defender Enrage Damage Reduction Applied: {damageReduction * 100}%, Final Damage: {Damage}");
             }
 
+            // NEW: Tier Mitigation Multiplier
+            if (Damage > 0 && defender is Player tierPlayer && ServerConfig.tier_mit_enabled.Value)
+            {
+                var augSum = (tierPlayer.LuminanceAugmentCreatureCount ?? 0)
+                           + (tierPlayer.LuminanceAugmentItemCount ?? 0)
+                           + (tierPlayer.LuminanceAugmentLifeCount ?? 0);
+
+                var mult = GetTierMitMultiplier(augSum);
+                Damage *= (float)mult;
+                TierMitMultiplier = mult; // store for debug logging
+            }
+
             DebugDamagePrePetPhysicalMitigation = Damage;
             DebugCombatPetPhysicalMitigationMultiplier = 1.0f;
             DebugCombatPetCritDamageTakenMultiplier = 1.0f;
@@ -609,6 +623,78 @@ namespace ACE.Server.Entity
                 DebugCombatPetPhysicalMitigationMultiplier = m;
                 if (m > 0 && !float.IsNaN(m) && !float.IsInfinity(m) && m != 1.0f)
                     Damage *= m;
+            }
+
+            var maxCritMult = defender.GetProperty(PropertyFloat.MaxCritDamageMultiplier);
+            if (IsCritical && maxCritMult.HasValue)
+            {
+                var normalDamageRatingMod = Creature.AdditiveCombine(DamageRatingBaseMod, RecklessnessMod, SneakAttackMod, HeritageMod);
+                if (pkBattle)
+                {
+                    var pkDamageMod = Creature.GetPositiveRatingMod(attacker.GetPKDamageRating());
+                    normalDamageRatingMod = Creature.AdditiveCombine(normalDamageRatingMod, pkDamageMod);
+                }
+                var normalDamageBeforeMitigation = BaseDamage * AttributeMod * PowerMod * SlayerMod * normalDamageRatingMod;
+                var normalDamage = normalDamageBeforeMitigation * ArmorMod * ShieldMod * ResistanceMod * DamageResistanceRatingBaseMod;
+
+                if (DamageSource.GetProperty(PropertyBool.IsSplitArrow) == true)
+                {
+                    var splitMultiplier = (float)(DamageSource.ProjectileLauncher?.GetProperty(PropertyFloat.SplitArrowDamageMultiplier) ??
+                                                 DefaultSplitArrowDamageMultiplier);
+                    normalDamage *= splitMultiplier;
+                }
+
+                if (CombatType == CombatType.Missile && Attacker is Player farShotPlayer && farShotPlayer.HasFarShotCharm && CharmSettingsManager.FarShot.Enabled)
+                {
+                    farShotPlayer.ActiveCharmLevels.TryGetValue(CharmAbilityRegistry.FarShotAbilityId, out var tier);
+                    var damageMultiplier = tier switch
+                    {
+                        2 => CharmSettingsManager.FarShot.T2Damage,
+                        3 => CharmSettingsManager.FarShot.T3Damage,
+                        _ => CharmSettingsManager.FarShot.T1Damage
+                    };
+                    if (Attacker.Location != null && Defender.Location != null)
+                    {
+                        var attackerPos = Attacker.Location.ToGlobal(false);
+                        var defenderPos = Defender.Location.ToGlobal(false);
+                        var distanceInMeters = System.Numerics.Vector3.Distance(attackerPos, defenderPos);
+                        var distanceInYards = distanceInMeters * Creature.MetersToYards;
+                        if (distanceInYards < CharmSettingsManager.FarShot.PenaltyRange && !(Defender is Player))
+                        {
+                            damageMultiplier *= (1.0f - CharmSettingsManager.FarShot.Penalty);
+                        }
+                    }
+                    normalDamage *= damageMultiplier;
+                }
+
+                if (defender.IsEnraged && !(defender is Player))
+                {
+                    var damageReduction = defender.EnrageDamageReduction ?? 0.0f;
+                    normalDamage *= (1.0f - damageReduction);
+                }
+
+                if (normalDamage > 0 && defender is Player normalTierPlayer && ServerConfig.tier_mit_enabled.Value)
+                {
+                    var augSum = (normalTierPlayer.LuminanceAugmentCreatureCount ?? 0)
+                               + (normalTierPlayer.LuminanceAugmentItemCount ?? 0)
+                               + (normalTierPlayer.LuminanceAugmentLifeCount ?? 0);
+                    var mult = GetTierMitMultiplier(augSum);
+                    normalDamage *= (float)mult;
+                }
+
+                if (normalDamage > 0 && defender is CombatPet pet
+                    && (!ServerConfig.pet_combat_summon_aug_physical_mitigation_players_only.Value || playerAttacker != null))
+                {
+                    var m = pet.GetPhysicalDamageTakenMultiplier();
+                    if (m > 0 && !float.IsNaN(m) && !float.IsInfinity(m) && m != 1.0f)
+                        normalDamage *= m;
+                }
+
+                var maxCritDamage = (float)(normalDamage * maxCritMult.Value);
+                if (Damage > maxCritDamage)
+                {
+                    Damage = maxCritDamage;
+                }
             }
 
             DamageMitigated = DamageBeforeMitigation - Damage;
@@ -1070,8 +1156,9 @@ namespace ACE.Server.Entity
                 sb.AppendLine($"armorLayers: count={Armor.Count} names={string.Join(", ", Armor.Take(8).Select(a => a.Name))}");
 
             var ownerResistNote = float.IsNaN(DebugCombatPetOwnerResistanceMod) ? "" : $" ownerResistMod={DebugCombatPetOwnerResistanceMod:F4}";
+            var tierMitNote = TierMitMultiplier != 1.0 ? $" tierMitMultiplier={TierMitMultiplier:F4}" : "";
             sb.AppendLine(
-                $"mitigation: armorMod={ArmorMod:F4} resistMod={ResistanceMod:F4}{ownerResistNote} shieldMod={ShieldMod:F4} weapResistMod={WeaponResistanceMod:F4} drrMod={DamageResistanceRatingMod:F4} (drrBase={DamageResistanceRatingBaseMod:F4} critDRR={CriticalDamageResistanceRatingMod:F4} pkDRR={PkDamageResistanceMod:F4})");
+                $"mitigation: armorMod={ArmorMod:F4} resistMod={ResistanceMod:F4}{ownerResistNote} shieldMod={ShieldMod:F4} weapResistMod={WeaponResistanceMod:F4} drrMod={DamageResistanceRatingMod:F4} (drrBase={DamageResistanceRatingBaseMod:F4} critDRR={CriticalDamageResistanceRatingMod:F4} pkDRR={PkDamageResistanceMod:F4}){tierMitNote}");
 
             if (defender.IsEnraged && defender is not Player)
                 sb.AppendLine($"defender enrage damageReduction={defender.EnrageDamageReduction:F4} (applied to final Damage before pet mit)");
@@ -1150,6 +1237,32 @@ namespace ACE.Server.Entity
 
                 return attackConditions;
             }
+        }
+
+        private static readonly (long MaxAugSum, double Multiplier)[] TierMitBrackets =
+        {
+            (5_999,  0.250),
+            (7_999,  0.220),
+            (8_999,  0.180),
+            (9_999,  0.160),
+            (10_999, 0.140),
+            (11_999, 0.100),
+            (13_499, 0.080),
+            (14_999, 0.060),
+            (16_499, 0.045),
+            (17_999, 0.035),
+            (19_499, 0.025),
+            (20_999, 0.020),
+            (22_499, 0.015),
+            (24_999, 0.012),
+            (long.MaxValue, 0.010), // T20+ cap
+        };
+
+        public static double GetTierMitMultiplier(long augSum)
+        {
+            foreach (var (max, mult) in TierMitBrackets)
+                if (augSum <= max) return mult;
+            return 0.010; // safety — should never reach
         }
     }
 }

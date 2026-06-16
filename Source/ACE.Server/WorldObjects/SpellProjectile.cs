@@ -711,6 +711,17 @@ namespace ACE.Server.WorldObjects
             if (IsForkProjectile)
                 finalDamage *= ForkDamageMult;
 
+            // NEW: Tier Mitigation Multiplier
+            if (finalDamage > 0 && target is Player tierPlayer && ServerConfig.tier_mit_enabled.Value)
+            {
+                var augSum = (tierPlayer.LuminanceAugmentCreatureCount ?? 0)
+                           + (tierPlayer.LuminanceAugmentItemCount ?? 0)
+                           + (tierPlayer.LuminanceAugmentLifeCount ?? 0);
+
+                var mult = DamageEvent.GetTierMitMultiplier(augSum);
+                finalDamage *= (float)mult;
+            }
+
             // show debug info (after fork mult so displayed damage matches actual dealt damage)
             if (sourceCreature != null && sourceCreature.DebugDamage.HasFlag(Creature.DebugDamageType.Attacker))
             {
@@ -728,6 +739,45 @@ namespace ACE.Server.WorldObjects
                 var m = combatPet.GetSpellProjectileDamageTakenMultiplier();
                 if (m < 1.0f)
                     finalDamage *= m;
+            }
+
+            var maxCritMult = target.GetProperty(PropertyFloat.MaxCritDamageMultiplier);
+            if (criticalHit && maxCritMult.HasValue)
+            {
+                float normalDamage;
+                if (Spell.MetaSpellType == ACE.Entity.Enum.SpellType.LifeProjectile)
+                {
+                    normalDamage = lifeMagicDamage * elementalDamageMod * slayerMod * resistanceMod * absorbMod * attribBonus;
+                }
+                else
+                {
+                    normalDamage = (baseDamage + skillBonus) * elementalDamageMod * slayerMod * resistanceMod * absorbMod * attribBonus;
+                }
+
+                if (IsForkProjectile)
+                    normalDamage *= ForkDamageMult;
+
+                if (normalDamage > 0 && target is Player normalTierPlayer && ServerConfig.tier_mit_enabled.Value)
+                {
+                    var augSum = (normalTierPlayer.LuminanceAugmentCreatureCount ?? 0)
+                               + (normalTierPlayer.LuminanceAugmentItemCount ?? 0)
+                               + (normalTierPlayer.LuminanceAugmentLifeCount ?? 0);
+                    var mult = DamageEvent.GetTierMitMultiplier(augSum);
+                    normalDamage *= (float)mult;
+                }
+
+                if (normalDamage > 0 && Spell.IsHarmful && target is CombatPet pet && (!ServerConfig.pet_combat_summon_aug_spell_mitigation_players_only.Value || sourcePlayer != null))
+                {
+                    var m = pet.GetSpellProjectileDamageTakenMultiplier();
+                    if (m < 1.0f)
+                        normalDamage *= m;
+                }
+
+                var maxCritDamage = (float)(normalDamage * maxCritMult.Value);
+                if (finalDamage > maxCritDamage)
+                {
+                    finalDamage = maxCritDamage;
+                }
             }
 
             return finalDamage;

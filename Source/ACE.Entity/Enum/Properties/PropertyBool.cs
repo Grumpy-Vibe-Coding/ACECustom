@@ -320,7 +320,12 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>Player has the Far Shot Charm active — increases missile weapon attack range and final damage.</summary>
         HasFarShotCharm = 50040,
 
+        /// <summary>Player is in unkillable developer mode.</summary>
+        IsUnkillable = 50041,
+
+        /// <summary>Player always triggers Aetheria procs.</summary>
+        AlwaysAetheriaProc = 50042,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }
-

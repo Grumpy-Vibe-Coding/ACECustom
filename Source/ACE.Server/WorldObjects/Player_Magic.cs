@@ -2001,6 +2001,40 @@ namespace ACE.Server.WorldObjects
                         if (petMit < 1.0f) finalDamage *= petMit;
                     }
 
+                    var maxCritMult = creature.GetProperty(PropertyFloat.MaxCritDamageMultiplier);
+                    if (criticalHit && maxCritMult.HasValue && flatDamage <= 0f)
+                    {
+                        var normalSneakAttackMod = GetSneakAttackMod(creature);
+                        var normalDamageBase = (baseDamage + skillBonus) * elementalMod * slayerMod * resistanceMod * absorbMod * attribBonus;
+                        var normalDamageRatingMod = Creature.AdditiveCombine(baseDamageRatingMod, heritageMod, normalSneakAttackMod);
+                        var normalDamageResistRatingMod = creature.GetDamageResistRatingMod(CombatType.Magic);
+                        if (isPvP)
+                        {
+                            var pkDamageResistRatingMod = Creature.GetNegativeRatingMod(creature.GetPKDamageResistRating());
+                            normalDamageRatingMod = Creature.AdditiveCombine(normalDamageRatingMod, pkDamageRatingMod);
+                            normalDamageResistRatingMod = Creature.AdditiveCombine(normalDamageResistRatingMod, pkDamageResistRatingMod);
+                        }
+                        var normalDamage = normalDamageBase * normalDamageRatingMod * normalDamageResistRatingMod;
+
+                        if (creature.IsEnraged)
+                        {
+                            var enrageReduction = creature.EnrageDamageReduction ?? 0.0f;
+                            normalDamage *= (1.0f - enrageReduction);
+                        }
+
+                        if (normalDamage > 0 && spell.IsHarmful && creature is CombatPet combatPetNormal)
+                        {
+                            var petMit = combatPetNormal.GetSpellProjectileDamageTakenMultiplier();
+                            if (petMit < 1.0f) normalDamage *= petMit;
+                        }
+
+                        var maxCritDamage = (float)(normalDamage * maxCritMult.Value);
+                        if (finalDamage > maxCritDamage)
+                        {
+                            finalDamage = maxCritDamage;
+                        }
+                    }
+
                     if (finalDamage <= 0) continue;
 
                     // --- 2. Cloak Damage Reduction Proc ---

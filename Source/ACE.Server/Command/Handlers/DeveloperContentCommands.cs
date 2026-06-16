@@ -3114,10 +3114,10 @@ namespace ACE.Server.Command.Handlers.Processors
                 return;
             }
 
-            var instances = DatabaseManager.World.GetCachedInstancesByLandblock(landblockId);
-            if (instances == null)
+            var instances = DatabaseManager.World.GetCachedInstancesByLandblock(landblockId, variationId);
+            if (instances == null || instances.Count == 0)
             {
-                CommandHandlerHelper.WriteOutputInfo(session, $"Couldn't find landblock {landblockId:X4}");
+                CommandHandlerHelper.WriteOutputInfo(session, $"No instances found in landblock {landblockId:X4} for variation {variationId}");
                 return;
             }
 
@@ -3157,8 +3157,8 @@ namespace ACE.Server.Command.Handlers.Processors
             }
             catch (Exception e)
             {
-                Console.WriteLine(e);
-                CommandHandlerHelper.WriteOutputInfo(session, $"Failed to export {sql_folder}{sql_filename}");
+                log.Error($"Failed to export {sql_folder}{sql_filename}: {e}");
+                CommandHandlerHelper.WriteOutputInfo(session, $"Failed to export {sql_folder}{sql_filename}: {e.Message}");
                 return;
             }
 

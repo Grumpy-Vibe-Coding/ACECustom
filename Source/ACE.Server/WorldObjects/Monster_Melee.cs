@@ -513,6 +513,17 @@ namespace ACE.Server.WorldObjects
             //Console.WriteLine("Total AL: " + effectiveAL);
             //Console.WriteLine("Armor mod: " + armorMod);
 
+            var maxVuln = defender.GetProperty(PropertyFloat.MaxVulnMultiplier);
+            if (maxVuln.HasValue)
+            {
+                var baseCap = (float)maxVuln.Value;
+                var lifeAugs = this.LuminanceAugmentLifeCount ?? 0;
+                var capVal = baseCap + (lifeAugs / 1000.0f);
+
+                if (armorMod > capVal)
+                    armorMod = capVal;
+            }
+
             return armorMod;
         }
 
@@ -640,7 +651,7 @@ namespace ACE.Server.WorldObjects
             }
             else if (motionCommand >= MotionCommand.SpecialAttack1 && motionCommand <= MotionCommand.SpecialAttack3)
             {
-                //parts = Biota.BiotaPropertiesBodyPart.Where(b => b.DVal != 0 && b.BH == 0).ToList();
+                //parts = Biota.BiotaPropertiesBodyPart.Where(b => b.DVal != 0 && b.BH != 0).ToList();
                 parts = Biota.PropertiesBodyPart.Where(b => b.Key == CombatBodyPart.Breath).ToList(); // always use Breath?
             }
 
@@ -651,9 +662,33 @@ namespace ACE.Server.WorldObjects
 
             if (parts.Count == 0)
             {
-                log.Warn($"{Name} ({Guid}.GetAttackPart({motionCommand}) failed");
-                log.Warn($"CombatTable: {CombatTableDID:X8}, MotionTable: {MotionTableId:X8}, CurrentStance: {CurrentMotionState.Stance}, AttackHeight: {AttackHeight}, AttackType: {AttackType}");
-                return new KeyValuePair<CombatBodyPart, PropertiesBodyPart>();
+                // Fallback to any body part regardless of DVal
+                parts = Biota.PropertiesBodyPart.Where(b => b.Key != CombatBodyPart.Breath).ToList();
+            }
+
+            if (parts.Count == 0)
+            {
+                // Absolute fallback: create a dummy body part so combat does not break
+                var dummyPart = new PropertiesBodyPart
+                {
+                    DType = DamageType.Slash,
+                    DVal = 10,
+                    DVar = 0.5f,
+                    BaseArmor = 0,
+                    ArmorVsSlash = 0,
+                    ArmorVsPierce = 0,
+                    ArmorVsBludgeon = 0,
+                    ArmorVsCold = 0,
+                    ArmorVsFire = 0,
+                    ArmorVsAcid = 0,
+                    ArmorVsElectric = 0,
+                    ArmorVsNether = 0,
+                    BH = 0,
+                    HLF = 0, MLF = 0, LLF = 0, HRF = 0, MRF = 0, LRF = 0,
+                    HLB = 0, MLB = 0, LLB = 0, HRB = 0, MRB = 0, LRB = 0
+                };
+                log.Warn($"{Name} ({Guid}).GetAttackPart({motionCommand}) failed to find any body parts! Using fallback Hand.");
+                return new KeyValuePair<CombatBodyPart, PropertiesBodyPart>(CombatBodyPart.Hand, dummyPart);
             }
 
             var part = parts[ThreadSafeRandom.Next(0, parts.Count - 1)];

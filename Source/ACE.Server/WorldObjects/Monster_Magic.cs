@@ -21,7 +21,7 @@ namespace ACE.Server.WorldObjects
         private bool AiUsesMana
         {
             get => GetProperty(PropertyBool.AiUsesMana) ?? true;    // default true?
-            set { if (!value) RemoveProperty(PropertyBool.AiUsesMana); else SetProperty(PropertyBool.AiUsesMana, value); }
+            set { if (value) RemoveProperty(PropertyBool.AiUsesMana); else SetProperty(PropertyBool.AiUsesMana, value); }
         }
 
         /// <summary>

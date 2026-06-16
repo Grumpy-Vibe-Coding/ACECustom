@@ -1489,5 +1489,78 @@ namespace ACE.Server.WorldObjects
             set { if (!value) RemoveProperty(PropertyBool.IsVPHardcore); else SetProperty(PropertyBool.IsVPHardcore, value); }
         }
 
+        public bool IsUnkillable
+        {
+            get => GetProperty(PropertyBool.IsUnkillable) ?? false;
+            set { if (!value) RemoveProperty(PropertyBool.IsUnkillable); else SetProperty(PropertyBool.IsUnkillable, value); }
+        }
+ 
+        public bool AlwaysAetheriaProc
+        {
+            get => GetProperty(PropertyBool.AlwaysAetheriaProc) ?? false;
+            set
+            {
+                if (!value)
+                {
+                    RemoveProperty(PropertyBool.AlwaysAetheriaProc);
+                    RemoveAlwaysAetheriaProcEnchantments();
+                }
+                else
+                {
+                    SetProperty(PropertyBool.AlwaysAetheriaProc, value);
+                    EnsureAlwaysAetheriaProcEnchantments();
+                }
+            }
+        }
+
+        public void EnsureAlwaysAetheriaProcEnchantments()
+        {
+            var destructionSpellId = (uint)SpellId.AetheriaProcDamageBoost;
+            var protectionSpellId = (uint)SpellId.AetheriaProcDamageReduction;
+            var regenSpellId = (uint)SpellId.AetheriaProcHealthOverTime;
+
+            EnsureAlwaysAetheriaProcSpell(destructionSpellId);
+            EnsureAlwaysAetheriaProcSpell(protectionSpellId);
+            EnsureAlwaysAetheriaProcSpell(regenSpellId);
+        }
+
+        private void EnsureAlwaysAetheriaProcSpell(uint spellId)
+        {
+            if (!EnchantmentManager.HasSpell(spellId))
+            {
+                var spell = new global::ACE.Server.Entity.Spell(spellId);
+                if (!spell.NotFound)
+                {
+                    var result = EnchantmentManager.Add(spell, this, null);
+                    if (result?.Enchantment != null)
+                    {
+                        result.Enchantment.Duration = -1.0;
+                        result.Enchantment.PowerLevel = int.MaxValue;
+                        Session?.Network.EnqueueSend(
+                            new global::ACE.Server.Network.GameEvent.Events.GameEventMagicUpdateEnchantment(Session, new global::ACE.Server.Network.Structure.Enchantment(this, result.Enchantment)));
+                    }
+                }
+            }
+        }
+
+        public void RemoveAlwaysAetheriaProcEnchantments()
+        {
+            DispelAlwaysAetheriaProcSpell((uint)SpellId.AetheriaProcDamageBoost);
+            DispelAlwaysAetheriaProcSpell((uint)SpellId.AetheriaProcDamageReduction);
+            DispelAlwaysAetheriaProcSpell((uint)SpellId.AetheriaProcHealthOverTime);
+        }
+
+        private void DispelAlwaysAetheriaProcSpell(uint spellId)
+        {
+            const int maxAttempts = 10;
+            var attempts = 0;
+            var entry = EnchantmentManager.GetEnchantment(spellId);
+            while (entry != null && attempts < maxAttempts)
+            {
+                EnchantmentManager.Dispel(entry);
+                attempts++;
+                entry = EnchantmentManager.GetEnchantment(spellId);
+            }
+        }
     }
 }

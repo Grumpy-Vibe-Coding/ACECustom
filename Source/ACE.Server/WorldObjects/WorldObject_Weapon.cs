@@ -1070,7 +1070,12 @@ namespace ACE.Server.WorldObjects
 
             // special handling for aetheria
             if (Aetheria.IsAetheria(WeenieClassId) && attacker is Creature wielder)
-                chance = Aetheria.CalcProcRate(this, wielder);
+            {
+                if (wielder is Player player && player.AlwaysAetheriaProc)
+                    chance = 1.0f;
+                else
+                    chance = Aetheria.CalcProcRate(this, wielder);
+            }
 
             var rng = ThreadSafeRandom.Next(0.0f, 1.0f);
             if (rng >= chance)
@@ -1127,9 +1132,16 @@ namespace ACE.Server.WorldObjects
             var baseChance = ProcSpellRate ?? 0.0f;
 
             if (Aetheria.IsAetheria(WeenieClassId) && attacker is Creature wielder)
-                baseChance = Aetheria.CalcProcRate(this, wielder);
+            {
+                if (wielder is Player player && player.AlwaysAetheriaProc)
+                    baseChance = 1.0f;
+                else
+                    baseChance = Aetheria.CalcProcRate(this, wielder);
+            }
 
             var chance = Math.Clamp(baseChance * Math.Max(0f, chanceMultiplier), 0f, 1f);
+            if (Aetheria.IsAetheria(WeenieClassId) && attacker is Player player2 && player2.AlwaysAetheriaProc)
+                chance = 1.0f;
 
             var rng = ThreadSafeRandom.Next(0.0f, 1.0f);
             if (rng >= chance)

@@ -281,5 +281,13 @@ namespace ACE.Entity.Enum.Properties
         /// Used by ring-specific charms to increase coverage. Defaults to 1.0 if not set.
         /// </summary>
         AoeRangeMultiplier = 9048,
+        /// <summary>
+        /// The percentage of a target's protections that this weapon or creature bypasses (0.0 to 1.0).
+        /// </summary>
+        [AssessmentProperty]
+        BypassPlayerProtectionsPercentage = 9049,
+
+        MaxCritDamageMultiplier = 50000,
+        MaxVulnMultiplier = 50001,
     }
 }

@@ -508,8 +508,8 @@ namespace ACE.Server.Managers
         public static float GetHPModifier(int tier)
         {
             if (tier <= 0) return 1.0f;
-            // +25% HP per tier above Tier 1
-            return 1.0f + ((tier - 1) * 0.25f);
+            // +50% HP per tier above Tier 1
+            return 1.0f + ((tier - 1) * 0.50f);
         }
 
         /// <summary>
@@ -519,8 +519,8 @@ namespace ACE.Server.Managers
         public static float GetDamageModifier(int tier)
         {
              if (tier <= 0) return 1.0f;
-             // +15% Damage per tier above Tier 1
-             return 1.0f + ((tier - 1) * 0.15f);
+             // +50% Damage per tier above Tier 1
+             return 1.0f + ((tier - 1) * 0.50f);
         }
 
         /// <summary>
@@ -530,8 +530,8 @@ namespace ACE.Server.Managers
         public static float GetXPRewardModifier(int tier)
         {
             if (tier <= 0) return 1.0f;
-            // +10% XP per tier above Tier 1
-            return 1.0f + ((tier - 1) * 0.10f);
+            // +50% XP per tier above Tier 1
+            return 1.0f + ((tier - 1) * 0.50f);
         }
 
         /// <summary>
@@ -604,10 +604,9 @@ namespace ACE.Server.Managers
             var dmgMod = GetDamageModifier(oldTier);
             if (dmgMod != 1.0f)
             {
-                var rating = ModToRating(dmgMod);
                 var existing = creature.GetProperty(PropertyInt.DamageRating) ?? 0;
-                var next = Math.Max(0, existing - rating);
-                if (next == 0)
+                var next = (int)Math.Round((existing + 100) / dmgMod - 100);
+                if (next <= 0)
                     creature.RemoveProperty(PropertyInt.DamageRating);
                 else
                     creature.SetProperty(PropertyInt.DamageRating, next);
@@ -664,10 +663,9 @@ namespace ACE.Server.Managers
             var dmgMod = GetDamageModifier(tier);
             if (dmgMod != 1.0f)
             {
-                // Convert 1.15x -> 15 Damage Rating; stack on existing rating from the weenie
-                var rating = ModToRating(dmgMod);
                 var existing = creature.GetProperty(PropertyInt.DamageRating) ?? 0;
-                creature.SetProperty(PropertyInt.DamageRating, existing + rating);
+                var next = (int)Math.Round((existing + 100) * dmgMod - 100);
+                creature.SetProperty(PropertyInt.DamageRating, next);
             }
 
             // 3. Mark the creature with its tier for XP/Loot logic later
