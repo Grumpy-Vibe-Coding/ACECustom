@@ -473,6 +473,7 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> pet_bond_xp_min_award { get; private set; } = new(1, "Minimum bond XP awarded per qualifying kill.");
 
         public static ConfigProperty<double> pet_combat_summon_aug_benefit_multiplier { get; private set; } = new(1.0, "Scales combat pet summon-aug bonuses (+all attributes / +all skills per luminance Summon aug). 1.0 = current behavior (+1 per aug). Clamped server-side to 0–10. Use /modifydouble.");
+        public static ConfigProperty<double> generator_initial_spawn_stagger_max { get; private set; } = new(0.0, "The maximum delay in seconds to stagger initial spawns when a landblock first loads.");
         public static ConfigProperty<double> pet_combat_summon_aug_spell_mitigation_max { get; private set; } = new(0.5, "Upper cap on aug spell mitigation fraction for combat pets.");
         public static ConfigProperty<double> pet_combat_summon_aug_spell_mitigation_scale { get; private set; } = new(1.0, "Scales aug spell mitigation applied to combat pets.");
         public static ConfigProperty<double> pet_combat_summon_aug_physical_mitigation_max { get; private set; } = new(0.5, "Upper cap on aug physical (melee/missile) mitigation fraction for combat pets.");
