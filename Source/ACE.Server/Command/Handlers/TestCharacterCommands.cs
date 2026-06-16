@@ -537,6 +537,16 @@ namespace ACE.Server.Command.Handlers
             // 7. Set Enlightenment to 325
             player.Enlightenment = 325;
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 325));
+
+            // 8. Spawn Eternal Mana Charge (Infinite Mana Stone)
+            if (!player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == 30254))
+            {
+                var manaCharge = WorldObjectFactory.CreateNewWorldObject(30254);
+                if (manaCharge != null)
+                {
+                    player.TryCreateInInventoryWithNetworking(manaCharge);
+                }
+            }
         }
 
         private static void ConfigureStatsAndSpellsT10(Player player)
@@ -1687,7 +1697,8 @@ namespace ACE.Server.Command.Handlers
                 227190153,  // Mellas Court Recall Gem
                 227190155,  // Valorya Gate Recall Gem
                 227190156,  // Vesper Gate Recall Gem
-                227190157   // Winthur Gate Recall Gem
+                227190157,  // Winthur Gate Recall Gem
+                777700029   // Tou Tou Prestige Portal Gem
             };
 
             var playerWcids = new HashSet<uint>(player.GetAllPossessionsDeep().Select(i => i.WeenieClassId));
