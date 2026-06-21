@@ -46,7 +46,7 @@ namespace ACE.Server.Managers
             { "Glenden Wood",new Position(2695102501,  96.302f, 119.847f,  61.955f, 1f, 0f, 0f, 0f) },
             { "Hebian-to",   new Position(3863871535, 138.304f, 161.905f,  22.04f,  1f, 0f, 0f, 0f) },
             { "Holtburg",    new Position(2847146009,  84f,       7.1f,    96f,     1f, 0f, 0f, 0f) },
-            { "Kara",        new Position(3122069561, 181.2f,     3.2f,  169.7f,   1f, 0f, 0f, 0f) },
+            { "Kara",        new Position(3122069531, 85.39f,   59.64f,  132.00f,  -0.81291f, 0f, 0f, -0.58239f) },
             { "Khayyaban",   new Position(2672033810,  90f,      24.553f,  33.885f, 1f, 0f, 0f, 0f) },
             { "Lytelthorpe", new Position(3229614087,  11.723f, 155.56f,   35.028f, 1f, 0f, 0f, 0f) },
             { "Mayoi",       new Position(3862036513, 107.417f,  10.763f,  31.908f, 1f, 0f, 0f, 0f) },
