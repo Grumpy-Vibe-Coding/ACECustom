@@ -399,7 +399,8 @@ namespace ACE.Server.Managers
         public static ConfigProperty<bool> iou_trades { get; private set; } = new(false, "(non-retail function) If enabled, IOUs can be traded for objects that are missing in DB but added/restored later on");
         public static ConfigProperty<bool> invasion_enabled { get; private set; } = new(false, "If TRUE, town invasions will automatically trigger on a cooldown timer. Use /dev invasion enable|disable.");
         public static ConfigProperty<bool> invasion_spawn_minions { get; private set; } = new(false, "If TRUE, mob generator events activate during invasions (minion waves). If FALSE, solo boss only.");
-        public static ConfigProperty<double> invasion_cooldown { get; private set; } = new(3600.0, "Seconds between automatic town invasions (default 1 hour).");
+        public static ConfigProperty<double> invasion_cooldown_min { get; private set; } = new(3600.0, "Minimum seconds between automatic town invasions (default 1 hour).");
+        public static ConfigProperty<double> invasion_cooldown_max { get; private set; } = new(14400.0, "Maximum seconds between automatic town invasions (default 4 hours).");
         public static ConfigProperty<double> invasion_proximity_timeout { get; private set; } = new(120.0, "Grace period in seconds before the fail-safe proximity check ends an uncontested invasion.");
         public static ConfigProperty<long> invasion_damage_threshold { get; private set; } = new(500000, "Damage required for a player to qualify for the invasion reward portal.");
         public static ConfigProperty<long> invasion_healing_threshold { get; private set; } = new(10000, "Healing required for a player to qualify for the invasion reward portal.");

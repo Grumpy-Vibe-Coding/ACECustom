@@ -5,6 +5,7 @@ using log4net;
 using ACE.Common;
 using ACE.Entity;
 using ACE.Entity.Enum;
+using ACE.Entity.Enum.Properties;
 using ACE.Server.WorldObjects;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Factories;
@@ -92,10 +93,24 @@ namespace ACE.Server.Managers
             set => ServerConfig.SetValue("invasion_spawn_minions", value);
         }
 
-        public static double CooldownTime
+        public static double CooldownMin
         {
-            get => ServerConfig.invasion_cooldown.Value;
-            set => ServerConfig.SetValue("invasion_cooldown", value);
+            get => ServerConfig.invasion_cooldown_min.Value;
+            set => ServerConfig.SetValue("invasion_cooldown_min", value);
+        }
+
+        public static double CooldownMax
+        {
+            get => ServerConfig.invasion_cooldown_max.Value;
+            set => ServerConfig.SetValue("invasion_cooldown_max", value);
+        }
+
+        /// <summary>Returns a random cooldown between CooldownMin and CooldownMax (seconds).</summary>
+        public static double GetRandomCooldown()
+        {
+            var min = CooldownMin;
+            var max = Math.Max(min, CooldownMax);
+            return min + (ThreadSafeRandom.Next(0, 100000) / 100000.0 * (max - min));
         }
 
         public static double ProximityTimeout
@@ -272,7 +287,7 @@ namespace ACE.Server.Managers
 
                 // Broadcast start message
                 var announcement = $"[Invasion] A {normalizedSpecies} invasion has started in the town of {normalizedTown}!";
-                PlayerManager.BroadcastToAll(new GameMessageSystemChat(announcement, ChatMessageType.Broadcast));
+                BroadcastInvasion(announcement);
 
                 // Directly spawn the boss at the known town position (no generator dependency)
                 SpawnBoss();
@@ -299,12 +314,12 @@ namespace ACE.Server.Managers
                 ActiveGenerator = null;
 
                 IsActive = false;
-                NextInvasionTime = Time.GetUnixTime() + CooldownTime;
+                NextInvasionTime = Time.GetUnixTime() + GetRandomCooldown();
 
                 if (success)
                 {
-                    var announcement = $"[Invasion] The town of {ActiveTown} has successfully repelled the {ActiveSpecies} invasion!";
-                    PlayerManager.BroadcastToAll(new GameMessageSystemChat(announcement, ChatMessageType.Broadcast));
+                    var announcement = $"[Invasion] The town of {ActiveTown} has successfully defeated the {ActiveSpecies} invasion!";
+                    BroadcastInvasion(announcement);
                 }
             }
         }
@@ -327,10 +342,10 @@ namespace ACE.Server.Managers
                 ActiveGenerator = null;
 
                 var announcement = $"[Invasion] The town of {ActiveTown} has fallen!";
-                PlayerManager.BroadcastToAll(new GameMessageSystemChat(announcement, ChatMessageType.Broadcast));
+                BroadcastInvasion(announcement);
 
                 IsActive = false;
-                NextInvasionTime = Time.GetUnixTime() + CooldownTime;
+                NextInvasionTime = Time.GetUnixTime() + GetRandomCooldown();
             }
         }
 
@@ -348,17 +363,22 @@ namespace ACE.Server.Managers
 
                 bool isBossDeath = creature == ActiveBoss;
 
-                // For non-boss creatures: only track if they died near the active town
+                // Only track mobs that are part of the invasion (name contains "Invasion")
+                if (!isBossDeath && (creature.Name == null || creature.Name.IndexOf("Invasion", StringComparison.OrdinalIgnoreCase) < 0))
+                    return;
+
+                // For non-boss creatures: also require proximity to where the boss spawned
                 if (!isBossDeath)
                 {
-                    // Check proximity to the active town boss spawn position
-                    if (!TownBossPositions.TryGetValue(ActiveTown, out var townPos))
-                        return;
-
                     if (creature.Location == null)
                         return;
 
-                    if (creature.Location.DistanceTo(townPos) > InvasionKillRadius)
+                    // Origin: generator location → boss location → hardcoded table fallback
+                    var origin = ActiveGenerator?.Location
+                              ?? ActiveBoss?.Location
+                              ?? (TownBossPositions.TryGetValue(ActiveTown, out var tp) ? tp : null);
+
+                    if (origin == null || creature.Location.DistanceTo(origin) > InvasionKillRadius)
                         return;
                 }
 
@@ -419,7 +439,7 @@ namespace ACE.Server.Managers
             boss.EnterWorld();
 
             var announcement = $"[Invasion] The invasion boss, {boss.Name}, has spawned in the center of {ActiveTown}!";
-            PlayerManager.BroadcastToAll(new GameMessageSystemChat(announcement, ChatMessageType.Broadcast));
+            BroadcastInvasion(announcement);
             log.Info($"[Invasion] Boss '{boss.Name}' spawned at {spawnPos} for {ActiveTown}");
         }
 
@@ -488,9 +508,10 @@ namespace ACE.Server.Managers
                 // Apply startup grace period on first tick.
                 if (!_startupDelayInitialized)
                 {
-                    NextInvasionTime = now + StartupGracePeriod;
+                    var firstCooldown = GetRandomCooldown();
+                    NextInvasionTime = now + StartupGracePeriod + firstCooldown;
                     _startupDelayInitialized = true;
-                    log.Info($"[Invasion] Startup grace period active — first auto-invasion not before {StartupGracePeriod}s from now.");
+                    log.Info($"[Invasion] Startup grace period active — first auto-invasion in {StartupGracePeriod}s grace + {firstCooldown:F0}s cooldown ({FormatMmSs(StartupGracePeriod + firstCooldown)} total).");
                 }
 
                 if (!IsActive)
@@ -572,6 +593,21 @@ namespace ACE.Server.Managers
         /// <summary>
         /// Formats a duration in seconds as "m:ss".
         /// </summary>
+        /// <summary>
+        /// Broadcasts an [Invasion] message to all online players who have not opted out
+        /// via /ilt invasion off.
+        /// </summary>
+        public static void BroadcastInvasion(string message)
+        {
+            var packet = new GameMessageSystemChat(message, ChatMessageType.Broadcast);
+            foreach (var player in PlayerManager.GetAllOnline())
+            {
+                // Default ON: absent property or explicit true = show; false = hidden
+                if (player.GetProperty(PropertyBool.ShowInvasionMessages) != false)
+                    player.Session?.Network.EnqueueSend(packet);
+            }
+        }
+
         public static string FormatMmSs(double totalSeconds)
         {
             var ts = TimeSpan.FromSeconds(Math.Max(0, totalSeconds));

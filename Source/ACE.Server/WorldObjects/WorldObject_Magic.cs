@@ -593,7 +593,12 @@ namespace ACE.Server.WorldObjects
                     srcVital = "health";
 
                     if (boost >= 0)
+                    {
                         targetCreature.DamageHistory.OnHeal((uint)boost);
+                        // --- Invasion healing tracker ---
+                        if (boost > 0 && InvasionManager.IsActive && this is Player invHealer && targetCreature is Player invTarget)
+                            InvasionManager.AddHealing(invHealer, invTarget, boost);
+                    }
                     else
                         targetCreature.DamageHistory.Add(this, DamageType.Health, (uint)-boost);
 

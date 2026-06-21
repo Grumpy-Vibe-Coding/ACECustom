@@ -322,6 +322,9 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>Player has the Fork Charm active — Streak, Arc, and Bolt projectiles fork to nearby enemies on hit.</summary>
         HasForkCharm = 50039,
 
+        /// <summary>ILT Player Pref: Receive [Invasion] server-wide broadcast messages. Default ON (absent = show).</summary>
+        ShowInvasionMessages = 50040,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }

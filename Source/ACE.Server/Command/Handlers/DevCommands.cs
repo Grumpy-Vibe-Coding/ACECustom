@@ -86,7 +86,7 @@ namespace ACE.Server.Command.Handlers
                       "  /dev invasion start <town> <species> - Start a specific invasion\n" +
                       "  /dev invasion stop - Force stop the current invasion\n" +
                       "  /dev invasion status - Display current invasion status\n" +
-                      "  /dev invasion cooldown [<seconds>] - View or set the invasion cooldown\n" +
+                      "  /dev invasion cooldown [min|max] <value> - Set random cooldown range (e.g. cooldown min 1h  cooldown max 4h)\n" +
                       "  /dev invasion threshold <damage|healing> <value> - Set participation requirements (e.g. 500k, 10k)\n" +
                       "  /dev invasion timeout <seconds> - Set proximity check grace period\n" +
                       "  /dev invasion minions [on|off] - Toggle minion wave spawning (default: off)";
@@ -164,7 +164,7 @@ namespace ACE.Server.Command.Handlers
                 sb.AppendLine($"Cooldown remaining: {(remaining > 0 ? InvasionManager.FormatMmSs(remaining) : "0:00 (Ready)")}");
             }
 
-            sb.AppendLine($"Configured Cooldown: {InvasionManager.FormatMmSs(InvasionManager.CooldownTime)}");
+            sb.AppendLine($"Cooldown Range: {InvasionManager.FormatMmSs(InvasionManager.CooldownMin)} – {InvasionManager.FormatMmSs(InvasionManager.CooldownMax)}");
             sb.AppendLine($"Proximity Timeout (Grace): {InvasionManager.ProximityTimeout}s");
             sb.AppendLine($"Damage Threshold: {InvasionManager.FormatCompact(InvasionManager.DamageThreshold)}");
             sb.AppendLine($"Healing Threshold: {InvasionManager.FormatCompact(InvasionManager.HealingThreshold)}");
@@ -192,19 +192,38 @@ namespace ACE.Server.Command.Handlers
         {
             if (args.Length == 0)
             {
-                var cur = InvasionManager.CooldownTime;
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Current cooldown: {FormatDuration(cur)} ({cur}s)", ChatMessageType.System));
+                var min = InvasionManager.CooldownMin;
+                var max = InvasionManager.CooldownMax;
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    $"Cooldown range: {FormatDuration(min)} – {FormatDuration(max)} ({min}s – {max}s)\n" +
+                    "  /dev invasion cooldown min <value>\n" +
+                    "  /dev invasion cooldown max <value>",
+                    ChatMessageType.System));
                 return;
             }
 
-            if (TryParseDuration(args[0], out double val))
+            var sub = args[0].ToLower();
+            if ((sub == "min" || sub == "max") && args.Length >= 2)
             {
-                InvasionManager.CooldownTime = val;
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Cooldown set to {FormatDuration(val)} ({val}s).", ChatMessageType.System));
+                if (!TryParseDuration(args[1], out double val))
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat("Invalid value. Examples: 1h, 4h, 3600", ChatMessageType.System));
+                    return;
+                }
+                if (sub == "min")
+                {
+                    InvasionManager.CooldownMin = val;
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Cooldown min set to {FormatDuration(val)} ({val}s).", ChatMessageType.System));
+                }
+                else
+                {
+                    InvasionManager.CooldownMax = val;
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Cooldown max set to {FormatDuration(val)} ({val}s).", ChatMessageType.System));
+                }
             }
             else
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("Invalid cooldown value. Examples: 3600, 1h, 30m, 1h30m", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion cooldown [min|max] <value>   e.g. cooldown min 1h   cooldown max 4h", ChatMessageType.System));
             }
         }
 

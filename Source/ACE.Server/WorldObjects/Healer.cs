@@ -7,6 +7,7 @@ using ACE.Entity.Enum.Properties;
 using ACE.Entity.Models;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
+using ACE.Server.Managers;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Physics;
@@ -209,7 +210,12 @@ namespace ACE.Server.WorldObjects
             healer.UpdateVitalDelta(healer.Stamina, (int)-staminaCost);
             target.UpdateVitalDelta(vital, healAmount);
             if (vital.Vital == PropertyAttribute2nd.MaxHealth)
+            {
                 target.DamageHistory.OnHeal(healAmount);
+                // --- Invasion healing tracker ---
+                if (InvasionManager.IsActive && healAmount > 0)
+                    InvasionManager.AddHealing(healer, target, healAmount);
+            }
 
             //if (target.Fellowship != null)
             //target.Fellowship.OnVitalUpdate(target);

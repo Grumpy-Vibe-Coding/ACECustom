@@ -7,6 +7,7 @@ using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Command;
+using ACE.Server.Managers;
 using ACE.Server.Network;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.WorldObjects;
@@ -397,11 +398,50 @@ namespace ACE.Server.Command.Handlers
                 if (inBlast.Count == 0)
                     session.Network.EnqueueSend(new GameMessageSystemChat("  No creatures in blast range.", ChatMessageType.System));
             }
+            else if (sub == "invasion")
+            {
+                // /ilt invasion [on|off] — toggle [Invasion] broadcast messages
+                if (parameters.Length > argIndex)
+                {
+                    var opt = parameters[argIndex].ToLower();
+                    bool show;
+                    if (opt == "on" || opt == "true" || opt == "enable")
+                        show = true;
+                    else if (opt == "off" || opt == "false" || opt == "disable")
+                        show = false;
+                    else
+                    {
+                        session.Network.EnqueueSend(new GameMessageSystemChat(
+                            $"Unknown option '{parameters[argIndex]}'. Usage: /ilt invasion [on|off]", ChatMessageType.System));
+                        return;
+                    }
+
+                    if (show)
+                        player.RemoveProperty(PropertyBool.ShowInvasionMessages); // absent = ON (default)
+                    else
+                        player.SetProperty(PropertyBool.ShowInvasionMessages, false);
+
+                    player.SaveBiotaToDatabase(enqueueSave: true);
+
+                    var stateLabel = show ? "ON" : "OFF";
+                    session.Network.EnqueueSend(new GameMessageSystemChat(
+                        $"[Invasion] broadcast messages: {stateLabel}. You will {(show ? "now" : "no longer")} see server-wide invasion announcements.",
+                        ChatMessageType.System));
+                }
+                else
+                {
+                    var current = player.GetProperty(PropertyBool.ShowInvasionMessages) != false ? "ON" : "OFF";
+                    session.Network.EnqueueSend(new GameMessageSystemChat(
+                        $"[Invasion] broadcast messages are currently {current}. Use /ilt invasion on|off to change.",
+                        ChatMessageType.System));
+                }
+            }
             else
             {
                 var dmgLabel  = player.DamageNumberFormat switch { 1 => "commas", 2 => "short", _ => "default" };
                 var okLabel   = player.ShowOverkill ? "ON" : "OFF";
                 var ringLabel = (player.GetProperty(PropertyBool.ClassicRingAoe) ?? false) ? "Classic" : "New";
+                var invLabel  = player.GetProperty(PropertyBool.ShowInvasionMessages) != false ? "ON" : "OFF";
                 session.Network.EnqueueSend(new GameMessageSystemChat("=== ILT Custom Commands ===", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat("  /ilt features", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat("      View a list of custom ILT server features.", ChatMessageType.System));
@@ -409,6 +449,8 @@ namespace ACE.Server.Command.Handlers
                 session.Network.EnqueueSend(new GameMessageSystemChat($"      Set your damage number display style. (currently: {dmgLabel})", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat($"  /ilt showoverkill [on|off]", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat($"      Toggle the [Overkill] suffix on kill and death messages. (currently: {okLabel})", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat($"  /ilt invasion [on|off]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat($"      Show or hide server-wide [Invasion] broadcast messages. (currently: {invLabel})", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat("  /ilt levelskills  |  /ilt xp level  |  /ilt xp", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat("      Spend all available XP into trained and specialized skills, in priority order.", ChatMessageType.System));
                 session.Network.EnqueueSend(new GameMessageSystemChat("  /ilt trainskills  |  /ilt train", ChatMessageType.System));

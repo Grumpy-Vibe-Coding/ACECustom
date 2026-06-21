@@ -142,6 +142,10 @@ namespace ACE.Server.WorldObjects
 
             dieEntered = true;
 
+            // --- Invasion tracking: tally damage contributions when any non-player creature dies ---
+            if (!(this is Player))
+                InvasionManager.HandleCreatureDeath(this);
+
             UpdateVital(Health, 0);
 
             if (topDamager != null)
