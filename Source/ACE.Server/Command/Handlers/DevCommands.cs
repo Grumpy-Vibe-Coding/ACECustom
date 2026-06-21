@@ -69,6 +69,10 @@ namespace ACE.Server.Command.Handlers
                 case "minions":
                     HandleMinions(session, parameters.Skip(1).ToArray());
                     break;
+                case "enable":
+                case "disable":
+                    HandleEnable(session, sub);
+                    break;
                 default:
                     ShowInvasionHelp(session);
                     break;
@@ -78,6 +82,7 @@ namespace ACE.Server.Command.Handlers
         private static void ShowInvasionHelp(Session session)
         {
             var msg = "=== Invasion Commands ===\n" +
+                      "  /dev invasion enable|disable - Toggle automatic invasions on or off\n" +
                       "  /dev invasion start <town> <species> - Start a specific invasion\n" +
                       "  /dev invasion stop - Force stop the current invasion\n" +
                       "  /dev invasion status - Display current invasion status\n" +
@@ -131,6 +136,8 @@ namespace ACE.Server.Command.Handlers
         {
             var sb = new StringBuilder();
             sb.AppendLine("=== Invasion System Status ===");
+            sb.AppendLine($"Auto-Invasions: {(InvasionManager.Enabled ? "ENABLED" : "DISABLED")}");
+            sb.AppendLine($"Minion Spawning: {(InvasionManager.SpawnMinions ? "ON" : "OFF")}");
             sb.AppendLine($"Active: {InvasionManager.IsActive}");
             
             if (InvasionManager.IsActive)
@@ -275,6 +282,13 @@ namespace ACE.Server.Command.Handlers
             {
                 session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion minions [on|off]", ChatMessageType.System));
             }
+        }
+
+        private static void HandleEnable(Session session, string sub)
+        {
+            InvasionManager.Enabled = sub == "enable";
+            var state = InvasionManager.Enabled ? "ENABLED" : "DISABLED";
+            session.Network.EnqueueSend(new GameMessageSystemChat($"Auto-invasions are now {state}.", ChatMessageType.System));
         }
     }
 }

@@ -88,6 +88,16 @@ namespace ACE.Server.Managers
         /// </summary>
         public static bool SpawnMinions { get; set; } = false;
 
+        /// <summary>
+        /// Master on/off switch for automatic invasion triggering.
+        /// Manual /dev invasion start still works regardless of this flag.
+        /// </summary>
+        public static bool Enabled { get; set; } = false;
+
+        // Startup grace period — invasions will not auto-trigger within 5 minutes of server start.
+        private const double StartupGracePeriod = 300.0;
+        private static bool _startupDelayInitialized = false;
+
         // Participation tracking (GUID to total amount)
         public static Dictionary<uint, long> PlayerDamageTracker { get; } = new();
         public static Dictionary<uint, long> PlayerHealingTracker { get; } = new();
@@ -447,9 +457,17 @@ namespace ACE.Server.Managers
 
             lock (_lock)
             {
+                // Apply startup grace period on first tick.
+                if (!_startupDelayInitialized)
+                {
+                    NextInvasionTime = now + StartupGracePeriod;
+                    _startupDelayInitialized = true;
+                    log.Info($"[Invasion] Startup grace period active — first auto-invasion not before {StartupGracePeriod}s from now.");
+                }
+
                 if (!IsActive)
                 {
-                    if (now >= NextInvasionTime)
+                    if (Enabled && now >= NextInvasionTime)
                     {
                         TriggerRandomInvasion();
                     }
