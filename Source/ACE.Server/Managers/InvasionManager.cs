@@ -75,34 +75,62 @@ namespace ACE.Server.Managers
         public static double NextInvasionTime { get; private set; } = 0;
         public static int KillCount { get; private set; } = 0;
 
-        // Configurable thresholds/timeouts (can be modified by developer commands)
-        public static int RequiredKills { get; set; } = 50;
-        public static long DamageThreshold { get; set; } = 500000;
-        public static long HealingThreshold { get; set; } = 10000;
-        public static double ProximityTimeout { get; set; } = 120; // grace period defaults to 120 seconds
-        public static double CooldownTime { get; set; } = 3600; // default 1 hour cooldown
+        // Configurable thresholds/timeouts — all backed by ServerConfig (shard DB) for persistence across restarts.
+        // Read: ServerConfig.invasion_*.Value  |  Write: ServerConfig.SetValue(...) marks dirty → DB on next flush.
 
-        /// <summary>
-        /// When false, only the solo boss spawns. Mob generator events are never started.
-        /// Flip to true when minion wave spawning is ready to test.
-        /// </summary>
-        public static bool SpawnMinions { get; set; } = false;
+        /// <summary>Master on/off switch for automatic invasion triggering. Manual /dev invasion start ignores this.</summary>
+        public static bool Enabled
+        {
+            get => ServerConfig.invasion_enabled.Value;
+            set => ServerConfig.SetValue("invasion_enabled", value);
+        }
 
-        /// <summary>
-        /// Master on/off switch for automatic invasion triggering.
-        /// Manual /dev invasion start still works regardless of this flag.
-        /// </summary>
-        public static bool Enabled { get; set; } = false;
+        /// <summary>When false, only the solo boss spawns. Flip to true when minion wave spawning is ready to test.</summary>
+        public static bool SpawnMinions
+        {
+            get => ServerConfig.invasion_spawn_minions.Value;
+            set => ServerConfig.SetValue("invasion_spawn_minions", value);
+        }
 
-        // Startup grace period — invasions will not auto-trigger within 5 minutes of server start.
-        private const double StartupGracePeriod = 300.0;
-        private static bool _startupDelayInitialized = false;
+        public static double CooldownTime
+        {
+            get => ServerConfig.invasion_cooldown.Value;
+            set => ServerConfig.SetValue("invasion_cooldown", value);
+        }
+
+        public static double ProximityTimeout
+        {
+            get => ServerConfig.invasion_proximity_timeout.Value;
+            set => ServerConfig.SetValue("invasion_proximity_timeout", value);
+        }
+
+        public static long DamageThreshold
+        {
+            get => ServerConfig.invasion_damage_threshold.Value;
+            set => ServerConfig.SetValue("invasion_damage_threshold", value);
+        }
+
+        public static long HealingThreshold
+        {
+            get => ServerConfig.invasion_healing_threshold.Value;
+            set => ServerConfig.SetValue("invasion_healing_threshold", value);
+        }
+
+        public static int RequiredKills
+        {
+            get => (int)ServerConfig.invasion_required_kills.Value;
+            set => ServerConfig.SetValue("invasion_required_kills", (long)value);
+        }
 
         // Participation tracking (GUID to total amount)
         public static Dictionary<uint, long> PlayerDamageTracker { get; } = new();
         public static Dictionary<uint, long> PlayerHealingTracker { get; } = new();
 
         private static double _nextTickTime;
+
+        // Startup grace period — invasions will not auto-trigger within 5 minutes of server start.
+        private const double StartupGracePeriod = 300.0;
+        private static bool _startupDelayInitialized = false;
 
         // Proximity radius (in world units) to detect invasion-related kills
         private const float InvasionKillRadius = 150.0f;

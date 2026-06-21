@@ -397,6 +397,13 @@ namespace ACE.Server.Managers
         public static ConfigProperty<bool> house_purchase_requirements { get; private set; } = new(true, "if disabled, requirements to purchase/rent house are not checked");
         public static ConfigProperty<bool> house_rent_enabled { get; private set; } = new(true, "If FALSE then rent is not required");
         public static ConfigProperty<bool> iou_trades { get; private set; } = new(false, "(non-retail function) If enabled, IOUs can be traded for objects that are missing in DB but added/restored later on");
+        public static ConfigProperty<bool> invasion_enabled { get; private set; } = new(false, "If TRUE, town invasions will automatically trigger on a cooldown timer. Use /dev invasion enable|disable.");
+        public static ConfigProperty<bool> invasion_spawn_minions { get; private set; } = new(false, "If TRUE, mob generator events activate during invasions (minion waves). If FALSE, solo boss only.");
+        public static ConfigProperty<double> invasion_cooldown { get; private set; } = new(3600.0, "Seconds between automatic town invasions (default 1 hour).");
+        public static ConfigProperty<double> invasion_proximity_timeout { get; private set; } = new(120.0, "Grace period in seconds before the fail-safe proximity check ends an uncontested invasion.");
+        public static ConfigProperty<long> invasion_damage_threshold { get; private set; } = new(500000, "Damage required for a player to qualify for the invasion reward portal.");
+        public static ConfigProperty<long> invasion_healing_threshold { get; private set; } = new(10000, "Healing required for a player to qualify for the invasion reward portal.");
+        public static ConfigProperty<long> invasion_required_kills { get; private set; } = new(50, "Kill count tracked during an invasion (informational / future use).");
         public static ConfigProperty<bool> item_dispel { get; private set; } = new(false, "if enabled, allows players to dispel items. defaults to end of retail, where item dispels could only target creatures");
         public static ConfigProperty<bool> legacy_loot_system { get; private set; } = new(false, "use the previous iteration of the ace lootgen system");
         public static ConfigProperty<bool> lifestone_broadcast_death { get; private set; } = new(true, "if true, player deaths are additionally broadcast to other players standing near the destination lifestone");
