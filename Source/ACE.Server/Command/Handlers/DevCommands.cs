@@ -192,18 +192,19 @@ namespace ACE.Server.Command.Handlers
         {
             if (args.Length == 0)
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Current cooldown: {InvasionManager.CooldownTime} seconds", ChatMessageType.System));
+                var cur = InvasionManager.CooldownTime;
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Current cooldown: {FormatDuration(cur)} ({cur}s)", ChatMessageType.System));
                 return;
             }
 
-            if (double.TryParse(args[0], out double val))
+            if (TryParseDuration(args[0], out double val))
             {
                 InvasionManager.CooldownTime = val;
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Cooldown set to {val} seconds.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Cooldown set to {FormatDuration(val)} ({val}s).", ChatMessageType.System));
             }
             else
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("Invalid cooldown value.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("Invalid cooldown value. Examples: 3600, 1h, 30m, 1h30m", ChatMessageType.System));
             }
         }
 
@@ -244,19 +245,87 @@ namespace ACE.Server.Command.Handlers
         {
             if (args.Length == 0)
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Current proximity timeout (grace period): {InvasionManager.ProximityTimeout} seconds", ChatMessageType.System));
+                var cur = InvasionManager.ProximityTimeout;
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Current proximity timeout: {FormatDuration(cur)} ({cur}s)", ChatMessageType.System));
                 return;
             }
 
-            if (double.TryParse(args[0], out double val))
+            if (TryParseDuration(args[0], out double val))
             {
                 InvasionManager.ProximityTimeout = val;
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Proximity timeout set to {val} seconds.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Proximity timeout set to {FormatDuration(val)} ({val}s).", ChatMessageType.System));
             }
             else
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("Invalid timeout value.", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("Invalid timeout value. Examples: 120, 2m, 90s", ChatMessageType.System));
             }
+        }
+
+        /// <summary>
+        /// Parses a duration string into seconds. Accepts:
+        ///   raw number     → seconds  (e.g. "120" → 120)
+        ///   Ns             → seconds  (e.g. "90s" → 90)
+        ///   Nm             → minutes  (e.g. "2m"  → 120)
+        ///   Nh             → hours    (e.g. "1h"  → 3600)
+        ///   NhNm           → combined (e.g. "1h30m" → 5400)
+        /// </summary>
+        private static bool TryParseDuration(string input, out double seconds)
+        {
+            seconds = 0;
+            if (string.IsNullOrWhiteSpace(input)) return false;
+
+            input = input.Trim().ToLower();
+
+            // Raw number — treat as seconds
+            if (double.TryParse(input, out seconds))
+                return seconds >= 0;
+
+            // Try combined NhNm (e.g. 1h30m)
+            double total = 0;
+            bool matched = false;
+            var remaining = input;
+
+            var hIdx = remaining.IndexOf('h');
+            if (hIdx > 0 && double.TryParse(remaining[..hIdx], out double hours))
+            {
+                total += hours * 3600;
+                remaining = remaining[(hIdx + 1)..];
+                matched = true;
+            }
+
+            var mIdx = remaining.IndexOf('m');
+            if (mIdx > 0 && double.TryParse(remaining[..mIdx], out double mins))
+            {
+                total += mins * 60;
+                remaining = remaining[(mIdx + 1)..];
+                matched = true;
+            }
+
+            var sIdx = remaining.IndexOf('s');
+            if (sIdx > 0 && double.TryParse(remaining[..sIdx], out double secs))
+            {
+                total += secs;
+                matched = true;
+            }
+
+            if (matched)
+            {
+                seconds = total;
+                return seconds >= 0;
+            }
+
+            return false;
+        }
+
+        /// <summary>Formats seconds as a human-readable duration string (e.g. "1h 30m", "2m 30s", "45s").</summary>
+        private static string FormatDuration(double totalSeconds)
+        {
+            var ts = TimeSpan.FromSeconds(totalSeconds);
+            var parts = new System.Collections.Generic.List<string>();
+            if ((int)ts.TotalHours > 0) parts.Add($"{(int)ts.TotalHours}h");
+            if (ts.Minutes > 0) parts.Add($"{ts.Minutes}m");
+            if (ts.Seconds > 0 || parts.Count == 0) parts.Add($"{ts.Seconds}s");
+            return string.Join(" ", parts);
         }
 
         private static void HandleMinions(Session session, string[] args)
