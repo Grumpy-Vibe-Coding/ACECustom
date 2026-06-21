@@ -82,6 +82,12 @@ namespace ACE.Server.Managers
         public static double ProximityTimeout { get; set; } = 120; // grace period defaults to 120 seconds
         public static double CooldownTime { get; set; } = 3600; // default 1 hour cooldown
 
+        /// <summary>
+        /// When false, only the solo boss spawns. Mob generator events are never started.
+        /// Flip to true when minion wave spawning is ready to test.
+        /// </summary>
+        public static bool SpawnMinions { get; set; } = false;
+
         // Participation tracking (GUID to total amount)
         public static Dictionary<uint, long> PlayerDamageTracker { get; } = new();
         public static Dictionary<uint, long> PlayerHealingTracker { get; } = new();
@@ -222,8 +228,9 @@ namespace ACE.Server.Managers
                 IsActive = true;
                 InvasionStartTime = Time.GetUnixTime();
 
-                // Start event to enable spawner generators (minion mobs)
-                EventManager.StartEvent(eventName, null, null);
+                // Start event to enable spawner generators (minion mobs) — disabled until SpawnMinions is true
+                if (SpawnMinions)
+                    EventManager.StartEvent(eventName, null, null);
 
                 // Broadcast start message
                 var announcement = $"[Invasion] A {normalizedSpecies} invasion has started in the town of {normalizedTown}!";
@@ -243,7 +250,8 @@ namespace ACE.Server.Managers
                 if (!IsActive) return;
 
                 var eventName = $"Invasion_{ActiveTown}_{ActiveSpecies}";
-                EventManager.StopEvent(eventName, null, null);
+                if (SpawnMinions)
+                    EventManager.StopEvent(eventName, null, null);
 
                 if (ActiveBoss != null && ActiveBoss.IsAlive)
                 {
@@ -270,7 +278,8 @@ namespace ACE.Server.Managers
                 if (!IsActive) return;
 
                 var eventName = $"Invasion_{ActiveTown}_{ActiveSpecies}";
-                EventManager.StopEvent(eventName, null, null);
+                if (SpawnMinions)
+                    EventManager.StopEvent(eventName, null, null);
 
                 if (ActiveBoss != null && ActiveBoss.IsAlive)
                 {

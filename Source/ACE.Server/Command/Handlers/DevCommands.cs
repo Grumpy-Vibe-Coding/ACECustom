@@ -66,6 +66,9 @@ namespace ACE.Server.Command.Handlers
                 case "timeout":
                     HandleTimeout(session, parameters.Skip(1).ToArray());
                     break;
+                case "minions":
+                    HandleMinions(session, parameters.Skip(1).ToArray());
+                    break;
                 default:
                     ShowInvasionHelp(session);
                     break;
@@ -80,7 +83,8 @@ namespace ACE.Server.Command.Handlers
                       "  /dev invasion status - Display current invasion status\n" +
                       "  /dev invasion cooldown [<seconds>] - View or set the invasion cooldown\n" +
                       "  /dev invasion threshold <damage|healing> <value> - Set participation requirements (e.g. 500k, 10k)\n" +
-                      "  /dev invasion timeout <seconds> - Set proximity check grace period";
+                      "  /dev invasion timeout <seconds> - Set proximity check grace period\n" +
+                      "  /dev invasion minions [on|off] - Toggle minion wave spawning (default: off)";
             session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Broadcast));
         }
 
@@ -245,6 +249,31 @@ namespace ACE.Server.Command.Handlers
             else
             {
                 session.Network.EnqueueSend(new GameMessageSystemChat("Invalid timeout value.", ChatMessageType.System));
+            }
+        }
+
+        private static void HandleMinions(Session session, string[] args)
+        {
+            if (args.Length == 0)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Minion spawning is currently: {(InvasionManager.SpawnMinions ? "ON" : "OFF")}", ChatMessageType.System));
+                return;
+            }
+
+            var val = args[0].ToLower();
+            if (val == "on" || val == "true" || val == "1")
+            {
+                InvasionManager.SpawnMinions = true;
+                session.Network.EnqueueSend(new GameMessageSystemChat("Minion spawning enabled. Generators will activate on next invasion start.", ChatMessageType.System));
+            }
+            else if (val == "off" || val == "false" || val == "0")
+            {
+                InvasionManager.SpawnMinions = false;
+                session.Network.EnqueueSend(new GameMessageSystemChat("Minion spawning disabled. Solo boss only.", ChatMessageType.System));
+            }
+            else
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion minions [on|off]", ChatMessageType.System));
             }
         }
     }
