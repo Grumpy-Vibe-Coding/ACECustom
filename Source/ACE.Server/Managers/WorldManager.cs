@@ -64,6 +64,7 @@ namespace ACE.Server.Managers
         {
             var thread = new Thread(() =>
             {
+                InvasionManager.PurgeOrphanedEntities();
                 LandblockManager.PreloadConfigLandblocks();
                 UpdateWorld();
             });
@@ -508,6 +509,7 @@ namespace ACE.Server.Managers
             LandblockManager.Tick(Timers.PortalYearTicks);
 
             HouseManager.Tick();
+            InvasionManager.Tick();
 
             ServerPerformanceMonitor.RegisterEventEnd(ServerPerformanceMonitor.MonitorType.UpdateGameWorld_Entire);
             ServerPerformanceMonitor.RegisterCumulativeEvents();

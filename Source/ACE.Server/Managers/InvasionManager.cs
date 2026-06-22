@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using log4net;
 using ACE.Common;
+using ACE.Database;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
@@ -38,31 +40,31 @@ namespace ACE.Server.Managers
         /// </summary>
         private static readonly Dictionary<string, Position> TownBossPositions = new(StringComparer.OrdinalIgnoreCase)
         {
-            { "Al-Arqas",    new Position(2404909115, 183.851f,  60.183f,  11.326f, 1f, 0f, 0f, 0f) },
-            { "Al-Jalima",   new Position(2240282668, 120.359f,  95.47f,   92.049f, 1f, 0f, 0f, 0f) },
-            { "Arwic",       new Position(3332964361,  46.805f,   4.219f,  44.005f, 1f, 0f, 0f, 0f) },
-            { "Baishi",      new Position(3460366343,  12.6f,   152.8f,   57.1f,   1f, 0f, 0f, 0f) },
-            { "Cragstone",   new Position(3147759680, 169.358f, 168.251f,  56.005f, 1f, 0f, 0f, 0f) },
-            { "Eastham",     new Position(3465805877, 151.053f, 112.61f,   19.417f, 1f, 0f, 0f, 0f) },
-            { "Glenden Wood",new Position(2695102501,  96.302f, 119.847f,  61.955f, 1f, 0f, 0f, 0f) },
-            { "Hebian-to",   new Position(3863871535, 138.304f, 161.905f,  22.04f,  1f, 0f, 0f, 0f) },
-            { "Holtburg",    new Position(2847146009,  84f,       7.1f,    96f,     1f, 0f, 0f, 0f) },
-            { "Kara",        new Position(3122069531, 85.39f,   59.64f,  132.00f,  -0.81291f, 0f, 0f, -0.58239f) },
-            { "Khayyaban",   new Position(2672033810,  90f,      24.553f,  33.885f, 1f, 0f, 0f, 0f) },
-            { "Lytelthorpe", new Position(3229614087,  11.723f, 155.56f,   35.028f, 1f, 0f, 0f, 0f) },
-            { "Mayoi",       new Position(3862036513, 107.417f,  10.763f,  31.908f, 1f, 0f, 0f, 0f) },
-            { "Nanto",       new Position(3862822946,  96.96f,   37.722f,  76.542f, 1f, 0f, 0f, 0f) },
-            { "Neydisa",     new Position(2513829939, 146.9f,    71.3f,   101.8f,   1f, 0f, 0f, 0f) },
-            { "Rithwic",     new Position(3381395496, 113.666f, 190.259f,  24.005f, 1f, 0f, 0f, 0f) },
-            { "Samsur",      new Position(2541420556,  25.811f,  73.853f,   2.005f, 1f, 0f, 0f, 0f) },
-            { "Sawato",      new Position(3378184193,  14.8f,     0.3f,    14f,     1f, 0f, 0f, 0f) },
-            { "Shoushi",     new Position(3663003677,  84.8f,    99f,      22f,     1f, 0f, 0f, 0f) },
-            { "Stonehold",   new Position(1691680779,  30f,      50f,      80f,     1f, 0f, 0f, 0f) },
-            { "Tufa",        new Position(2272002056,   2f,     186.9f,    20f,     1f, 0f, 0f, 0f) },
-            { "Uziz",        new Position(2724200508, 182.919f,  87.934f,  22.005f, 1f, 0f, 0f, 0f) },
-            { "Yanshi",      new Position(3027173406,  75.2f,   124.1f,    36.69f,  1f, 0f, 0f, 0f) },
-            { "Yaraq",       new Position(2103705613,  31.9f,   104.6f,    13.9f,   1f, 0f, 0f, 0f) },
-            { "Zaikhal",     new Position(2156920851,  64.863f,  55.687f, 126.005f, 1f, 0f, 0f, 0f) },
+            { "Al-Arqas",    new Position(2404909115, 183.851f,  60.183f,  11.326f, 0f, 0f, 0f, 1f) },
+            { "Al-Jalima",   new Position(2240282668, 120.359f,  95.47f,   92.049f, 0f, 0f, 0f, 1f) },
+            { "Arwic",       new Position(3332964361,  46.805f,   4.219f,  44.005f, 0f, 0f, 0f, 1f) },
+            { "Baishi",      new Position(3460366343,  12.6f,   152.8f,   57.1f,   0f, 0f, 0f, 1f) },
+            { "Cragstone",   new Position(3147759680, 169.358f, 168.251f,  56.005f, 0f, 0f, 0f, 1f) },
+            { "Eastham",     new Position(3465805877, 151.053f, 112.61f,   19.417f, 0f, 0f, 0f, 1f) },
+            { "Glenden Wood",new Position(2695102501,  96.302f, 119.847f,  61.955f, 0f, 0f, 0f, 1f) },
+            { "Hebian-to",   new Position(3863871535, 138.304f, 161.905f,  22.04f,  0f, 0f, 0f, 1f) },
+            { "Holtburg",    new Position(2847146009,  84f,       7.1f,    96f,     0f, 0f, 0f, 1f) },
+            { "Kara",        new Position(3122069531, 85.39f,   59.64f,  132.00f,  0f, 0f, -0.58239f, -0.81291f) },
+            { "Khayyaban",   new Position(2672033810,  90f,      24.553f,  33.885f, 0f, 0f, 0f, 1f) },
+            { "Lytelthorpe", new Position(3229614087,  11.723f, 155.56f,   35.028f, 0f, 0f, 0f, 1f) },
+            { "Mayoi",       new Position(3862036513, 107.417f,  10.763f,  31.908f, 0f, 0f, 0f, 1f) },
+            { "Nanto",       new Position(3862822946,  96.96f,   37.722f,  76.542f, 0f, 0f, 0f, 1f) },
+            { "Neydisa",     new Position(2513829939, 146.9f,    71.3f,   101.8f,   0f, 0f, 0f, 1f) },
+            { "Rithwic",     new Position(3381395496, 113.666f, 190.259f,  24.005f, 0f, 0f, 0f, 1f) },
+            { "Samsur",      new Position(2541420556,  25.811f,  73.853f,   2.005f, 0f, 0f, 0f, 1f) },
+            { "Sawato",      new Position(3378184193,  14.8f,     0.3f,    14f,     0f, 0f, 0f, 1f) },
+            { "Shoushi",     new Position(3663003677,  84.8f,    99f,      22f,     0f, 0f, 0f, 1f) },
+            { "Stonehold",   new Position(1691680779,  30f,      50f,      80f,     0f, 0f, 0f, 1f) },
+            { "Tufa",        new Position(2272002056,   2f,     186.9f,    20f,     0f, 0f, 0f, 1f) },
+            { "Uziz",        new Position(2724200508, 182.919f,  87.934f,  22.005f, 0f, 0f, 0f, 1f) },
+            { "Yanshi",      new Position(3027173406,  75.2f,   124.1f,    36.69f,  0f, 0f, 0f, 1f) },
+            { "Yaraq",       new Position(2103705613,  31.9f,   104.6f,    13.9f,   0f, 0f, 0f, 1f) },
+            { "Zaikhal",     new Position(2156920851,  64.863f,  55.687f, 126.005f, 0f, 0f, 0f, 1f) },
         };
 
         // State variables
@@ -405,6 +407,36 @@ namespace ACE.Server.Managers
         // Boss spawn / death
         // ----------------------------------------------------------------
 
+        /// <summary>
+        /// Called once on server startup — before landblocks load — to remove any boss biotas
+        /// that persisted in the shard DB from a previous session (e.g., after a force-kill).
+        /// This prevents orphaned invasion mobs from reappearing when no invasion is active.
+        /// </summary>
+        public static void PurgeOrphanedEntities()
+        {
+            // All WCIDs that the invasion system can spawn as persistent creatures.
+            // Include WCID 11 (tuskermale) in case it was used during testing.
+            var invasionWcids = new uint[] { 71600033, 11 };
+            int totalRemoved = 0;
+
+            foreach (var wcid in invasionWcids)
+            {
+                var biotas = DatabaseManager.Shard.BaseDatabase.GetBiotasByWcid(wcid);
+                if (biotas.Count == 0)
+                    continue;
+
+                var ids = biotas.Select(b => b.Id).ToList();
+                DatabaseManager.Shard.BaseDatabase.RemoveBiotasInParallel(ids);
+                totalRemoved += ids.Count;
+                log.Info($"[Invasion] Startup purge: removed {ids.Count} orphaned biota(s) for WCID {wcid}.");
+            }
+
+            if (totalRemoved == 0)
+                log.Debug("[Invasion] Startup purge: no orphaned invasion entities found.");
+            else
+                log.Info($"[Invasion] Startup purge complete — {totalRemoved} total orphaned biota(s) removed.");
+        }
+
         private static void SpawnBoss()
         {
             // Determine spawn position: prefer registered generator location if available,
@@ -416,12 +448,36 @@ namespace ACE.Server.Managers
             }
             else if (TownBossPositions.TryGetValue(ActiveTown, out var hardcoded))
             {
-                spawnPos = hardcoded;
+                // Copy so we can mutate Z without touching the shared table entry
+                spawnPos = new Position(hardcoded);
             }
             else
             {
                 log.Error($"[Invasion] Cannot spawn boss for '{ActiveTown}': no generator registered and no hardcoded position found.");
                 return;
+            }
+
+            // Auto-snap Z to actual terrain height so the boss always lands on the ground
+            // regardless of how the position table Z was originally set.
+            try
+            {
+                var lb = LandblockManager.GetLandblock(spawnPos.LandblockId, false, spawnPos.Variation);
+                if (lb?.PhysicsLandblock != null)
+                {
+                    var terrainZ = lb.PhysicsLandblock.GetZ(new Vector3(spawnPos.PositionX, spawnPos.PositionY, spawnPos.PositionZ));
+                    // Add 1 unit buffer: creature physics origin needs to be above terrain surface, not exactly on it
+                    var adjustedZ = terrainZ + 1.0f;
+                    log.Info($"[Invasion] Boss spawn Z: table={spawnPos.PositionZ:F3}, terrain={terrainZ:F3}, final={adjustedZ:F3}");
+                    spawnPos.PositionZ = adjustedZ;
+                }
+                else
+                {
+                    log.Warn($"[Invasion] Landblock for '{ActiveTown}' not loaded — using table Z ({spawnPos.PositionZ:F3}). Boss may float.");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[Invasion] Terrain Z lookup failed for '{ActiveTown}': {ex.Message} — using table Z.");
             }
 
             // Spawn boss (Tyrant Darkspire Golem - WCID 71600033) at the town center
@@ -524,6 +580,16 @@ namespace ACE.Server.Managers
                 }
 
                 // Invasion is active. Handle proximity check.
+
+                // Detect boss silently removed by landblock cleanup (Destroy() without Die()).
+                // IsDestroyed is true when the object was removed from the world outside of combat.
+                if (ActiveBoss != null && ActiveBoss.IsDestroyed)
+                {
+                    log.Warn($"[Invasion] Boss was silently destroyed (no Die() call) in {ActiveTown}. Triggering FailInvasion.");
+                    FailInvasion();
+                    return;
+                }
+
                 var elapsed = now - InvasionStartTime;
                 if (elapsed >= ProximityTimeout)
                 {
@@ -552,6 +618,7 @@ namespace ACE.Server.Managers
                 }
             }
         }
+
 
         private static bool IsAnyPlayerNearby(Position targetLocation, float radius)
         {
