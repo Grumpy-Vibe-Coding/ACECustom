@@ -325,6 +325,9 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>ILT Player Pref: Receive [Invasion] server-wide broadcast messages. Default ON (absent = show).</summary>
         ShowInvasionMessages = 50040,
 
+        /// <summary>Player is in unkillable developer mode.</summary>
+        IsUnkillable = 50041,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }
