@@ -75,6 +75,12 @@ namespace ACE.Server.WorldObjects
 
             HandlePreOrderItems();
 
+            // Deliver any queued invasion auto-loot rewards once the player is fully in-world.
+            var invasionRewardChain = new ActionChain();
+            invasionRewardChain.AddDelaySeconds(8.0f);
+            invasionRewardChain.AddAction(this, ActionType.PlayerNetworking_EnqueueSend, () => InvasionManager.TryDeliverPending(this));
+            invasionRewardChain.EnqueueChain();
+
             // SendSelf will trigger the entrance into portal space
             SendSelf();
             MarkPortalSpaceEntered();

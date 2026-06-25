@@ -436,6 +436,23 @@ namespace ACE.Server.Command.Handlers
                         ChatMessageType.System));
                 }
             }
+            else if (sub == "ihsync")
+            {
+                // Silent handshake from the Invasion Helper plugin. /ilt ihsync [on|off]
+                // Registers (or removes) this session for real-time invasion state pushes.
+                bool on = true;
+                if (parameters.Length > argIndex)
+                {
+                    var opt = parameters[argIndex].ToLower();
+                    if (opt == "off" || opt == "false" || opt == "disable") on = false;
+                }
+
+                if (on)
+                    InvasionManager.RegisterPluginSession(player);
+                else
+                    InvasionManager.UnregisterPluginSession(player);
+                // No chat output: this is a machine-to-machine handshake.
+            }
             else
             {
                 var dmgLabel  = player.DamageNumberFormat switch { 1 => "commas", 2 => "short", _ => "default" };

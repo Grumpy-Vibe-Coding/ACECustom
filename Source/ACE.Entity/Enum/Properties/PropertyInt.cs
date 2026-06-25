@@ -797,6 +797,9 @@ namespace ACE.Entity.Enum.Properties
         /// 2 = Short (1.2K / 2.2M / 1.5B / 3.2T / 1Q)
         /// </summary>
         DamageNumberFormat = 50101,
+
+        /// <summary>Number of unclaimed invasion auto-loot rewards owed to this character (delivered on login / boss death when pack has space).</summary>
+        InvasionPendingRewards = 50110,
     }
 
     public static class PropertyIntExtensions

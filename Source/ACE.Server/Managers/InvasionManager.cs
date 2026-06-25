@@ -15,7 +15,7 @@ using Position = ACE.Entity.Position;
 
 namespace ACE.Server.Managers
 {
-    public static class InvasionManager
+    public static partial class InvasionManager
     {
         private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         private static readonly object _lock = new object();
@@ -26,7 +26,8 @@ namespace ACE.Server.Managers
             "Eastham", "Glenden Wood", "Hebian-to", "Holtburg", "Kara",
             "Khayyaban", "Lytelthorpe", "Mayoi", "Nanto", "Neydisa",
             "Rithwic", "Samsur", "Sawato", "Shoushi", "Stonehold",
-            "Tufa", "Uziz", "Yanshi", "Yaraq", "Zaikhal"
+            "Subway", "Town Network", "Tufa", "Uziz", "Yanshi",
+            "Yaraq", "Zaikhal"
         };
 
         public static readonly List<string> SpeciesList = new()
@@ -65,6 +66,10 @@ namespace ACE.Server.Managers
             { "Yanshi",      new Position(3027173406,  75.2f,   124.1f,    36.69f,  0f, 0f, 0f, 1f) },
             { "Yaraq",       new Position(2103705613,  31.9f,   104.6f,    13.9f,   0f, 0f, 0f, 1f) },
             { "Zaikhal",     new Position(2156920851,  64.863f,  55.687f, 126.005f, 0f, 0f, 0f, 1f) },
+            // Dungeon locations (indoor) — Z left as the floor value from /loc; SpawnBoss skips
+            // the terrain-Z snap for indoor cells.
+            { "Town Network", new Position(459075,    69.898331f, -59.826942f, 0.005f, 0f, 0f, -0.999249f, -0.038746f) },
+            { "Subway",       new Position(29950517,  79.682556f, -40.203197f, 0.005f, 0f, 0f, -0.356618f, -0.934250f) },
         };
 
         // State variables
@@ -185,6 +190,38 @@ namespace ACE.Server.Managers
         // Damage / Healing tracking
         // ----------------------------------------------------------------
 
+        /// <summary>
+        /// Live per-hit damage credit. Called from DamageHistory.Add (every damage path:
+        /// melee, missile, magic, DoT) on the creature's own combat thread. Cheap no-op when
+        /// no invasion is running. Lets players see eligibility build during the fight instead
+        /// of only when a mob dies.
+        /// </summary>
+        public static void OnDamageDealt(Creature target, WorldObject attacker, uint amount)
+        {
+            if (!IsActive || target == null || attacker == null || amount == 0) return;
+
+            // Resolve to the owning player (direct hit or combat pet).
+            var player = attacker as Player ?? (attacker as CombatPet)?.P_PetOwner;
+            if (player == null) return;
+
+            // The boss always counts. Other creatures must be invasion minions ("Invasion"
+            // in the name) within the kill radius of the invasion origin.
+            if (target != ActiveBoss)
+            {
+                if (target.Name == null || target.Name.IndexOf("Invasion", StringComparison.OrdinalIgnoreCase) < 0)
+                    return;
+
+                var origin = ActiveGenerator?.Location
+                          ?? ActiveBoss?.Location
+                          ?? (TownBossPositions.TryGetValue(ActiveTown, out var tp) ? tp : null);
+
+                if (origin == null || target.Location == null || target.Location.DistanceTo(origin) > InvasionKillRadius)
+                    return;
+            }
+
+            AddDamage(player, amount);
+        }
+
         public static void AddDamage(Player player, long amount)
         {
             if (!IsActive || player == null || amount <= 0) return;
@@ -202,6 +239,7 @@ namespace ACE.Server.Managers
 
             if (oldDmg < DamageThreshold && newDmg >= DamageThreshold)
             {
+                TryClaimReward(player);
                 player.Session?.Network.EnqueueSend(new GameMessageSystemChat("[Invasion] You have met the damage requirement and are now eligible for the reward portal!", ChatMessageType.System));
             }
         }
@@ -223,6 +261,7 @@ namespace ACE.Server.Managers
 
             if (oldHeal < HealingThreshold && newHeal >= HealingThreshold)
             {
+                TryClaimReward(caster);
                 caster.Session?.Network.EnqueueSend(new GameMessageSystemChat("[Invasion] You have met the healing requirement and are now eligible for the reward portal!", ChatMessageType.System));
             }
         }
@@ -230,10 +269,6 @@ namespace ACE.Server.Managers
         public static bool IsEligible(Player player)
         {
             if (player == null) return false;
-
-            // Developer bypass
-            if (player.Session?.AccessLevel >= AccessLevel.Developer)
-                return true;
 
             long damage = 0;
             long healing = 0;
@@ -264,16 +299,18 @@ namespace ACE.Server.Managers
                 if (normalizedTown == null || normalizedSpecies == null)
                     return false;
 
+                // The generator event is only needed for minion spawning. Boss-only invasions
+                // work for any town in the list even without a registered event/generator
+                // (e.g. newly added locations that don't have generator SQL yet).
                 var eventName = $"Invasion_{normalizedTown}_{normalizedSpecies}";
-                if (!EventManager.IsEventAvailable(eventName))
-                {
-                    log.Error($"Invasion event '{eventName}' is not registered in the database!");
-                    return false;
-                }
+                bool eventAvailable = EventManager.IsEventAvailable(eventName);
+                if (SpawnMinions && !eventAvailable)
+                    log.Warn($"[Invasion] No generator event '{eventName}' registered — boss will spawn but minions will not.");
 
                 // Reset states
                 PlayerDamageTracker.Clear();
                 PlayerHealingTracker.Clear();
+                ResetRewardState();
                 ActiveBoss = null;
                 ActiveGenerator = null;
                 KillCount = 0;
@@ -283,8 +320,9 @@ namespace ACE.Server.Managers
                 IsActive = true;
                 InvasionStartTime = Time.GetUnixTime();
 
-                // Start event to enable spawner generators (minion mobs) — disabled until SpawnMinions is true
-                if (SpawnMinions)
+                // Start event to enable spawner generators (minion mobs) — only when enabled AND
+                // a generator event actually exists for this town/species.
+                if (SpawnMinions && eventAvailable)
                     EventManager.StartEvent(eventName, null, null);
 
                 // Broadcast start message
@@ -294,6 +332,7 @@ namespace ACE.Server.Managers
                 // Directly spawn the boss at the known town position (no generator dependency)
                 SpawnBoss();
 
+                ForceSyncPush(); // push live state to plugin clients immediately
                 return true;
             }
         }
@@ -305,7 +344,7 @@ namespace ACE.Server.Managers
                 if (!IsActive) return;
 
                 var eventName = $"Invasion_{ActiveTown}_{ActiveSpecies}";
-                if (SpawnMinions)
+                if (SpawnMinions && EventManager.IsEventAvailable(eventName))
                     EventManager.StopEvent(eventName, null, null);
 
                 if (ActiveBoss != null && ActiveBoss.IsAlive)
@@ -323,6 +362,8 @@ namespace ACE.Server.Managers
                     var announcement = $"[Invasion] The town of {ActiveTown} has successfully defeated the {ActiveSpecies} invasion!";
                     BroadcastInvasion(announcement);
                 }
+
+                ForceSyncPush(); // push idle/ended state to plugin clients immediately
             }
         }
 
@@ -333,7 +374,7 @@ namespace ACE.Server.Managers
                 if (!IsActive) return;
 
                 var eventName = $"Invasion_{ActiveTown}_{ActiveSpecies}";
-                if (SpawnMinions)
+                if (SpawnMinions && EventManager.IsEventAvailable(eventName))
                     EventManager.StopEvent(eventName, null, null);
 
                 if (ActiveBoss != null && ActiveBoss.IsAlive)
@@ -348,6 +389,8 @@ namespace ACE.Server.Managers
 
                 IsActive = false;
                 NextInvasionTime = Time.GetUnixTime() + GetRandomCooldown();
+
+                ForceSyncPush(); // push idle/ended state to plugin clients immediately
             }
         }
 
@@ -384,16 +427,8 @@ namespace ACE.Server.Managers
                         return;
                 }
 
-                // Accumulate damage contributions from all players who hit this creature
-                foreach (var damager in creature.DamageHistory.Damagers)
-                {
-                    var attackerObj = damager.TryGetPetOwnerOrAttacker();
-                    if (attackerObj is Player player)
-                    {
-                        AddDamage(player, (long)damager.TotalDamage);
-                    }
-                }
-
+                // Damage is now credited live per-hit via OnDamageDealt (see DamageHistory.Add),
+                // so we no longer re-tally DamageHistory here (that would double-count).
                 KillCount++;
 
                 if (isBossDeath)
@@ -415,8 +450,10 @@ namespace ACE.Server.Managers
         public static void PurgeOrphanedEntities()
         {
             // All WCIDs that the invasion system can spawn as persistent creatures.
-            // Include WCID 11 (tuskermale) in case it was used during testing.
-            var invasionWcids = new uint[] { 71600033, 11 };
+            // 72000001 = current invasion boss (Tyrant Darkspire Golem) — MUST match SpawnBoss().
+            // 71600033 = legacy boss WCID (kept so old persisted bosses still get cleaned up).
+            // 11 = tuskermale, in case it was used during testing.
+            var invasionWcids = new uint[] { 72000001, 71600033, 11 };
             int totalRemoved = 0;
 
             foreach (var wcid in invasionWcids)
@@ -458,21 +495,30 @@ namespace ACE.Server.Managers
             }
 
             // Auto-snap Z to actual terrain height so the boss always lands on the ground
-            // regardless of how the position table Z was originally set.
+            // regardless of how the position table Z was originally set. Skip for indoor
+            // (dungeon) cells — terrain height is meaningless there, the table Z is the floor.
+            bool isOutdoor = (spawnPos.Cell & 0xFFFF) < 0x0100;
             try
             {
-                var lb = LandblockManager.GetLandblock(spawnPos.LandblockId, false, spawnPos.Variation);
-                if (lb?.PhysicsLandblock != null)
+                if (!isOutdoor)
                 {
-                    var terrainZ = lb.PhysicsLandblock.GetZ(new Vector3(spawnPos.PositionX, spawnPos.PositionY, spawnPos.PositionZ));
-                    // Add 1 unit buffer: creature physics origin needs to be above terrain surface, not exactly on it
-                    var adjustedZ = terrainZ + 1.0f;
-                    log.Info($"[Invasion] Boss spawn Z: table={spawnPos.PositionZ:F3}, terrain={terrainZ:F3}, final={adjustedZ:F3}");
-                    spawnPos.PositionZ = adjustedZ;
+                    log.Info($"[Invasion] Indoor spawn for '{ActiveTown}' — using table Z {spawnPos.PositionZ:F3} (no terrain snap).");
                 }
                 else
                 {
-                    log.Warn($"[Invasion] Landblock for '{ActiveTown}' not loaded — using table Z ({spawnPos.PositionZ:F3}). Boss may float.");
+                    var lb = LandblockManager.GetLandblock(spawnPos.LandblockId, false, spawnPos.Variation);
+                    if (lb?.PhysicsLandblock != null)
+                    {
+                        var terrainZ = lb.PhysicsLandblock.GetZ(new Vector3(spawnPos.PositionX, spawnPos.PositionY, spawnPos.PositionZ));
+                        // Add 1 unit buffer: creature physics origin needs to be above terrain surface, not exactly on it
+                        var adjustedZ = terrainZ + 1.0f;
+                        log.Info($"[Invasion] Boss spawn Z: table={spawnPos.PositionZ:F3}, terrain={terrainZ:F3}, final={adjustedZ:F3}");
+                        spawnPos.PositionZ = adjustedZ;
+                    }
+                    else
+                    {
+                        log.Warn($"[Invasion] Landblock for '{ActiveTown}' not loaded — using table Z ({spawnPos.PositionZ:F3}). Boss may float.");
+                    }
                 }
             }
             catch (Exception ex)
@@ -480,11 +526,11 @@ namespace ACE.Server.Managers
                 log.Warn($"[Invasion] Terrain Z lookup failed for '{ActiveTown}': {ex.Message} — using table Z.");
             }
 
-            // Spawn boss (Tyrant Darkspire Golem - WCID 71600033) at the town center
-            var boss = WorldObjectFactory.CreateNewWorldObject(71600033) as Creature;
+            // Spawn boss (Tyrant Darkspire Golem - WCID 72000001) at the town center
+            var boss = WorldObjectFactory.CreateNewWorldObject(72000001) as Creature;
             if (boss == null)
             {
-                log.Error("[Invasion] Failed to create boss object WCID 71600033");
+                log.Error("[Invasion] Failed to create boss object WCID 72000001");
                 return;
             }
 
@@ -499,33 +545,62 @@ namespace ACE.Server.Managers
             log.Info($"[Invasion] Boss '{boss.Name}' spawned at {spawnPos} for {ActiveTown}");
         }
 
+        // Reward portal tracking (for the post-invasion lockout + force-despawn).
+        private static WorldObject _rewardPortal;
+        private static double _rewardPortalExpires;
+        private const int RewardPortalLifespan = 300; // seconds (5 minutes)
+
+        /// <summary>Seconds remaining on the current reward portal's lifespan, else 0.</summary>
+        public static double RewardLockoutRemaining
+        {
+            get
+            {
+                var rem = _rewardPortalExpires - Time.GetUnixTime();
+                return rem > 0 ? rem : 0;
+            }
+        }
+
+        /// <summary>Despawn the active reward portal immediately (used when force-starting).</summary>
+        public static void DespawnRewardPortal()
+        {
+            try { if (_rewardPortal != null && !_rewardPortal.IsDestroyed) _rewardPortal.Destroy(); }
+            catch { }
+            _rewardPortal = null;
+            _rewardPortalExpires = 0;
+        }
+
         private static void HandleBossDeath()
         {
-            // Determine reward portal spawn position
-            Position portalPos;
-            if (ActiveGenerator?.Location != null)
-                portalPos = new Position(ActiveGenerator.Location);
-            else if (TownBossPositions.TryGetValue(ActiveTown, out var hardcoded))
-                portalPos = hardcoded;
-            else
-                portalPos = null;
+            // Spawn the reward portal where the boss actually died (falls back to the town
+            // center if the boss location is somehow unavailable). The portal's destination
+            // (the reward room) is defined by the portal weenie and is left unchanged.
+            Position portalPos =
+                  ActiveBoss?.Location != null ? new Position(ActiveBoss.Location)
+                : TownBossPositions.TryGetValue(ActiveTown, out var hardcoded) ? new Position(hardcoded)
+                : null;
 
             if (portalPos != null)
             {
-                // Spawn reward portal (WCID 694200296) at the town center
                 var portal = WorldObjectFactory.CreateNewWorldObject(694200296) as Portal;
                 if (portal != null)
                 {
                     portal.Location = portalPos;
-                    portal.Lifespan = 300; // 5 minutes
+                    portal.Lifespan = RewardPortalLifespan;
                     portal.CreationTimestamp = (int)Time.GetUnixTime();
                     portal.EnterWorld();
+
+                    _rewardPortal = portal;
+                    _rewardPortalExpires = Time.GetUnixTime() + RewardPortalLifespan;
                 }
             }
             else
             {
                 log.Error("[Invasion] Cannot spawn reward portal: no position available.");
             }
+
+            // Auto-loot: credit/deliver rewards to eligible accounts' earners BEFORE StopInvasion
+            // clears the trackers/reward state.
+            GrantInvasionRewards();
 
             StopInvasion(true);
         }
@@ -558,6 +633,9 @@ namespace ACE.Server.Managers
                 return;
 
             _nextTickTime = now + 1.0; // Tick once per second
+
+            // Push live state to plugin-enabled players (self-throttled; cheap).
+            PushSync(now);
 
             lock (_lock)
             {
@@ -679,6 +757,13 @@ namespace ACE.Server.Managers
         {
             var ts = TimeSpan.FromSeconds(Math.Max(0, totalSeconds));
             return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
+        }
+
+        /// <summary>Formats a duration as h:mm:ss (e.g. 2:28:01).</summary>
+        public static string FormatHms(double totalSeconds)
+        {
+            var ts = TimeSpan.FromSeconds(Math.Max(0, totalSeconds));
+            return $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}";
         }
 
         // ----------------------------------------------------------------

@@ -4,6 +4,7 @@ using System.Linq;
 
 using ACE.Entity;
 using ACE.Entity.Enum;
+using ACE.Server.Managers;
 using ACE.Server.WorldObjects;
 
 namespace ACE.Server.Entity
@@ -96,6 +97,9 @@ namespace ACE.Server.Entity
             Log.Add(entry);
 
             AddInternal(attacker, amount);
+
+            // Live invasion damage credit (cheap no-op when no invasion is active).
+            InvasionManager.OnDamageDealt(Creature, attacker, amount);
 
             Creature.OnHealthUpdate();
         }

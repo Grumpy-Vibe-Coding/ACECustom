@@ -405,6 +405,8 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> invasion_damage_threshold { get; private set; } = new(500000, "Damage required for a player to qualify for the invasion reward portal.");
         public static ConfigProperty<long> invasion_healing_threshold { get; private set; } = new(10000, "Healing required for a player to qualify for the invasion reward portal.");
         public static ConfigProperty<long> invasion_required_kills { get; private set; } = new(50, "Kill count tracked during an invasion (informational / future use).");
+        public static ConfigProperty<long> invasion_treasure_id { get; private set; } = new(0, "TreasureDeath profile id rolled for invasion auto-loot rewards (set via /dev invasion treasure). 0 = auto-loot disabled.");
+        public static ConfigProperty<long> invasion_reward_max_per_ip { get; private set; } = new(2, "Max invasion auto-loot rewards granted per IP per invasion (anti-farm).");
         public static ConfigProperty<bool> item_dispel { get; private set; } = new(false, "if enabled, allows players to dispel items. defaults to end of retail, where item dispels could only target creatures");
         public static ConfigProperty<bool> legacy_loot_system { get; private set; } = new(false, "use the previous iteration of the ace lootgen system");
         public static ConfigProperty<bool> lifestone_broadcast_death { get; private set; } = new(true, "if true, player deaths are additionally broadcast to other players standing near the destination lifestone");

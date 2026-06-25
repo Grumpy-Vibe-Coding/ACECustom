@@ -69,6 +69,9 @@ namespace ACE.Server.Command.Handlers
                 case "minions":
                     HandleMinions(session, parameters.Skip(1).ToArray());
                     break;
+                case "treasure":
+                    HandleTreasure(session, parameters.Skip(1).ToArray());
+                    break;
                 case "enable":
                 case "disable":
                     HandleEnable(session, sub);
@@ -89,26 +92,52 @@ namespace ACE.Server.Command.Handlers
                       "  /dev invasion cooldown [min|max] <value> - Set random cooldown range (e.g. cooldown min 1h  cooldown max 4h)\n" +
                       "  /dev invasion threshold <damage|healing> <value> - Set participation requirements (e.g. 500k, 10k)\n" +
                       "  /dev invasion timeout <seconds> - Set proximity check grace period\n" +
-                      "  /dev invasion minions [on|off] - Toggle minion wave spawning (default: off)";
+                      "  /dev invasion minions [on|off] - Toggle minion wave spawning (default: off)\n" +
+                      "  /dev invasion treasure <id> - Set the TreasureDeath profile id for auto-loot rewards (0 = disabled)";
             session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Broadcast));
         }
 
         private static void HandleStart(Session session, string[] args)
         {
-            if (args.Length < 2)
+            // Parse: optional trailing 'force'; species = last remaining token; town = the rest
+            // joined (supports multi-word towns like "Glenden Wood" / "Town Network").
+            var tokens = new System.Collections.Generic.List<string>(args);
+            bool force = false;
+            for (int i = tokens.Count - 1; i >= 0; i--)
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion start <town> <species>", ChatMessageType.System));
+                if (tokens[i].Equals("force", StringComparison.OrdinalIgnoreCase))
+                {
+                    force = true;
+                    tokens.RemoveAt(i);
+                }
+            }
+
+            if (tokens.Count < 2)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion start <town> <species> [force]", ChatMessageType.System));
                 return;
             }
 
-            var town = args[0];
-            var species = args[1];
+            var species = tokens[tokens.Count - 1];
+            var town = string.Join(" ", tokens.GetRange(0, tokens.Count - 1));
 
             if (InvasionManager.IsActive)
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("An invasion is already active!", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("An invasion is already active! Use /dev invasion stop first.", ChatMessageType.System));
                 return;
             }
+
+            // Protect the previous invasion's reward window (portal still up). Overridable with 'force'.
+            var lockout = InvasionManager.RewardLockoutRemaining;
+            if (lockout > 0 && !force)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    $"Last invasion's reward window is still open ({InvasionManager.FormatMmSs(lockout)} left). " +
+                    $"Add 'force' to override: /dev invasion start {town} {species} force", ChatMessageType.System));
+                return;
+            }
+            if (force)
+                InvasionManager.DespawnRewardPortal(); // clear the stale portal before restarting
 
             if (InvasionManager.StartInvasion(town, species))
             {
@@ -138,6 +167,7 @@ namespace ACE.Server.Command.Handlers
             sb.AppendLine("=== Invasion System Status ===");
             sb.AppendLine($"Auto-Invasions: {(InvasionManager.Enabled ? "ENABLED" : "DISABLED")}");
             sb.AppendLine($"Minion Spawning: {(InvasionManager.SpawnMinions ? "ON" : "OFF")}");
+            sb.AppendLine($"Auto-loot: {(InvasionManager.TreasureId > 0 ? $"ON (treasure id {InvasionManager.TreasureId})" : "OFF")}");
             sb.AppendLine($"Active: {InvasionManager.IsActive}");
             
             if (InvasionManager.IsActive)
@@ -161,10 +191,10 @@ namespace ACE.Server.Command.Handlers
             {
                 var now = Time.GetUnixTime();
                 var remaining = InvasionManager.NextInvasionTime - now;
-                sb.AppendLine($"Cooldown remaining: {(remaining > 0 ? InvasionManager.FormatMmSs(remaining) : "0:00 (Ready)")}");
+                sb.AppendLine($"Cooldown remaining: {(remaining > 0 ? InvasionManager.FormatHms(remaining) : "0:00:00 (Ready)")}");
             }
 
-            sb.AppendLine($"Cooldown Range: {InvasionManager.FormatMmSs(InvasionManager.CooldownMin)} – {InvasionManager.FormatMmSs(InvasionManager.CooldownMax)}");
+            sb.AppendLine($"Cooldown Range: {InvasionManager.FormatHms(InvasionManager.CooldownMin)} – {InvasionManager.FormatHms(InvasionManager.CooldownMax)}");
             sb.AppendLine($"Proximity Timeout (Grace): {InvasionManager.ProximityTimeout}s");
             sb.AppendLine($"Damage Threshold: {InvasionManager.FormatCompact(InvasionManager.DamageThreshold)}");
             sb.AppendLine($"Healing Threshold: {InvasionManager.FormatCompact(InvasionManager.HealingThreshold)}");
@@ -258,6 +288,20 @@ namespace ACE.Server.Command.Handlers
             {
                 session.Network.EnqueueSend(new GameMessageSystemChat("Invalid threshold type. Use damage or healing.", ChatMessageType.System));
             }
+        }
+
+        private static void HandleTreasure(Session session, string[] args)
+        {
+            if (args.Length < 1 || !long.TryParse(args[0], out var id) || id < 0)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    $"Usage: /dev invasion treasure <treasureDeathId>  (0 = disable auto-loot). Current: {InvasionManager.TreasureId}", ChatMessageType.System));
+                return;
+            }
+
+            InvasionManager.TreasureId = id;
+            session.Network.EnqueueSend(new GameMessageSystemChat(
+                id == 0 ? "Invasion auto-loot disabled (treasure id 0)." : $"Invasion auto-loot treasure id set to {id}.", ChatMessageType.System));
         }
 
         private static void HandleTimeout(Session session, string[] args)
