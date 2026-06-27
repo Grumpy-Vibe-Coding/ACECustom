@@ -72,6 +72,25 @@ namespace ACE.Server.Command.Handlers
                 case "treasure":
                     HandleTreasure(session, parameters.Skip(1).ToArray());
                     break;
+                case "reward":
+                    HandleReward(session, parameters.Skip(1).ToArray());
+                    break;
+                case "lockout":
+                    HandleLockout(session, parameters.Skip(1).ToArray());
+                    break;
+                case "bossinfo":
+                    if (parameters.Length > 1 && parameters[1].Equals("save_db", StringComparison.OrdinalIgnoreCase))
+                    {
+                        InvasionManager.SaveBossOverridesToDb(session.Player);
+                    }
+                    else
+                    {
+                        InvasionManager.SendBossInfo(session.Player);
+                    }
+                    break;
+                case "bossset":
+                    HandleBossSet(session, parameters.Skip(1).ToArray());
+                    break;
                 case "enable":
                 case "disable":
                     HandleEnable(session, sub);
@@ -93,7 +112,9 @@ namespace ACE.Server.Command.Handlers
                       "  /dev invasion threshold <damage|healing> <value> - Set participation requirements (e.g. 500k, 10k)\n" +
                       "  /dev invasion timeout <seconds> - Set proximity check grace period\n" +
                       "  /dev invasion minions [on|off] - Toggle minion wave spawning (default: off)\n" +
-                      "  /dev invasion treasure <id> - Set the TreasureDeath profile id for auto-loot rewards (0 = disabled)";
+                      "  /dev invasion treasure <id> - Set the TreasureDeath profile id for the auto-loot treasure roll (0 = none)\n" +
+                      "  /dev invasion reward <wcid> [amount] - Set a fixed auto-loot item, e.g. a coin (0 = none)\n" +
+                      "  /dev invasion lockout <seconds> - Wait required between invasions after one ends (override with 'force')";
             session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Broadcast));
         }
 
@@ -132,7 +153,7 @@ namespace ACE.Server.Command.Handlers
             if (lockout > 0 && !force)
             {
                 session.Network.EnqueueSend(new GameMessageSystemChat(
-                    $"Last invasion's reward window is still open ({InvasionManager.FormatMmSs(lockout)} left). " +
+                    $"Restart lockout active ({InvasionManager.FormatMmSs(lockout)} left). " +
                     $"Add 'force' to override: /dev invasion start {town} {species} force", ChatMessageType.System));
                 return;
             }
@@ -167,7 +188,9 @@ namespace ACE.Server.Command.Handlers
             sb.AppendLine("=== Invasion System Status ===");
             sb.AppendLine($"Auto-Invasions: {(InvasionManager.Enabled ? "ENABLED" : "DISABLED")}");
             sb.AppendLine($"Minion Spawning: {(InvasionManager.SpawnMinions ? "ON" : "OFF")}");
-            sb.AppendLine($"Auto-loot: {(InvasionManager.TreasureId > 0 ? $"ON (treasure id {InvasionManager.TreasureId})" : "OFF")}");
+            sb.AppendLine($"Auto-loot fixed: {(InvasionManager.RewardWcid > 0 ? $"WCID {InvasionManager.RewardWcid} x {InvasionManager.RewardAmount}" : "none")}");
+            sb.AppendLine($"Auto-loot treasure: {(InvasionManager.TreasureId > 0 ? $"id {InvasionManager.TreasureId}" : "none")}");
+            sb.AppendLine($"Restart lockout: {InvasionManager.RestartLockout:N0}s");
             sb.AppendLine($"Active: {InvasionManager.IsActive}");
             
             if (InvasionManager.IsActive)
@@ -301,7 +324,55 @@ namespace ACE.Server.Command.Handlers
 
             InvasionManager.TreasureId = id;
             session.Network.EnqueueSend(new GameMessageSystemChat(
-                id == 0 ? "Invasion auto-loot disabled (treasure id 0)." : $"Invasion auto-loot treasure id set to {id}.", ChatMessageType.System));
+                id == 0 ? "Invasion treasure roll disabled (treasure id 0)." : $"Invasion treasure roll id set to {id}.", ChatMessageType.System));
+        }
+
+        private static void HandleReward(Session session, string[] args)
+        {
+            if (args.Length < 1 || !long.TryParse(args[0], out var wcid) || wcid < 0)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    $"Usage: /dev invasion reward <wcid> [amount]  (0 = no fixed reward). Current: wcid {InvasionManager.RewardWcid} x {InvasionManager.RewardAmount}", ChatMessageType.System));
+                return;
+            }
+
+            long amount = 1;
+            if (args.Length > 1 && long.TryParse(args[1], out var a) && a > 0)
+                amount = a;
+
+            InvasionManager.RewardWcid = wcid;
+            InvasionManager.RewardAmount = amount;
+            session.Network.EnqueueSend(new GameMessageSystemChat(
+                wcid == 0 ? "Invasion fixed reward disabled." : $"Invasion fixed reward set to WCID {wcid} x {amount}.", ChatMessageType.System));
+        }
+
+        private static void HandleLockout(Session session, string[] args)
+        {
+            if (args.Length < 1 || !double.TryParse(args[0], out var seconds) || seconds < 0)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    $"Usage: /dev invasion lockout <seconds>  (post-invasion restart wait, override with 'force'). Current: {InvasionManager.RestartLockout:N0}s", ChatMessageType.System));
+                return;
+            }
+
+            InvasionManager.RestartLockout = seconds;
+            session.Network.EnqueueSend(new GameMessageSystemChat(
+                $"Invasion restart lockout set to {seconds:N0}s.", ChatMessageType.System));
+        }
+
+        private static void HandleBossSet(Session session, string[] args)
+        {
+            if (args.Length < 2 || !double.TryParse(args[1], out var value))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    "Usage: /dev invasion bossset <property> <value> (e.g. str, hp, res_slash, skill_melee_def, magic_only)", ChatMessageType.System));
+                return;
+            }
+
+            if (InvasionManager.SetBossProperty(args[0], value, out var message))
+                InvasionManager.SendBossInfo(session.Player); // echo refreshed values to the plugin
+
+            session.Network.EnqueueSend(new GameMessageSystemChat(message, ChatMessageType.System));
         }
 
         private static void HandleTimeout(Session session, string[] args)

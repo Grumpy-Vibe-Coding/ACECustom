@@ -118,6 +118,16 @@ namespace ACE.Server.WorldObjects
             if (CombatTable == null)
                 GetCombatTable();
 
+            // Check if this is the active invasion boss and magic-only mode is enabled
+            if (this == InvasionManager.ActiveBoss && ServerConfig.invasion_boss_magic_only.Value)
+            {
+                if (HasKnownSpells)
+                {
+                    if (TryRollSpell() || SelectFallbackSpell())
+                        return CombatType.Magic;
+                }
+            }
+
             // if caster, roll for spellcasting chance
             if (HasKnownSpells && TryRollSpell())
                 return CombatType.Magic;
@@ -126,6 +136,20 @@ namespace ACE.Server.WorldObjects
                 return CombatType.Missile;
             else
                 return CombatType.Melee;
+        }
+
+        private bool SelectFallbackSpell()
+        {
+            if (Biota.PropertiesSpellBook == null || Biota.PropertiesSpellBook.Count == 0)
+                return false;
+
+            var firstSpellId = Biota.PropertiesSpellBook.Keys.FirstOrDefault();
+            if (firstSpellId != 0)
+            {
+                CurrentSpell = new Spell(firstSpellId);
+                return !CurrentSpell.NotFound;
+            }
+            return false;
         }
 
         /// <summary>

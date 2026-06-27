@@ -311,6 +311,7 @@ namespace ACE.Server.Managers
                 PlayerDamageTracker.Clear();
                 PlayerHealingTracker.Clear();
                 ResetRewardState();
+                DespawnRewardPortal(); // clear any lingering portal from a prior invasion
                 ActiveBoss = null;
                 ActiveGenerator = null;
                 KillCount = 0;
@@ -363,6 +364,7 @@ namespace ACE.Server.Managers
                     BroadcastInvasion(announcement);
                 }
 
+                _lastInvasionEndedAt = Time.GetUnixTime(); // start the restart lockout
                 ForceSyncPush(); // push idle/ended state to plugin clients immediately
             }
         }
@@ -390,6 +392,7 @@ namespace ACE.Server.Managers
                 IsActive = false;
                 NextInvasionTime = Time.GetUnixTime() + GetRandomCooldown();
 
+                _lastInvasionEndedAt = Time.GetUnixTime(); // start the restart lockout
                 ForceSyncPush(); // push idle/ended state to plugin clients immediately
             }
         }
@@ -538,6 +541,8 @@ namespace ACE.Server.Managers
             ActiveBoss = boss;
             BossSpawnTime = Time.GetUnixTime();
 
+            ApplyBossOverrides(boss); // live-tuning overrides (health/scale/damage rating) before spawn
+
             boss.EnterWorld();
 
             var announcement = $"[Invasion] The invasion boss, {boss.Name}, has spawned in the center of {ActiveTown}!";
@@ -545,17 +550,26 @@ namespace ACE.Server.Managers
             log.Info($"[Invasion] Boss '{boss.Name}' spawned at {spawnPos} for {ActiveTown}");
         }
 
-        // Reward portal tracking (for the post-invasion lockout + force-despawn).
+        // Reward portal tracking (for force-despawn) + restart lockout.
         private static WorldObject _rewardPortal;
         private static double _rewardPortalExpires;
-        private const int RewardPortalLifespan = 300; // seconds (5 minutes)
+        private static double _lastInvasionEndedAt;
+        private const int RewardPortalLifespan = 300; // seconds (5 minutes) — the reward window for players
 
-        /// <summary>Seconds remaining on the current reward portal's lifespan, else 0.</summary>
+        /// <summary>Seconds an admin must wait after an invasion ends before starting another
+        /// (overridable with 'force'). Configurable; default 300s. Set short for testing.</summary>
+        public static double RestartLockout
+        {
+            get => ServerConfig.invasion_restart_lockout.Value;
+            set => ServerConfig.SetValue("invasion_restart_lockout", value);
+        }
+
+        /// <summary>Seconds remaining on the post-invasion restart lockout, else 0.</summary>
         public static double RewardLockoutRemaining
         {
             get
             {
-                var rem = _rewardPortalExpires - Time.GetUnixTime();
+                var rem = (_lastInvasionEndedAt + RestartLockout) - Time.GetUnixTime();
                 return rem > 0 ? rem : 0;
             }
         }

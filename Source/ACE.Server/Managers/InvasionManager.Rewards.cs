@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using ACE.Database;
+using ACE.Database.Models.World;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
@@ -34,6 +35,22 @@ namespace ACE.Server.Managers
             get => ServerConfig.invasion_treasure_id.Value;
             set => ServerConfig.SetValue("invasion_treasure_id", value);
         }
+
+        /// <summary>Fixed item WCID granted as a reward (0 = none). e.g. Invasion/Prestige coin.</summary>
+        public static long RewardWcid
+        {
+            get => ServerConfig.invasion_reward_wcid.Value;
+            set => ServerConfig.SetValue("invasion_reward_wcid", value);
+        }
+
+        /// <summary>Quantity/stack of the fixed reward item.</summary>
+        public static long RewardAmount
+        {
+            get => ServerConfig.invasion_reward_amount.Value;
+            set => ServerConfig.SetValue("invasion_reward_amount", value);
+        }
+
+        private static bool AutoLootEnabled => RewardWcid > 0 || TreasureId > 0;
 
         /// <summary>Clears reward eligibility state. Called at invasion start.</summary>
         internal static void ResetRewardState()
@@ -76,10 +93,51 @@ namespace ACE.Server.Managers
         /// </summary>
         internal static void GrantInvasionRewards()
         {
-            if (ServerConfig.invasion_treasure_id.Value <= 0) return; // auto-loot disabled
-
             List<uint> earners;
             lock (_lock) { earners = _accountEarner.Values.ToList(); }
+
+            // Message participants who did not qualify for rewards
+            var allParticipants = PlayerDamageTracker.Keys.Union(PlayerHealingTracker.Keys).ToList();
+            foreach (var charGuidFull in allParticipants)
+            {
+                if (earners.Contains(charGuidFull))
+                    continue;
+
+                var guid = new ObjectGuid(charGuidFull);
+                var player = PlayerManager.GetOnlinePlayer(guid);
+                if (player == null) continue;
+
+                PlayerDamageTracker.TryGetValue(charGuidFull, out var dmg);
+                PlayerHealingTracker.TryGetValue(charGuidFull, out var heal);
+
+                if (dmg >= DamageThreshold || heal >= HealingThreshold)
+                {
+                    var acctId = player.Session?.AccountId ?? 0;
+                    bool accountClaimed = false;
+                    lock (_lock) { accountClaimed = _accountEarner.ContainsKey(acctId) && _accountEarner[acctId] != charGuidFull; }
+
+                    if (accountClaimed)
+                    {
+                        player.Session?.Network.EnqueueSend(new GameMessageSystemChat(
+                            "[Invasion] You met the threshold, but another character on your account already claimed the reward.",
+                            ChatMessageType.System));
+                    }
+                    else
+                    {
+                        player.Session?.Network.EnqueueSend(new GameMessageSystemChat(
+                            $"[Invasion] You met the threshold, but the reward limit for your IP address ({MaxRewardsPerIp}) was reached.",
+                            ChatMessageType.System));
+                    }
+                }
+                else
+                {
+                    player.Session?.Network.EnqueueSend(new GameMessageSystemChat(
+                        $"[Invasion] You did not meet the reward eligibility requirements. Your contribution: {dmg:N0}/{DamageThreshold:N0} Damage, {heal:N0}/{HealingThreshold:N0} Healing.",
+                        ChatMessageType.System));
+                }
+            }
+
+            if (!AutoLootEnabled) return; // no fixed item and no treasure roll configured
 
             foreach (var charGuidFull in earners)
             {
@@ -106,9 +164,10 @@ namespace ACE.Server.Managers
         }
 
         /// <summary>
-        /// Delivers pending invasion rewards into the player's pack. Rolls treasure fresh per
-        /// reward, sets it attuned/bonded, and only consumes a pending unit if the whole roll fit.
-        /// Safe to call repeatedly (boss death for the online earner, and on login).
+        /// Delivers pending invasion rewards into the player's pack. Each pending unit is one
+        /// reward PACKAGE = the configured fixed item (e.g. a coin) plus, if set, a fresh treasure
+        /// roll. Items are set attuned/bonded; a unit is only consumed if the whole package fit
+        /// (never dropped on the ground). Safe to call repeatedly (boss death online + on login).
         /// </summary>
         public static void TryDeliverPending(Player player)
         {
@@ -116,31 +175,30 @@ namespace ACE.Server.Managers
 
             int pending = player.GetProperty(PropertyInt.InvasionPendingRewards) ?? 0;
             if (pending <= 0) return;
+            if (!AutoLootEnabled) return;
 
-            long treasureId = ServerConfig.invasion_treasure_id.Value;
-            if (treasureId <= 0) return;
-
-            var profile = DatabaseManager.World.GetCachedDeathTreasure((uint)treasureId);
-            if (profile == null)
+            TreasureDeath profile = null;
+            if (TreasureId > 0)
             {
-                log.Error($"[Invasion] invasion_treasure_id {treasureId} has no TreasureDeath profile — cannot deliver rewards.");
-                return;
+                profile = DatabaseManager.World.GetCachedDeathTreasure((uint)TreasureId);
+                if (profile == null)
+                    log.Error($"[Invasion] invasion_treasure_id {TreasureId} has no TreasureDeath profile — skipping treasure roll.");
             }
 
             int delivered = 0;
             for (int i = 0; i < pending; i++)
             {
-                var items = LootGenerationFactory.CreateRandomLootObjects(profile);
-                if (items == null || items.Count == 0) { delivered++; continue; } // empty roll: consume it
+                var package = BuildRewardPackage(profile);
+                if (package.Count == 0) { delivered++; continue; } // nothing to give: consume the unit
 
-                // Whole roll must fit, else leave this (and the rest) queued — never drop on ground.
-                if (player.GetFreeInventorySlots() < items.Count)
+                // Whole package must fit, else leave it (and the rest) queued — never drop on ground.
+                if (player.GetFreeInventorySlots() < package.Count)
                 {
-                    foreach (var it in items) it.Destroy();
+                    foreach (var it in package) it.Destroy();
                     break;
                 }
 
-                foreach (var item in items)
+                foreach (var item in package)
                 {
                     item.SetProperty(PropertyInt.Attuned, (int)AttunedStatus.Attuned);
                     item.SetProperty(PropertyInt.Bonded, (int)BondedStatus.Bonded);
@@ -155,6 +213,61 @@ namespace ACE.Server.Managers
                 player.Session?.Network.EnqueueSend(new GameMessageSystemChat(
                     $"[Invasion] You received {delivered} reward{(delivered > 1 ? "s" : "")}!", ChatMessageType.Broadcast));
             }
+        }
+
+        /// <summary>Builds one reward package: fixed item (RewardWcid x RewardAmount) + optional treasure roll.</summary>
+        private static List<WorldObject> BuildRewardPackage(TreasureDeath profile)
+        {
+            var package = new List<WorldObject>();
+
+            // Fixed item (e.g. coin), stacked where possible.
+            if (RewardWcid > 0 && RewardAmount > 0)
+            {
+                long remaining = RewardAmount;
+                var first = WorldObjectFactory.CreateNewWorldObject((uint)RewardWcid);
+                if (first == null)
+                {
+                    log.Error($"[Invasion] invasion_reward_wcid {RewardWcid} could not be created.");
+                }
+                else
+                {
+                    int max = first.MaxStackSize ?? 1;
+                    if (max > 1)
+                    {
+                        int s = (int)Math.Min(remaining, max);
+                        first.SetStackSize(s);
+                        package.Add(first);
+                        remaining -= s;
+                        while (remaining > 0)
+                        {
+                            var extra = WorldObjectFactory.CreateNewWorldObject((uint)RewardWcid);
+                            if (extra == null) break;
+                            int es = (int)Math.Min(remaining, max);
+                            extra.SetStackSize(es);
+                            package.Add(extra);
+                            remaining -= es;
+                        }
+                    }
+                    else
+                    {
+                        package.Add(first);
+                        for (long n = 1; n < RewardAmount; n++)
+                        {
+                            var extra = WorldObjectFactory.CreateNewWorldObject((uint)RewardWcid);
+                            if (extra != null) package.Add(extra);
+                        }
+                    }
+                }
+            }
+
+            // Optional treasure roll.
+            if (profile != null)
+            {
+                var rolled = LootGenerationFactory.CreateRandomLootObjects(profile);
+                if (rolled != null) package.AddRange(rolled);
+            }
+
+            return package;
         }
     }
 }

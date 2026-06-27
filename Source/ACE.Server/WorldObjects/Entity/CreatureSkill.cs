@@ -3,8 +3,10 @@ using System;
 using ACE.Common.Extensions;
 using ACE.DatLoader;
 using ACE.Entity.Enum;
+using ACE.Entity.Enum.Properties;
 using ACE.Entity.Models;
 using ACE.Server.Entity;
+using ACE.Server.Managers;
 
 namespace ACE.Server.WorldObjects.Entity
 {
@@ -137,10 +139,14 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
+                var over = GetCreatureSkillOverride();
+                if (over > 0) return over;
+
                 Player player = creature as Player;
                 uint total = InitLevel + Ranks;
                 if (IsUsable) total += AttributeFormula.GetFormula(creature, Skill, /*current=*/false);
                 if (player != null) total += GetAugBonus_Base(player);
+                else total += GetCreatureAugBonus_Base();
                 return total;
             }
         }
@@ -149,10 +155,14 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
+                var over = GetCreatureSkillOverride();
+                if (over > 0) return over;
+
                 Player player = creature as Player;
                 uint total = InitLevel + Ranks;
                 if (IsUsable) total += AttributeFormula.GetFormula(creature, Skill, /*current=*/true);
                 if (player != null) total += GetAugBonus_Base(player);
+                else total += GetCreatureAugBonus_Base();
 
                 // apply multiplicative enchantments
                 var multiplier = creature.EnchantmentManager.GetSkillMod_Multiplier(Skill);
@@ -226,6 +236,73 @@ namespace ACE.Server.WorldObjects.Entity
                 total += (uint)player.LumAugSkilledSpec * 2;
 
             return total;
+        }
+
+        private uint GetCreatureAugBonus_Base()
+        {
+            uint total = 0;
+
+            // Combat defenses
+            if (Skill == Skill.MeleeDefense)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationSkilledMelee) ?? 0) * 10);
+            else if (Skill == Skill.MissileDefense)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationSkilledMissile) ?? 0) * 10);
+
+            // Magic schools
+            else if (Skill == Skill.CreatureEnchantment)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationInfusedCreatureMagic) ?? 0) * 10);
+            else if (Skill == Skill.ItemEnchantment)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationInfusedItemMagic) ?? 0) * 10);
+            else if (Skill == Skill.LifeMagic)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationInfusedLifeMagic) ?? 0) * 10);
+            else if (Skill == Skill.WarMagic)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationInfusedWarMagic) ?? 0) * 10);
+            else if (Skill == Skill.VoidMagic)
+                total += (uint)((creature.GetProperty(PropertyInt.AugmentationInfusedVoidMagic) ?? 0) * 10);
+
+            return total;
+        }
+
+        private uint GetCreatureSkillOverride()
+        {
+            if (creature != InvasionManager.ActiveBoss)
+                return 0;
+
+            switch (Skill)
+            {
+                case Skill.MeleeDefense:
+                    return (uint)ServerConfig.invasion_boss_skill_melee_def.Value;
+                case Skill.MissileDefense:
+                    return (uint)ServerConfig.invasion_boss_skill_missile_def.Value;
+                case Skill.MagicDefense:
+                    return (uint)ServerConfig.invasion_boss_skill_magic_def.Value;
+                case Skill.WarMagic:
+                    return (uint)ServerConfig.invasion_boss_skill_war.Value;
+                case Skill.VoidMagic:
+                    return (uint)ServerConfig.invasion_boss_skill_void.Value;
+                case Skill.LifeMagic:
+                    return (uint)ServerConfig.invasion_boss_skill_life.Value;
+                case Skill.CreatureEnchantment:
+                    return (uint)ServerConfig.invasion_boss_skill_creature.Value;
+                case Skill.ItemEnchantment:
+                    return (uint)ServerConfig.invasion_boss_skill_item.Value;
+                case Skill.HeavyWeapons:
+                    return (uint)ServerConfig.invasion_boss_skill_heavy_weapons.Value;
+                case Skill.LightWeapons:
+                    return (uint)ServerConfig.invasion_boss_skill_light_weapons.Value;
+                case Skill.FinesseWeapons:
+                    return (uint)ServerConfig.invasion_boss_skill_finesse_weapons.Value;
+                case Skill.TwoHandedCombat:
+                    return (uint)ServerConfig.invasion_boss_skill_two_handed.Value;
+                case Skill.MissileWeapons:
+                    return (uint)ServerConfig.invasion_boss_skill_missile_weapons.Value;
+                case Skill.DualWield:
+                    return (uint)ServerConfig.invasion_boss_skill_dual_wield.Value;
+                case Skill.Shield:
+                    return (uint)ServerConfig.invasion_boss_skill_shield.Value;
+                default:
+                    return 0;
+            }
         }
     }
 }
