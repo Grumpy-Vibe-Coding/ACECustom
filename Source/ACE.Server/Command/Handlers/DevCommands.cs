@@ -105,7 +105,7 @@ namespace ACE.Server.Command.Handlers
         {
             var msg = "=== Invasion Commands ===\n" +
                       "  /dev invasion enable|disable - Toggle automatic invasions on or off\n" +
-                      "  /dev invasion start <town> <species> - Start a specific invasion\n" +
+                      "  /dev invasion start <town> <species> [type] - Start a specific invasion (type: boss)\n" +
                       "  /dev invasion stop - Force stop the current invasion\n" +
                       "  /dev invasion status - Display current invasion status\n" +
                       "  /dev invasion cooldown [min|max] <value> - Set random cooldown range (e.g. cooldown min 1h  cooldown max 4h)\n" +
@@ -133,9 +133,22 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
+            // Optional invasion type token (e.g. "boss"); order-independent, defaults to "boss".
+            // Type ids never collide with a town or species name, so scanning all tokens is safe.
+            string type = "boss";
+            for (int i = tokens.Count - 1; i >= 0; i--)
+            {
+                if (InvasionManager.IsKnownInvasionType(tokens[i]))
+                {
+                    type = tokens[i];
+                    tokens.RemoveAt(i);
+                    break;
+                }
+            }
+
             if (tokens.Count < 2)
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion start <town> <species> [force]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /dev invasion start <town> <species> [type] [force]", ChatMessageType.System));
                 return;
             }
 
@@ -160,9 +173,9 @@ namespace ACE.Server.Command.Handlers
             if (force)
                 InvasionManager.DespawnRewardPortal(); // clear the stale portal before restarting
 
-            if (InvasionManager.StartInvasion(town, species))
+            if (InvasionManager.StartInvasion(town, species, type))
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Started invasion in {town} ({species}).", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Started {type} invasion in {town} ({species}).", ChatMessageType.System));
             }
             else
             {
@@ -197,6 +210,7 @@ namespace ACE.Server.Command.Handlers
             {
                 sb.AppendLine($"Town: {InvasionManager.ActiveTown}");
                 sb.AppendLine($"Species: {InvasionManager.ActiveSpecies}");
+                sb.AppendLine($"Type: {InvasionManager.ActiveObjective?.DisplayName ?? "?"}");
                 sb.AppendLine($"Generator: {(InvasionManager.ActiveGenerator != null ? "Active" : "Null")}");
                 if (InvasionManager.ActiveBoss != null)
                 {

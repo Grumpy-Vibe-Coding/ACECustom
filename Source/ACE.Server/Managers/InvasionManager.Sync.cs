@@ -75,7 +75,7 @@ namespace ACE.Server.Managers
             uint[] guids;
             Dictionary<uint, long> dmgSnap, healSnap;
             bool active;
-            string town, species, bossName;
+            string town, species, bossName, objType;
             uint bossCur, bossMax;
             long dThr, hThr;
             bool minOn, autoOn;
@@ -91,6 +91,7 @@ namespace ACE.Server.Managers
                 active  = IsActive;
                 town    = ActiveTown;
                 species = ActiveSpecies;
+                objType = ActiveObjective?.TypeId ?? "";
                 bossName = ""; bossCur = 0; bossMax = 0;
                 if (ActiveBoss != null && ActiveBoss.IsAlive)
                 {
@@ -113,6 +114,7 @@ namespace ACE.Server.Managers
             sb.Append("|act=").Append(active ? 1 : 0);
             sb.Append("|town=").Append(Clean(town));
             sb.Append("|species=").Append(Clean(species));
+            sb.Append("|type=").Append(Clean(objType));
             sb.Append("|boss=").Append(Clean(bossName));
             sb.Append("|bosscur=").Append(bossCur);
             sb.Append("|bossmax=").Append(bossMax);

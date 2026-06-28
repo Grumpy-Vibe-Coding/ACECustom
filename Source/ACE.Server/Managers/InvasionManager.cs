@@ -78,6 +78,11 @@ namespace ACE.Server.Managers
         public static string ActiveSpecies { get; private set; }
         public static WorldObject ActiveGenerator { get; private set; }
         public static Creature ActiveBoss { get; set; } // Set or read when boss is active
+
+        /// <summary>The active invasion's win/fail rules. Non-null only while an invasion runs:
+        /// set in StartInvasion, cleared in StopInvasion/FailInvasion.</summary>
+        public static InvasionObjective ActiveObjective { get; private set; }
+
         public static double InvasionStartTime { get; private set; }
         public static double BossSpawnTime { get; private set; }
         public static double NextInvasionTime { get; private set; } = 0;
@@ -206,7 +211,7 @@ namespace ACE.Server.Managers
 
             // The boss always counts. Other creatures must be invasion minions ("Invasion"
             // in the name) within the kill radius of the invasion origin.
-            if (target != ActiveBoss)
+            if (!(ActiveObjective?.IsBoss(target) ?? false))
             {
                 if (target.Name == null || target.Name.IndexOf("Invasion", StringComparison.OrdinalIgnoreCase) < 0)
                     return;
@@ -283,10 +288,35 @@ namespace ACE.Server.Managers
         }
 
         // ----------------------------------------------------------------
+        // Invasion types (objective selection)
+        // ----------------------------------------------------------------
+
+        /// <summary>Invasion type ids accepted by /dev invasion start. "boss" is the default.</summary>
+        public static readonly IReadOnlyList<string> InvasionTypes = new[] { "boss" };
+
+        /// <summary>Case-insensitive check that a string names a known invasion type.</summary>
+        public static bool IsKnownInvasionType(string typeId)
+            => typeId != null && InvasionTypes.Any(t => t.Equals(typeId, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Build the objective for a type id. Returns null for an unknown id.</summary>
+        private static InvasionObjective CreateObjective(string typeId)
+        {
+            switch ((typeId ?? "boss").ToLowerInvariant())
+            {
+                case "":
+                case "boss":
+                    return new SingleBossObjective();
+                // case "3boss": return new ThreeBossBurnObjective(); // Phase 2
+                default:
+                    return null;
+            }
+        }
+
+        // ----------------------------------------------------------------
         // Start / Stop
         // ----------------------------------------------------------------
 
-        public static bool StartInvasion(string town, string species)
+        public static bool StartInvasion(string town, string species, string type = "boss")
         {
             lock (_lock)
             {
@@ -298,6 +328,13 @@ namespace ACE.Server.Managers
 
                 if (normalizedTown == null || normalizedSpecies == null)
                     return false;
+
+                var objective = CreateObjective(type);
+                if (objective == null)
+                {
+                    log.Warn($"[Invasion] Unknown invasion type '{type}'.");
+                    return false;
+                }
 
                 // The generator event is only needed for minion spawning. Boss-only invasions
                 // work for any town in the list even without a registered event/generator
@@ -316,6 +353,7 @@ namespace ACE.Server.Managers
                 ActiveGenerator = null;
                 KillCount = 0;
 
+                ActiveObjective = objective;
                 ActiveTown = normalizedTown;
                 ActiveSpecies = normalizedSpecies;
                 IsActive = true;
@@ -330,8 +368,8 @@ namespace ACE.Server.Managers
                 var announcement = $"[Invasion] A {normalizedSpecies} invasion has started in the town of {normalizedTown}!";
                 BroadcastInvasion(announcement);
 
-                // Directly spawn the boss at the known town position (no generator dependency)
-                SpawnBoss();
+                // Spawn the objective's creatures (boss-only today; no generator dependency).
+                ActiveObjective.OnStart();
 
                 ForceSyncPush(); // push live state to plugin clients immediately
                 return true;
@@ -348,10 +386,8 @@ namespace ACE.Server.Managers
                 if (SpawnMinions && EventManager.IsEventAvailable(eventName))
                     EventManager.StopEvent(eventName, null, null);
 
-                if (ActiveBoss != null && ActiveBoss.IsAlive)
-                {
-                    ActiveBoss.Destroy();
-                }
+                ActiveObjective?.Cleanup();
+                ActiveObjective = null;
                 ActiveBoss = null;
                 ActiveGenerator = null;
 
@@ -379,10 +415,8 @@ namespace ACE.Server.Managers
                 if (SpawnMinions && EventManager.IsEventAvailable(eventName))
                     EventManager.StopEvent(eventName, null, null);
 
-                if (ActiveBoss != null && ActiveBoss.IsAlive)
-                {
-                    ActiveBoss.Destroy();
-                }
+                ActiveObjective?.Cleanup();
+                ActiveObjective = null;
                 ActiveBoss = null;
                 ActiveGenerator = null;
 
@@ -409,7 +443,7 @@ namespace ACE.Server.Managers
             {
                 if (!IsActive) return;
 
-                bool isBossDeath = creature == ActiveBoss;
+                bool isBossDeath = ActiveObjective?.IsBoss(creature) ?? false;
 
                 // Only track mobs that are part of the invasion (name contains "Invasion")
                 if (!isBossDeath && (creature.Name == null || creature.Name.IndexOf("Invasion", StringComparison.OrdinalIgnoreCase) < 0))
@@ -434,9 +468,11 @@ namespace ACE.Server.Managers
                 // so we no longer re-tally DamageHistory here (that would double-count).
                 KillCount++;
 
-                if (isBossDeath)
+                ActiveObjective?.OnCreatureDeath(creature);
+
+                if (ActiveObjective != null && ActiveObjective.IsWon)
                 {
-                    HandleBossDeath();
+                    HandleWin();
                 }
             }
         }
@@ -477,7 +513,7 @@ namespace ACE.Server.Managers
                 log.Info($"[Invasion] Startup purge complete — {totalRemoved} total orphaned biota(s) removed.");
         }
 
-        private static void SpawnBoss()
+        internal static void SpawnBoss()
         {
             // Determine spawn position: prefer registered generator location if available,
             // otherwise fall back to the hardcoded town position table.
@@ -583,7 +619,9 @@ namespace ACE.Server.Managers
             _rewardPortalExpires = 0;
         }
 
-        private static void HandleBossDeath()
+        /// <summary>Shared win path: spawn the reward portal, grant auto-loot, end successfully.
+        /// Invoked when the active objective reports <see cref="InvasionObjective.IsWon"/>.</summary>
+        private static void HandleWin()
         {
             // Spawn the reward portal where the boss actually died (falls back to the town
             // center if the boss location is somehow unavailable). The portal's destination
@@ -671,17 +709,24 @@ namespace ACE.Server.Managers
                     return;
                 }
 
-                // Invasion is active. Handle proximity check.
+                // Invasion is active. Let the objective advance its time-based rules and
+                // surface any win/fail (e.g. a boss silently removed by landblock cleanup).
+                ActiveObjective?.Tick(now);
 
-                // Detect boss silently removed by landblock cleanup (Destroy() without Die()).
-                // IsDestroyed is true when the object was removed from the world outside of combat.
-                if (ActiveBoss != null && ActiveBoss.IsDestroyed)
+                if (ActiveObjective != null && ActiveObjective.IsFailed)
                 {
-                    log.Warn($"[Invasion] Boss was silently destroyed (no Die() call) in {ActiveTown}. Triggering FailInvasion.");
+                    log.Warn($"[Invasion] Objective '{ActiveObjective.DisplayName}' reported failure in {ActiveTown}. Triggering FailInvasion.");
                     FailInvasion();
                     return;
                 }
 
+                if (ActiveObjective != null && ActiveObjective.IsWon)
+                {
+                    HandleWin();
+                    return;
+                }
+
+                // Proximity fail-safe (shared across all objective types).
                 var elapsed = now - InvasionStartTime;
                 if (elapsed >= ProximityTimeout)
                 {
