@@ -75,7 +75,7 @@ namespace ACE.Server.Managers
             uint[] guids;
             Dictionary<uint, long> dmgSnap, healSnap;
             bool active;
-            string town, species, bossName, objType;
+            string town, species, bossName, objType, objExtra;
             uint bossCur, bossMax;
             long dThr, hThr;
             bool minOn, autoOn;
@@ -99,6 +99,17 @@ namespace ACE.Server.Managers
                     bossCur = ActiveBoss.Health?.Current ?? 0;
                     bossMax = ActiveBoss.Health?.MaxValue ?? 0;
                 }
+
+                // Type-specific fields (e.g. multi-boss list + burn/encounter timers). Built under
+                // the lock since it reads live creature state; appended to the shared prefix below.
+                objExtra = "";
+                if (ActiveObjective != null)
+                {
+                    var sbx = new StringBuilder(96);
+                    ActiveObjective.BuildSyncFields(sbx);
+                    objExtra = sbx.ToString();
+                }
+
                 dThr = DamageThreshold; hThr = HealingThreshold;
                 minOn = SpawnMinions;   autoOn = Enabled;
             }
@@ -124,6 +135,7 @@ namespace ACE.Server.Managers
             sb.Append("|auto=").Append(autoOn ? 1 : 0);
             sb.Append("|dthr=").Append(dThr);
             sb.Append("|hthr=").Append(hThr);
+            sb.Append(objExtra); // type-specific fields (already sanitized + framed by the objective)
             int sharedLen = sb.Length; // truncate back to here for each player
 
             foreach (var guid in guids)

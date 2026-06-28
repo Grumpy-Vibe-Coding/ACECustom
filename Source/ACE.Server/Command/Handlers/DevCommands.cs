@@ -105,7 +105,7 @@ namespace ACE.Server.Command.Handlers
         {
             var msg = "=== Invasion Commands ===\n" +
                       "  /dev invasion enable|disable - Toggle automatic invasions on or off\n" +
-                      "  /dev invasion start <town> <species> [type] - Start a specific invasion (type: boss)\n" +
+                      "  /dev invasion start <town> <species> [type] - Start a specific invasion (type: boss, 3boss)\n" +
                       "  /dev invasion stop - Force stop the current invasion\n" +
                       "  /dev invasion status - Display current invasion status\n" +
                       "  /dev invasion cooldown [min|max] <value> - Set random cooldown range (e.g. cooldown min 1h  cooldown max 4h)\n" +
@@ -212,11 +212,14 @@ namespace ACE.Server.Command.Handlers
                 sb.AppendLine($"Species: {InvasionManager.ActiveSpecies}");
                 sb.AppendLine($"Type: {InvasionManager.ActiveObjective?.DisplayName ?? "?"}");
                 sb.AppendLine($"Generator: {(InvasionManager.ActiveGenerator != null ? "Active" : "Null")}");
-                if (InvasionManager.ActiveBoss != null)
+                var bosses = InvasionManager.ActiveObjective?.Bosses;
+                if (bosses != null && bosses.Count > 0)
                 {
-                    var boss = InvasionManager.ActiveBoss;
-                    var healthPct = boss.Health.MaxValue > 0 ? (double)boss.Health.Current / boss.Health.MaxValue * 100.0 : 0.0;
-                    sb.AppendLine($"Boss: {boss.Name} - Health: {boss.Health.Current:N0} / {boss.Health.MaxValue:N0} ({healthPct:F1}%)");
+                    foreach (var boss in bosses)
+                    {
+                        var healthPct = boss.Health.MaxValue > 0 ? (double)boss.Health.Current / boss.Health.MaxValue * 100.0 : 0.0;
+                        sb.AppendLine($"Boss: {boss.Name} - Health: {boss.Health.Current:N0} / {boss.Health.MaxValue:N0} ({healthPct:F1}%)");
+                    }
                 }
                 else
                 {

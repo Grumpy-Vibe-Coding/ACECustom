@@ -265,7 +265,7 @@ namespace ACE.Server.WorldObjects.Entity
 
         private uint GetCreatureSkillOverride()
         {
-            if (creature != InvasionManager.ActiveBoss)
+            if (!InvasionManager.IsActiveBoss(creature))
                 return 0;
 
             switch (Skill)

@@ -292,7 +292,7 @@ namespace ACE.Server.Managers
         // ----------------------------------------------------------------
 
         /// <summary>Invasion type ids accepted by /dev invasion start. "boss" is the default.</summary>
-        public static readonly IReadOnlyList<string> InvasionTypes = new[] { "boss" };
+        public static readonly IReadOnlyList<string> InvasionTypes = new[] { "boss", "3boss" };
 
         /// <summary>Case-insensitive check that a string names a known invasion type.</summary>
         public static bool IsKnownInvasionType(string typeId)
@@ -306,7 +306,8 @@ namespace ACE.Server.Managers
                 case "":
                 case "boss":
                     return new SingleBossObjective();
-                // case "3boss": return new ThreeBossBurnObjective(); // Phase 2
+                case "3boss":
+                    return new ThreeBossBurnObjective();
                 default:
                     return null;
             }
@@ -490,9 +491,10 @@ namespace ACE.Server.Managers
         {
             // All WCIDs that the invasion system can spawn as persistent creatures.
             // 72000001 = current invasion boss (Tyrant Darkspire Golem) — MUST match SpawnBoss().
+            // 72000010/11/12 = Empyrean 3-boss burn bosses (ThreeBossBurnObjective).
             // 71600033 = legacy boss WCID (kept so old persisted bosses still get cleaned up).
             // 11 = tuskermale, in case it was used during testing.
-            var invasionWcids = new uint[] { 72000001, 71600033, 11 };
+            var invasionWcids = new uint[] { 72000001, 72000010, 72000011, 72000012, 71600033, 11 };
             int totalRemoved = 0;
 
             foreach (var wcid in invasionWcids)
@@ -533,37 +535,8 @@ namespace ACE.Server.Managers
                 return;
             }
 
-            // Auto-snap Z to actual terrain height so the boss always lands on the ground
-            // regardless of how the position table Z was originally set. Skip for indoor
-            // (dungeon) cells — terrain height is meaningless there, the table Z is the floor.
-            bool isOutdoor = (spawnPos.Cell & 0xFFFF) < 0x0100;
-            try
-            {
-                if (!isOutdoor)
-                {
-                    log.Info($"[Invasion] Indoor spawn for '{ActiveTown}' — using table Z {spawnPos.PositionZ:F3} (no terrain snap).");
-                }
-                else
-                {
-                    var lb = LandblockManager.GetLandblock(spawnPos.LandblockId, false, spawnPos.Variation);
-                    if (lb?.PhysicsLandblock != null)
-                    {
-                        var terrainZ = lb.PhysicsLandblock.GetZ(new Vector3(spawnPos.PositionX, spawnPos.PositionY, spawnPos.PositionZ));
-                        // Add 1 unit buffer: creature physics origin needs to be above terrain surface, not exactly on it
-                        var adjustedZ = terrainZ + 1.0f;
-                        log.Info($"[Invasion] Boss spawn Z: table={spawnPos.PositionZ:F3}, terrain={terrainZ:F3}, final={adjustedZ:F3}");
-                        spawnPos.PositionZ = adjustedZ;
-                    }
-                    else
-                    {
-                        log.Warn($"[Invasion] Landblock for '{ActiveTown}' not loaded — using table Z ({spawnPos.PositionZ:F3}). Boss may float.");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                log.Warn($"[Invasion] Terrain Z lookup failed for '{ActiveTown}': {ex.Message} — using table Z.");
-            }
+            // Auto-snap Z to actual terrain height so the boss always lands on the ground.
+            SnapToTerrain(spawnPos, ActiveTown);
 
             // Spawn boss (Tyrant Darkspire Golem - WCID 72000001) at the town center
             var boss = WorldObjectFactory.CreateNewWorldObject(72000001) as Creature;
@@ -585,6 +558,86 @@ namespace ACE.Server.Managers
             BroadcastInvasion(announcement);
             log.Info($"[Invasion] Boss '{boss.Name}' spawned at {spawnPos} for {ActiveTown}");
         }
+
+        /// <summary>
+        /// Snap a spawn position's Z to terrain height for outdoor cells (with a +1 buffer so the
+        /// creature physics origin sits above the surface, not exactly on it). Indoor (dungeon)
+        /// cells are left at their table Z — terrain height is meaningless there. Mutates
+        /// <paramref name="spawnPos"/>. Shared by the single-boss and multi-boss spawn paths.
+        /// </summary>
+        private static void SnapToTerrain(Position spawnPos, string label)
+        {
+            bool isOutdoor = (spawnPos.Cell & 0xFFFF) < 0x0100;
+            try
+            {
+                if (!isOutdoor)
+                {
+                    log.Info($"[Invasion] Indoor spawn for '{label}' — using table Z {spawnPos.PositionZ:F3} (no terrain snap).");
+                }
+                else
+                {
+                    var lb = LandblockManager.GetLandblock(spawnPos.LandblockId, false, spawnPos.Variation);
+                    if (lb?.PhysicsLandblock != null)
+                    {
+                        var terrainZ = lb.PhysicsLandblock.GetZ(new Vector3(spawnPos.PositionX, spawnPos.PositionY, spawnPos.PositionZ));
+                        var adjustedZ = terrainZ + 1.0f;
+                        log.Info($"[Invasion] Boss spawn Z: table={spawnPos.PositionZ:F3}, terrain={terrainZ:F3}, final={adjustedZ:F3}");
+                        spawnPos.PositionZ = adjustedZ;
+                    }
+                    else
+                    {
+                        log.Warn($"[Invasion] Landblock for '{label}' not loaded — using table Z ({spawnPos.PositionZ:F3}). Boss may float.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[Invasion] Terrain Z lookup failed for '{label}': {ex.Message} — using table Z.");
+            }
+        }
+
+        /// <summary>
+        /// Resolve the base boss spawn position for the active town (a fresh copy the caller may
+        /// mutate). Prefers a registered generator location, else the hardcoded table. Null if the
+        /// town is unknown. Used by multi-boss objectives to derive per-boss offset positions.
+        /// </summary>
+        internal static Position GetActiveTownBasePosition()
+        {
+            if (ActiveGenerator?.Location != null) return new Position(ActiveGenerator.Location);
+            if (TownBossPositions.TryGetValue(ActiveTown, out var hardcoded)) return new Position(hardcoded);
+            return null;
+        }
+
+        /// <summary>
+        /// Create an invasion creature of <paramref name="wcid"/> at <paramref name="basePos"/>
+        /// (terrain-Z snapped for outdoor cells), enter it into the world, and return it. Returns
+        /// null on failure. Used by multi-boss objectives; the single-boss path uses
+        /// <see cref="SpawnBoss"/> (which additionally applies the golem live-tuning overrides).
+        /// </summary>
+        internal static Creature SpawnInvasionCreatureAt(uint wcid, Position basePos)
+        {
+            var spawnPos = new Position(basePos);
+            SnapToTerrain(spawnPos, ActiveTown);
+
+            var creature = WorldObjectFactory.CreateNewWorldObject(wcid) as Creature;
+            if (creature == null)
+            {
+                log.Error($"[Invasion] Failed to create invasion creature WCID {wcid}");
+                return null;
+            }
+
+            creature.Location = spawnPos;
+            creature.EnterWorld();
+            return creature;
+        }
+
+        /// <summary>
+        /// True if the creature is one of the currently active invasion bosses. Called from the
+        /// combat-thread boss-tuning hooks (magic-only attack selection, boss skill overrides).
+        /// For a single-boss invasion this is exactly the old <c>creature == ActiveBoss</c> check.
+        /// </summary>
+        public static bool IsActiveBoss(Creature creature)
+            => creature != null && (ActiveObjective?.IsBoss(creature) ?? false);
 
         // Reward portal tracking (for force-despawn) + restart lockout.
         private static WorldObject _rewardPortal;
