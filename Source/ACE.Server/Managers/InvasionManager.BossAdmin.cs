@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using ACE.Entity.Enum;
@@ -137,66 +139,67 @@ namespace ACE.Server.Managers
             }
 
             prop = prop.Trim().ToLowerInvariant();
-            var boss = ActiveBoss != null && ActiveBoss.IsAlive ? ActiveBoss : null;
+            // Apply live to every currently-spawned boss (1 for single-boss, N for multi-boss).
+            var bosses = GetLiveBosses();
             long lv = (long)value;
 
             switch (prop)
             {
                 // --- attributes (recalc vitals live) ---
-                case "strength":     return SetAttr("invasion_boss_strength",     PropertyAttribute.Strength,     lv, boss, out message);
-                case "endurance":    return SetAttr("invasion_boss_endurance",    PropertyAttribute.Endurance,    lv, boss, out message);
-                case "coordination": return SetAttr("invasion_boss_coordination", PropertyAttribute.Coordination, lv, boss, out message);
-                case "quickness":    return SetAttr("invasion_boss_quickness",    PropertyAttribute.Quickness,    lv, boss, out message);
-                case "focus":        return SetAttr("invasion_boss_focus",        PropertyAttribute.Focus,        lv, boss, out message);
-                case "self":         return SetAttr("invasion_boss_self",         PropertyAttribute.Self,         lv, boss, out message);
+                case "strength":     return SetAttr("invasion_boss_strength",     PropertyAttribute.Strength,     lv, bosses, out message);
+                case "endurance":    return SetAttr("invasion_boss_endurance",    PropertyAttribute.Endurance,    lv, bosses, out message);
+                case "coordination": return SetAttr("invasion_boss_coordination", PropertyAttribute.Coordination, lv, bosses, out message);
+                case "quickness":    return SetAttr("invasion_boss_quickness",    PropertyAttribute.Quickness,    lv, bosses, out message);
+                case "focus":        return SetAttr("invasion_boss_focus",        PropertyAttribute.Focus,        lv, bosses, out message);
+                case "self":         return SetAttr("invasion_boss_self",         PropertyAttribute.Self,         lv, bosses, out message);
 
                 // --- vitals ---
-                case "health": return SetVital("invasion_boss_health", boss?.Health, lv, boss, out message);
-                case "stamina": return SetVital("invasion_boss_stamina", boss?.Stamina, lv, boss, out message);
-                case "mana": return SetVital("invasion_boss_mana", boss?.Mana, lv, boss, out message);
+                case "health": return SetVital("invasion_boss_health", b => b.Health, lv, bosses, out message);
+                case "stamina": return SetVital("invasion_boss_stamina", b => b.Stamina, lv, bosses, out message);
+                case "mana": return SetVital("invasion_boss_mana", b => b.Mana, lv, bosses, out message);
 
                 // --- scale ---
                 case "scale":
                     ServerConfig.SetValue("invasion_boss_scale", value);
-                    if (boss != null) boss.ObjScale = (float)value;
+                    foreach (var b in bosses) b.ObjScale = (float)value;
                     message = $"Boss scale set to {value:0.##}.";
                     return true;
 
                 // --- ratings (object-applied int) ---
-                case "damagerating":              return SetIntRating("invasion_boss_damage_rating",             PropertyInt.DamageRating,            lv, boss, out message);
-                case "damage_resist_rating":      return SetIntRating("invasion_boss_damage_resist_rating",      PropertyInt.DamageResistRating,      lv, boss, out message);
-                case "crit_rating":               return SetIntRating("invasion_boss_crit_rating",               PropertyInt.CritRating,              lv, boss, out message);
-                case "crit_damage_rating":        return SetIntRating("invasion_boss_crit_damage_rating",        PropertyInt.CritDamageRating,        lv, boss, out message);
-                case "crit_resist_rating":        return SetIntRating("invasion_boss_crit_resist_rating",        PropertyInt.CritResistRating,        lv, boss, out message);
-                case "crit_damage_resist_rating": return SetIntRating("invasion_boss_crit_damage_resist_rating", PropertyInt.CritDamageResistRating,  lv, boss, out message);
-                case "life_resist_rating":        return SetIntRating("invasion_boss_life_resist_rating",        PropertyInt.LifeResistRating,        lv, boss, out message);
-                case "dot_resist_rating":         return SetIntRating("invasion_boss_dot_resist_rating",         PropertyInt.DotResistRating,         lv, boss, out message);
-                case "weakness_rating":           return SetIntRating("invasion_boss_weakness_rating",           PropertyInt.WeaknessRating,          lv, boss, out message);
+                case "damagerating":              return SetIntRating("invasion_boss_damage_rating",             PropertyInt.DamageRating,            lv, bosses, out message);
+                case "damage_resist_rating":      return SetIntRating("invasion_boss_damage_resist_rating",      PropertyInt.DamageResistRating,      lv, bosses, out message);
+                case "crit_rating":               return SetIntRating("invasion_boss_crit_rating",               PropertyInt.CritRating,              lv, bosses, out message);
+                case "crit_damage_rating":        return SetIntRating("invasion_boss_crit_damage_rating",        PropertyInt.CritDamageRating,        lv, bosses, out message);
+                case "crit_resist_rating":        return SetIntRating("invasion_boss_crit_resist_rating",        PropertyInt.CritResistRating,        lv, bosses, out message);
+                case "crit_damage_resist_rating": return SetIntRating("invasion_boss_crit_damage_resist_rating", PropertyInt.CritDamageResistRating,  lv, bosses, out message);
+                case "life_resist_rating":        return SetIntRating("invasion_boss_life_resist_rating",        PropertyInt.LifeResistRating,        lv, bosses, out message);
+                case "dot_resist_rating":         return SetIntRating("invasion_boss_dot_resist_rating",         PropertyInt.DotResistRating,         lv, bosses, out message);
+                case "weakness_rating":           return SetIntRating("invasion_boss_weakness_rating",           PropertyInt.WeaknessRating,          lv, bosses, out message);
 
                 // --- infused-magic augs (object-applied int) ---
-                case "aug_creature": return SetIntRating("invasion_boss_aug_creature", PropertyInt.AugmentationInfusedCreatureMagic, lv, boss, out message);
-                case "aug_item":     return SetIntRating("invasion_boss_aug_item",     PropertyInt.AugmentationInfusedItemMagic,     lv, boss, out message);
-                case "aug_life":     return SetIntRating("invasion_boss_aug_life",     PropertyInt.AugmentationInfusedLifeMagic,     lv, boss, out message);
-                case "aug_war":      return SetIntRating("invasion_boss_aug_war",      PropertyInt.AugmentationInfusedWarMagic,      lv, boss, out message);
-                case "aug_void":     return SetIntRating("invasion_boss_aug_void",     PropertyInt.AugmentationInfusedVoidMagic,     lv, boss, out message);
+                case "aug_creature": return SetIntRating("invasion_boss_aug_creature", PropertyInt.AugmentationInfusedCreatureMagic, lv, bosses, out message);
+                case "aug_item":     return SetIntRating("invasion_boss_aug_item",     PropertyInt.AugmentationInfusedItemMagic,     lv, bosses, out message);
+                case "aug_life":     return SetIntRating("invasion_boss_aug_life",     PropertyInt.AugmentationInfusedLifeMagic,     lv, bosses, out message);
+                case "aug_war":      return SetIntRating("invasion_boss_aug_war",      PropertyInt.AugmentationInfusedWarMagic,      lv, bosses, out message);
+                case "aug_void":     return SetIntRating("invasion_boss_aug_void",     PropertyInt.AugmentationInfusedVoidMagic,     lv, bosses, out message);
                 // Melee/Missile-defense augs have no creature PropertyInt — persist only (reported in bossinfo).
                 case "aug_melee":    ServerConfig.SetValue("invasion_boss_aug_melee", lv);   message = $"Boss melee aug set to {lv} (stored).";   return true;
                 case "aug_missile":  ServerConfig.SetValue("invasion_boss_aug_missile", lv); message = $"Boss missile aug set to {lv} (stored)."; return true;
 
                 // --- crit freq/mult (object-applied float) ---
-                case "crit_frequency":  return SetFloatStat("invasion_boss_crit_frequency",  PropertyFloat.CriticalFrequency,  value, boss, out message);
-                case "crit_multiplier": return SetFloatStat("invasion_boss_crit_multiplier", PropertyFloat.CriticalMultiplier, value, boss, out message);
+                case "crit_frequency":  return SetFloatStat("invasion_boss_crit_frequency",  PropertyFloat.CriticalFrequency,  value, bosses, out message);
+                case "crit_multiplier": return SetFloatStat("invasion_boss_crit_multiplier", PropertyFloat.CriticalMultiplier, value, bosses, out message);
 
                 // --- elemental resist mods (object-applied float) ---
-                case "res_slash":      return SetFloatStat("invasion_boss_res_slash",      PropertyFloat.ResistSlash,       value, boss, out message);
-                case "res_pierce":     return SetFloatStat("invasion_boss_res_pierce",     PropertyFloat.ResistPierce,      value, boss, out message);
-                case "res_bludgeon":   return SetFloatStat("invasion_boss_res_bludgeon",   PropertyFloat.ResistBludgeon,    value, boss, out message);
-                case "res_fire":       return SetFloatStat("invasion_boss_res_fire",       PropertyFloat.ResistFire,        value, boss, out message);
-                case "res_cold":       return SetFloatStat("invasion_boss_res_cold",       PropertyFloat.ResistCold,        value, boss, out message);
-                case "res_acid":       return SetFloatStat("invasion_boss_res_acid",       PropertyFloat.ResistAcid,        value, boss, out message);
-                case "res_electric":   return SetFloatStat("invasion_boss_res_electric",   PropertyFloat.ResistElectric,    value, boss, out message);
-                case "res_nether":     return SetFloatStat("invasion_boss_res_nether",     PropertyFloat.ResistNether,      value, boss, out message);
-                case "res_healthdrain":return SetFloatStat("invasion_boss_res_healthdrain",PropertyFloat.ResistHealthDrain, value, boss, out message);
+                case "res_slash":      return SetFloatStat("invasion_boss_res_slash",      PropertyFloat.ResistSlash,       value, bosses, out message);
+                case "res_pierce":     return SetFloatStat("invasion_boss_res_pierce",     PropertyFloat.ResistPierce,      value, bosses, out message);
+                case "res_bludgeon":   return SetFloatStat("invasion_boss_res_bludgeon",   PropertyFloat.ResistBludgeon,    value, bosses, out message);
+                case "res_fire":       return SetFloatStat("invasion_boss_res_fire",       PropertyFloat.ResistFire,        value, bosses, out message);
+                case "res_cold":       return SetFloatStat("invasion_boss_res_cold",       PropertyFloat.ResistCold,        value, bosses, out message);
+                case "res_acid":       return SetFloatStat("invasion_boss_res_acid",       PropertyFloat.ResistAcid,        value, bosses, out message);
+                case "res_electric":   return SetFloatStat("invasion_boss_res_electric",   PropertyFloat.ResistElectric,    value, bosses, out message);
+                case "res_nether":     return SetFloatStat("invasion_boss_res_nether",     PropertyFloat.ResistNether,      value, bosses, out message);
+                case "res_healthdrain":return SetFloatStat("invasion_boss_res_healthdrain",PropertyFloat.ResistHealthDrain, value, bosses, out message);
 
                 // --- magic behavior (config-read-live in combat; no object apply) ---
                 case "magic_only":   ServerConfig.SetValue("invasion_boss_magic_only", lv != 0);     message = $"Boss magic-only {(lv != 0 ? "ON" : "OFF")}.";     return true;
@@ -226,34 +229,46 @@ namespace ACE.Server.Managers
             }
         }
 
-        private static bool SetAttr(string key, PropertyAttribute attr, long value, Creature boss, out string message)
+        /// <summary>The currently-spawned, living invasion bosses (1 for single-boss, N for
+        /// multi-boss). Empty when no boss is up. Live boss tuning applies to all of them.</summary>
+        private static IReadOnlyList<Creature> GetLiveBosses()
+            => ActiveObjective?.Bosses ?? Array.Empty<Creature>();
+
+        private static bool SetAttr(string key, PropertyAttribute attr, long value, IReadOnlyList<Creature> bosses, out string message)
         {
             ServerConfig.SetValue(key, value);
-            if (boss != null && value > 0 && boss.Attributes.TryGetValue(attr, out var ca))
-            {
-                ca.StartingValue = (uint)value;
-                boss.SetMaxVitals();
-            }
+            if (value > 0)
+                foreach (var boss in bosses)
+                    if (boss.Attributes.TryGetValue(attr, out var ca))
+                    {
+                        ca.StartingValue = (uint)value;
+                        boss.SetMaxVitals();
+                    }
             message = $"Boss {attr} set to {value}.";
             return true;
         }
 
-        private static bool SetVital(string key, CreatureVital vital, long value, Creature boss, out string message)
+        private static bool SetVital(string key, Func<Creature, CreatureVital> vitalOf, long value, IReadOnlyList<Creature> bosses, out string message)
         {
             ServerConfig.SetValue(key, value);
-            if (boss != null && vital != null && value > 0)
-            {
-                vital.StartingValue = (uint)value;
-                boss.SetMaxVitals();
-            }
+            if (value > 0)
+                foreach (var boss in bosses)
+                {
+                    var vital = vitalOf(boss);
+                    if (vital != null)
+                    {
+                        vital.StartingValue = (uint)value;
+                        boss.SetMaxVitals();
+                    }
+                }
             message = $"Boss {key.Replace("invasion_boss_", "")} set to {value:N0}.";
             return true;
         }
 
-        private static bool SetIntRating(string key, PropertyInt prop, long value, Creature boss, out string message)
+        private static bool SetIntRating(string key, PropertyInt prop, long value, IReadOnlyList<Creature> bosses, out string message)
         {
             ServerConfig.SetValue(key, value);
-            if (boss != null)
+            foreach (var boss in bosses)
             {
                 if (value != 0) boss.SetProperty(prop, (int)value);
                 else boss.RemoveProperty(prop);
@@ -262,10 +277,10 @@ namespace ACE.Server.Managers
             return true;
         }
 
-        private static bool SetFloatStat(string key, PropertyFloat prop, double value, Creature boss, out string message)
+        private static bool SetFloatStat(string key, PropertyFloat prop, double value, IReadOnlyList<Creature> bosses, out string message)
         {
             ServerConfig.SetValue(key, value);
-            if (boss != null)
+            foreach (var boss in bosses)
             {
                 if (value != 0.0) boss.SetProperty(prop, value);
                 else boss.RemoveProperty(prop);
@@ -287,7 +302,10 @@ namespace ACE.Server.Managers
         {
             if (player?.Session == null) return;
 
-            var boss = ActiveBoss != null && ActiveBoss.IsAlive ? ActiveBoss : null;
+            // Live values are read from the first spawned boss (the single boss, or a representative
+            // of the multi-boss set — they share the same applied overrides).
+            var liveBosses = GetLiveBosses();
+            var boss = liveBosses.Count > 0 ? liveBosses[0] : null;
             bool act = boss != null;
 
             var sb = new StringBuilder(900);

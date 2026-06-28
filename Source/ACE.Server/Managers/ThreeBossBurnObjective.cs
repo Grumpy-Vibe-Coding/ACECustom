@@ -87,7 +87,9 @@ namespace ACE.Server.Managers
 
         private void SpawnSlot(BossSlot slot)
         {
-            var boss = InvasionManager.SpawnInvasionCreatureAt(slot.Wcid, slot.SpawnPos);
+            // applyBossOverrides: the shared invasion_boss_* tuning applies to all 3 bosses (and to
+            // revived ones), so Bosses-tab edits affect this encounter. No-op while config is default.
+            var boss = InvasionManager.SpawnInvasionCreatureAt(slot.Wcid, slot.SpawnPos, applyBossOverrides: true);
             slot.Creature = boss;
             if (boss != null)
             {

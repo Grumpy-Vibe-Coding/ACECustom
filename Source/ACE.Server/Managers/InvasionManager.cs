@@ -611,10 +611,12 @@ namespace ACE.Server.Managers
         /// <summary>
         /// Create an invasion creature of <paramref name="wcid"/> at <paramref name="basePos"/>
         /// (terrain-Z snapped for outdoor cells), enter it into the world, and return it. Returns
-        /// null on failure. Used by multi-boss objectives; the single-boss path uses
-        /// <see cref="SpawnBoss"/> (which additionally applies the golem live-tuning overrides).
+        /// null on failure. Used by multi-boss objectives. When <paramref name="applyBossOverrides"/>
+        /// is true the shared <c>invasion_boss_*</c> object-applied overrides are applied before
+        /// EnterWorld (a no-op while every override is at its 0/default), matching SpawnBoss so the
+        /// Bosses-tab live tuning affects multi-boss creatures too.
         /// </summary>
-        internal static Creature SpawnInvasionCreatureAt(uint wcid, Position basePos)
+        internal static Creature SpawnInvasionCreatureAt(uint wcid, Position basePos, bool applyBossOverrides = false)
         {
             var spawnPos = new Position(basePos);
             SnapToTerrain(spawnPos, ActiveTown);
@@ -627,6 +629,8 @@ namespace ACE.Server.Managers
             }
 
             creature.Location = spawnPos;
+            if (applyBossOverrides)
+                ApplyBossOverrides(creature);
             creature.EnterWorld();
             return creature;
         }
