@@ -85,7 +85,9 @@ namespace ACE.Server.Command.Handlers
                     }
                     else
                     {
-                        InvasionManager.SendBossInfo(session.Player);
+                        uint biWcid = InvasionManager.BossWcid;
+                        if (parameters.Length > 1 && uint.TryParse(parameters[1], out var w)) biWcid = w;
+                        InvasionManager.SendBossInfo(session.Player, biWcid);
                     }
                     break;
                 case "bossset":
@@ -379,15 +381,15 @@ namespace ACE.Server.Command.Handlers
 
         private static void HandleBossSet(Session session, string[] args)
         {
-            if (args.Length < 2 || !double.TryParse(args[1], out var value))
+            if (args.Length < 3 || !uint.TryParse(args[0], out var wcid) || !double.TryParse(args[2], out var value))
             {
                 session.Network.EnqueueSend(new GameMessageSystemChat(
-                    "Usage: /dev invasion bossset <property> <value> (e.g. str, hp, res_slash, skill_melee_def, magic_only)", ChatMessageType.System));
+                    "Usage: /dev invasion bossset <wcid> <property> <value> (e.g. 72000010 hp 5000000, str, res_slash, skill_war, magic_only)", ChatMessageType.System));
                 return;
             }
 
-            if (InvasionManager.SetBossProperty(args[0], value, out var message))
-                InvasionManager.SendBossInfo(session.Player); // echo refreshed values to the plugin
+            if (InvasionManager.SetBossProperty(wcid, args[1], value, out var message))
+                InvasionManager.SendBossInfo(session.Player, wcid); // echo refreshed values to the plugin
 
             session.Network.EnqueueSend(new GameMessageSystemChat(message, ChatMessageType.System));
         }

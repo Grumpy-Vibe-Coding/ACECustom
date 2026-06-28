@@ -410,7 +410,8 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> invasion_reward_wcid { get; private set; } = new(0, "Fixed item WCID granted as invasion auto-loot (set via /dev invasion reward). 0 = none.");
         public static ConfigProperty<long> invasion_reward_amount { get; private set; } = new(1, "Quantity/stack size of the fixed invasion reward item (invasion_reward_wcid).");
         public static ConfigProperty<double> invasion_restart_lockout { get; private set; } = new(300.0, "Seconds an admin must wait after an invasion ends before starting another (overridable with 'force'). Lower for testing.");
-        public static ConfigProperty<long> invasion_boss_health { get; private set; } = new(0, "Override the invasion boss max health (applied at spawn). 0 = use weenie default.");
+        public static ConfigProperty<string> invasion_boss_overrides_json { get; private set; } = new("", "Per-WCID invasion boss stat overrides, serialized as JSON (managed by the Bosses tab; do not edit by hand).");
+        public static ConfigProperty<long> invasion_boss_health { get; private set; } = new(0, "Override the invasion boss max health (applied at spawn). 0 = use weenie default. LEGACY: superseded by the per-WCID override store; kept for one-time migration.");
         public static ConfigProperty<double> invasion_boss_scale { get; private set; } = new(0.0, "Override the invasion boss size/scale (applied at spawn). 0 = use weenie default.");
         public static ConfigProperty<long> invasion_boss_damage_rating { get; private set; } = new(0, "Bonus damage rating applied to the invasion boss (boosts its outgoing damage). 0 = none.");
         public static ConfigProperty<long> invasion_boss_aug_creature { get; private set; } = new(0, "Override the invasion boss Creature Magic augmentation level. 0 = none.");

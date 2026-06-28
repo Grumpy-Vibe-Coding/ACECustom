@@ -65,6 +65,7 @@ namespace ACE.Server.Managers
             var thread = new Thread(() =>
             {
                 InvasionManager.PurgeOrphanedEntities();
+                InvasionManager.LoadBossOverrides();
                 LandblockManager.PreloadConfigLandblocks();
                 UpdateWorld();
             });

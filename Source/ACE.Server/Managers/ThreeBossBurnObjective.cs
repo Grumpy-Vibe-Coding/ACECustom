@@ -208,6 +208,7 @@ namespace ACE.Server.Managers
                 long cur = alive ? (s.Creature.Health?.Current ?? 0) : 0;
                 long max = alive ? (s.Creature.Health?.MaxValue ?? s.MaxHealth) : s.MaxHealth;
                 sb.Append("|b").Append(i).Append("n=").Append(SanitizeField(s.Name));
+                sb.Append("|b").Append(i).Append("w=").Append(s.Wcid);
                 sb.Append("|b").Append(i).Append("cur=").Append(cur);
                 sb.Append("|b").Append(i).Append("max=").Append(max);
             }

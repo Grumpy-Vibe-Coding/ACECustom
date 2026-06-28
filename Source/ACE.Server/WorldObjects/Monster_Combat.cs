@@ -118,8 +118,8 @@ namespace ACE.Server.WorldObjects
             if (CombatTable == null)
                 GetCombatTable();
 
-            // Check if this is an active invasion boss and magic-only mode is enabled
-            if (InvasionManager.IsActiveBoss(this) && ServerConfig.invasion_boss_magic_only.Value)
+            // Check if this is an active invasion boss and magic-only mode is enabled (per-WCID)
+            if (InvasionManager.IsActiveBoss(this) && InvasionManager.GetBossOverride(WeenieClassId, "magic_only") != 0)
             {
                 if (HasKnownSpells)
                 {

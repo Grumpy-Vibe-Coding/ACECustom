@@ -268,38 +268,39 @@ namespace ACE.Server.WorldObjects.Entity
             if (!InvasionManager.IsActiveBoss(creature))
                 return 0;
 
+            var wcid = creature.WeenieClassId;
             switch (Skill)
             {
                 case Skill.MeleeDefense:
-                    return (uint)ServerConfig.invasion_boss_skill_melee_def.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_melee_def");
                 case Skill.MissileDefense:
-                    return (uint)ServerConfig.invasion_boss_skill_missile_def.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_missile_def");
                 case Skill.MagicDefense:
-                    return (uint)ServerConfig.invasion_boss_skill_magic_def.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_magic_def");
                 case Skill.WarMagic:
-                    return (uint)ServerConfig.invasion_boss_skill_war.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_war");
                 case Skill.VoidMagic:
-                    return (uint)ServerConfig.invasion_boss_skill_void.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_void");
                 case Skill.LifeMagic:
-                    return (uint)ServerConfig.invasion_boss_skill_life.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_life");
                 case Skill.CreatureEnchantment:
-                    return (uint)ServerConfig.invasion_boss_skill_creature.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_creature");
                 case Skill.ItemEnchantment:
-                    return (uint)ServerConfig.invasion_boss_skill_item.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_item");
                 case Skill.HeavyWeapons:
-                    return (uint)ServerConfig.invasion_boss_skill_heavy_weapons.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_heavy_weapons");
                 case Skill.LightWeapons:
-                    return (uint)ServerConfig.invasion_boss_skill_light_weapons.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_light_weapons");
                 case Skill.FinesseWeapons:
-                    return (uint)ServerConfig.invasion_boss_skill_finesse_weapons.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_finesse_weapons");
                 case Skill.TwoHandedCombat:
-                    return (uint)ServerConfig.invasion_boss_skill_two_handed.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_two_handed");
                 case Skill.MissileWeapons:
-                    return (uint)ServerConfig.invasion_boss_skill_missile_weapons.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_missile_weapons");
                 case Skill.DualWield:
-                    return (uint)ServerConfig.invasion_boss_skill_dual_wield.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_dual_wield");
                 case Skill.Shield:
-                    return (uint)ServerConfig.invasion_boss_skill_shield.Value;
+                    return (uint)InvasionManager.GetBossOverride(wcid, "skill_shield");
                 default:
                     return 0;
             }
