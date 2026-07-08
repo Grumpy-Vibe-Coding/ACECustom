@@ -309,5 +309,11 @@ namespace ACE.Entity.Enum.Properties
         /// Lower = the monster takes less damage (tankier). 1.0 = takes full damage (exempt). Multiplied by the boss factor if IsEmpowerSource.
         /// </summary>
         MobDmgTakenOverride = 9054,
+
+        /// <summary>ELEMENTAL WEAKNESS: per-monster damage multiplier applied when an incoming hit's damage type is in
+        /// PropertyInt.ElementalWeaknessMask. e.g. 3.0 = the mob takes 3x damage from its weak element(s). Unset =
+        /// the elemental_weakness_default_factor server knob. Applied after mitigation, so it's a relative reward for
+        /// using the right element even against heavily-mitigated endgame mobs.</summary>
+        ElementalWeaknessFactor = 9055,
     }
 }

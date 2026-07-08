@@ -822,6 +822,13 @@ namespace ACE.Entity.Enum.Properties
         /// should SIMULATE when force-enabled at a non-prestige variation. Sets the tier for percent-HP growth,
         /// per-tier scaling, etc. Unset/&lt;11 defaults to the base prestige variation (11 = tier 1). Never set on real mobs.</summary>
         EndgameForcedVariation = 50105,
+
+        /// <summary>ELEMENTAL WEAKNESS: a bitmask of ACE.Entity.Enum.DamageType flags the monster takes EXTRA damage
+        /// from. When an incoming hit's damage type intersects this mask, its post-mitigation resistance mod is
+        /// multiplied by the weakness factor (PropertyFloat.ElementalWeaknessFactor, else the
+        /// elemental_weakness_default_factor knob). 0/unset = no weakness. Lets us make different mobs weak to
+        /// different elements (e.g. Cold=0x8, Fire=0x10, Cold+Fire=0x18, Nether=0x400).</summary>
+        ElementalWeaknessMask = 50106,
     }
 
     public static class PropertyIntExtensions

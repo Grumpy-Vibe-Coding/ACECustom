@@ -700,6 +700,8 @@ namespace ACE.Server.Managers
         public static ConfigProperty<double> v11_vuln_effectiveness { get; private set; } = new(0.35, "fraction of the vuln BONUS that lands against v11+ monsters. effectiveVuln = 1 + (rawVuln - 1) * this. 0.35 = vulns are 35% as strong. 1.0 = uncompressed (vanilla). 0.0 = vulns do nothing.");
         public static ConfigProperty<double> v11_vuln_cap { get; private set; } = new(1.5, "hard ceiling on the total vuln multiplier against v11+ monsters, applied after the effectiveness compression. 1.5 = a monster can never take more than 1.5x damage from stacked vulns.");
 
+        public static ConfigProperty<double> elemental_weakness_default_factor { get; private set; } = new(2.0, "default ELEMENTAL WEAKNESS multiplier used when a monster has PropertyInt.ElementalWeaknessMask set but no per-mob PropertyFloat.ElementalWeaknessFactor. 2.0 = the mob takes 2x damage from its weak element(s). Applied after mitigation as a relative reward for using the right element.");
+
         // v11+ monster damage-taken mitigation: multiplies ALL incoming damage (physical + magic) against variation>=min monsters by a
         // flat factor so endgame mobs are hard to kill via mitigation (not evasion). Rending-proof (applied after armor/resist). Read live.
         public static ConfigProperty<bool> v11_mob_dmg_taken_enabled { get; private set; } = new(true, "master switch for v11+ monster damage-taken mitigation. When on, incoming damage against variation>=v11_mob_dmg_taken_min_variation monsters is scaled by v11_mob_dmg_taken_mult (bosses further by the boss factor).");

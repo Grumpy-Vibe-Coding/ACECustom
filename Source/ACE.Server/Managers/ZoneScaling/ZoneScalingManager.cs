@@ -160,8 +160,11 @@ namespace ACE.Server.Managers.ZoneScaling
             var global = new ZoneScalingProfile
             {
                 ScopeType = ZoneScopeType.Global,
-                Enabled = true,
-                Notes = "Auto-seeded from v11_* defaults. Baseline curve for all endgame mobs not covered by a more specific scope.",
+                // Seeded DISABLED so wiring the consumers is behavior-neutral: with nothing authored, GetProfile
+                // returns null and mobs keep their weenie stats + the existing v11_* knob behavior. Enable this
+                // (or author a more specific scope) during the migration phase to start driving mobs from profiles.
+                Enabled = false,
+                Notes = "Auto-seeded from v11_* defaults (DISABLED). Baseline curve for endgame mobs not covered by a more specific scope; enable to activate.",
             };
 
             double hpGrowth = SafeCfg(() => ServerConfig.v11_tier_hp_growth.Value, 1.25);

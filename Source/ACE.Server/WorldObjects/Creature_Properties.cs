@@ -117,6 +117,11 @@ namespace ACE.Server.WorldObjects
 
             var vulnMod = EnchantmentManager.GetVulnerabilityResistanceMod(damageType);
 
+            // Zone Scaler: resolve the winning zone profile for this monster once (null for players/exempt/non-endgame/
+            // no-match). Consumers below prefer a profile-defined stat over the global v11_* knob. Global profile is
+            // seeded DISABLED, so with no authored scope this is null and behavior is unchanged.
+            var zoneProfile = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this as Creature);
+
             // v11+ monster vuln-defense: compress the vuln (Imperil) multiplier so stacked vulns can't produce
             // absurd damage against endgame mobs. Only the vuln enchantment bonus is touched here (before the
             // weaponResistanceMod max below), so base damage, offensive augs, and weapon rending are unaffected.
@@ -127,6 +132,8 @@ namespace ACE.Server.WorldObjects
             {
                 var vulnEff = GetProperty(PropertyFloat.VulnEffectivenessOverride) ?? ServerConfig.v11_vuln_effectiveness.Value;
                 var vulnCap = GetProperty(PropertyFloat.VulnCapOverride) ?? ServerConfig.v11_vuln_cap.Value;
+                if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap))
+                    vulnCap = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap);
 
                 // per-tier tightening: deeper prestige tiers resist vulns progressively more (no-op at tier 0 or when disabled)
                 vulnEff = Math.Max(0.0, vulnEff - ACE.Server.Managers.PrestigeManager.GetVulnEffectivenessReduction(this));
@@ -184,15 +191,40 @@ namespace ACE.Server.WorldObjects
             if (ServerConfig.v11_mob_dmg_taken_enabled.Value && !(this is Player)
                 && ACE.Server.Managers.PrestigeManager.GetEffectiveVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)
             {
-                var dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.v11_mob_dmg_taken_mult.Value;
+                double dmgMult;
+                if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult))
+                {
+                    // Zone profile value is resolved per-variant (boss/minion) and per-tier already, so don't
+                    // re-apply the boss factor or per-tier reduction on top of it.
+                    dmgMult = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult);
+                }
+                else
+                {
+                    dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.v11_mob_dmg_taken_mult.Value;
 
-                if (GetProperty(PropertyBool.IsEmpowerSource) == true)
-                    dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
+                    if (GetProperty(PropertyBool.IsEmpowerSource) == true)
+                        dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
 
-                dmgMult -= ACE.Server.Managers.PrestigeManager.GetDamageTakenTierReduction(this);
+                    dmgMult -= ACE.Server.Managers.PrestigeManager.GetDamageTakenTierReduction(this);
+                }
                 dmgMult = Math.Clamp(dmgMult, ServerConfig.v11_mob_dmg_taken_floor.Value, 1.0);
 
                 resistMod *= (float)dmgMult;
+            }
+
+            // Per-monster ELEMENTAL WEAKNESS: if the incoming damage type is in the mob's weakness mask, multiply the
+            // (post-mitigation) resistance mod so the right element does proportionally more. Independent of zone
+            // scaling; a relative reward that stays meaningful even against heavily-mitigated endgame mobs. Unset
+            // mask => no-op, so this changes nothing for existing mobs. Players never carry it.
+            if (!(this is Player))
+            {
+                var weakMask = GetProperty(PropertyInt.ElementalWeaknessMask);
+                if (weakMask.HasValue && weakMask.Value != 0 && ((DamageType)weakMask.Value & damageType) != 0)
+                {
+                    var weakFactor = GetProperty(PropertyFloat.ElementalWeaknessFactor) ?? ServerConfig.elemental_weakness_default_factor.Value;
+                    if (weakFactor > 0)
+                        resistMod *= (float)weakFactor;
+                }
             }
 
             return resistMod;
