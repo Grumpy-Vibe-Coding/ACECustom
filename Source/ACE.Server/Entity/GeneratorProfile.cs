@@ -447,6 +447,20 @@ namespace ACE.Server.Entity
 
             obj.ScatterPos = null;
 
+            // Fallback: scatter can exhaust all NumTries when the terrain within genRadius is largely non-walkable
+            // (water, steep slopes, cliffs) -> the child silently fails to spawn and the camp comes up short/empty.
+            // The generator's own position is known-valid (it spawned there), so retry once there (no scatter). Better
+            // to cluster a member at the center than to drop it entirely.
+            if (!success)
+            {
+                obj.Location = new ACE.Entity.Position(Generator.Location);
+                obj.Location.PositionZ += 0.05f;
+                success = obj.EnterWorld();
+
+                if (!success)
+                    log.Warn($"[GENERATOR] 0x{Generator.Guid}:{Generator.WeenieClassId} {Generator.Name}.Spawn_Scatter({obj.Name}) - scatter AND center fallback both failed");
+            }
+
             return success;
         }
 
