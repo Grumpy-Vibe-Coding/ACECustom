@@ -309,7 +309,16 @@ namespace ACE.Server.Managers
         public static float GetHPModifier(int tier)
         {
             if (tier <= 0) return 1.0f;
-            // +25% HP per tier
+
+            if (ServerConfig.v11_tier_enabled.Value)
+            {
+                // GEOMETRIC: hp_growth^clampedTier. Steeper at high tiers than the old linear model,
+                // so each tier is a consistent % jump instead of a shrinking one.
+                var clamped = Math.Min(tier, (int)ServerConfig.v11_tier_max.Value);
+                return (float)Math.Pow(ServerConfig.v11_tier_hp_growth.Value, clamped);
+            }
+
+            // legacy linear: +25% HP per tier
             return 1.0f + (tier * 0.25f);
         }
 
@@ -320,8 +329,91 @@ namespace ACE.Server.Managers
         public static float GetDamageModifier(int tier)
         {
              if (tier <= 0) return 1.0f;
-             // +15% Damage per tier
+
+             if (ServerConfig.v11_tier_enabled.Value)
+             {
+                 // additive DamageRating per tier -> expressed as a mod so ModToRating() yields (per_tier * tier)
+                 var clamped = Math.Min(tier, (int)ServerConfig.v11_tier_max.Value);
+                 return 1.0f + (float)(clamped * ServerConfig.v11_tier_damage_rating_per_tier.Value / 100.0);
+             }
+
+             // legacy linear: +15% Damage per tier
              return 1.0f + (tier * 0.15f);
+        }
+
+        /// <summary>
+        /// Live per-tier scaling tier for a creature's current instance (tier = variation - 10, clamped to v11_tier_max),
+        /// or 0 when the per-tier system is disabled or the creature isn't in a prestige variation. Used by the combat
+        /// choke points (defense/attack skill, vuln) which read the tier fresh at hit time.
+        /// </summary>
+        /// <summary>
+        /// Effective prestige variation for the v11+ endgame combat systems. Normally the object's real
+        /// Location.Variation. TEST HOOK: a weenie with PropertyBool.ForceEndgameSystems reports an effective
+        /// variation even when spawned at a non-prestige variation (0), so the endgame stack can be tested in a
+        /// normal landblock (where /createinst /removeinst /reload-landblock work). PropertyInt.EndgameForcedVariation
+        /// picks the simulated tier (default = base prestige, v11). No effect on real mobs (no flag set).
+        /// </summary>
+        public static int GetEffectiveVariation(WorldObject wo)
+        {
+            var real = wo?.Location?.Variation ?? 0;
+            if (real >= PRESTIGE_BASE_VARIATION)
+                return real;
+
+            if (wo?.GetProperty(ACE.Entity.Enum.Properties.PropertyBool.ForceEndgameSystems) == true)
+            {
+                var forced = wo.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.EndgameForcedVariation) ?? 0;
+                return forced >= PRESTIGE_BASE_VARIATION ? forced : PRESTIGE_BASE_VARIATION;
+            }
+
+            return real;
+        }
+
+        public static int GetLiveScalingTier(Creature creature)
+        {
+            if (creature == null || creature is Player || !ServerConfig.v11_tier_enabled.Value)
+                return 0;
+
+            var tier = GetTier(GetEffectiveVariation(creature));
+            if (tier <= 0)
+                return 0;
+
+            return Math.Min(tier, (int)ServerConfig.v11_tier_max.Value);
+        }
+
+        /// <summary>Monster melee/missile/magic DEFENSE skill multiplier for a creature (1.0 when N/A). Read live.</summary>
+        public static float GetDefenseSkillModifier(Creature creature)
+        {
+            var tier = GetLiveScalingTier(creature);
+            if (tier <= 0)
+                return 1.0f;
+            return 1.0f + (float)(tier * ServerConfig.v11_tier_defense_per_tier.Value);
+        }
+
+        /// <summary>Monster ATTACK skill multiplier for a creature (1.0 when N/A). Read live.</summary>
+        public static float GetAttackSkillModifier(Creature creature)
+        {
+            var tier = GetLiveScalingTier(creature);
+            if (tier <= 0)
+                return 1.0f;
+            return 1.0f + (float)(tier * ServerConfig.v11_tier_attack_per_tier.Value);
+        }
+
+        /// <summary>Extra vuln-effectiveness reduction (percentage points, e.g. 0.20) for a creature's tier. Read live.</summary>
+        public static double GetVulnEffectivenessReduction(Creature creature)
+        {
+            var tier = GetLiveScalingTier(creature);
+            if (tier <= 0)
+                return 0.0;
+            return tier * ServerConfig.v11_tier_vuln_per_tier.Value;
+        }
+
+        /// <summary>Extra damage-taken reduction (subtracted from the mitigation multiplier) for a creature's tier. 0 when flat. Read live.</summary>
+        public static double GetDamageTakenTierReduction(Creature creature)
+        {
+            var tier = GetLiveScalingTier(creature);
+            if (tier <= 0)
+                return 0.0;
+            return tier * ServerConfig.v11_mob_dmg_taken_per_tier.Value;
         }
 
         /// <summary>

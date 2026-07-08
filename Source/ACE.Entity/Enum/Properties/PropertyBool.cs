@@ -325,6 +325,26 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>Player is in unkillable developer mode.</summary>
         IsUnkillable = 50041,
 
+        /// <summary>Player has adminvision toggled on and it persists across sessions.</summary>
+        PersistentAdminvision = 50042,
+
+        /// <summary>If TRUE on a monster, it can receive the "Empowered" prefix when near an IsEmpowerSource creature.</summary>
+        CanBeEmpowered = 50043,
+
+        /// <summary>If TRUE on a monster, it grants the "Empowered" prefix to nearby CanBeEmpowered creatures within 20m.</summary>
+        IsEmpowerSource = 50044,
+
+        /// <summary>Runtime state set by the aura system while a CanBeEmpowered monster is near its boss.
+        /// Damage bonuses key off this, never off the display name (retail mobs are legitimately named "Empowered ...").</summary>
+        IsEmpowered = 50045,
+
+        /// <summary>TEST HOOK: if TRUE, the v11+ endgame combat systems (percent-HP floor, vuln compression,
+        /// damage-taken mitigation, per-tier scaling, attack-skill floor) treat this creature as endgame even
+        /// when spawned at a non-prestige variation (0). Lets a test dummy be spawned in a NORMAL landblock —
+        /// where /createinst /removeinst /reload-landblock work reliably — instead of the fragile variation layer.
+        /// Tier simulated = PropertyInt.EndgameForcedVariation (default = base prestige v11). Never set on real mobs.</summary>
+        ForceEndgameSystems = 50046,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }

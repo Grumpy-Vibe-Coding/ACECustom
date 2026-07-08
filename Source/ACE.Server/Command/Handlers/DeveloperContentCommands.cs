@@ -1447,6 +1447,255 @@ namespace ACE.Server.Command.Handlers.Processors
             HandleCreateInst(session, parameters);
         }
 
+        [CommandHandler("fixinstz", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
+            "Recomputes origin_Z = terrain height for landblock_instance rows of a wcid, fixing Z=0 / underground placements that fail to spawn (\"Failed to add world object ...\"). " +
+            "Default scope: the landblock you are standing in (all its variation layers). Add 'all' to fix every landblock in the world DB that contains the wcid. " +
+            "Writes to the world DB; reload the landblock or restart to respawn with the corrected Z.",
+            "<wcid> [all]")]
+        public static void HandleFixInstZ(Session session, params string[] parameters)
+        {
+            if (!uint.TryParse(parameters[0], out var wcid))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse wcid '{parameters[0]}'. Usage: /fixinstz <wcid> [all]", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var all = parameters.Length > 1 && parameters[1].Equals("all", StringComparison.OrdinalIgnoreCase);
+            int? currentLandblock = all ? (int?)null : session.Player.CurrentLandblock.Id.Landblock;
+
+            var scanned = 0;
+            var changed = 0;
+            var failed = 0;
+            var minZ = float.MaxValue;
+            var maxZ = float.MinValue;
+            var affectedLandblocks = new HashSet<(int lb, int? var)>();
+
+            try
+            {
+                using (var ctx = new WorldDbContext())
+                {
+                    var query = ctx.LandblockInstance.Where(i => i.WeenieClassId == wcid);
+                    if (!all)
+                        query = query.Where(i => i.Landblock == currentLandblock);
+
+                    var rows = query.ToList();
+
+                    foreach (var inst in rows)
+                    {
+                        scanned++;
+
+                        var pos = new Position(inst.ObjCellId, inst.OriginX, inst.OriginY, inst.OriginZ,
+                            inst.AnglesX, inst.AnglesY, inst.AnglesZ, inst.AnglesW, false, inst.VariationId);
+
+                        float terrainZ;
+                        try
+                        {
+                            terrainZ = pos.GetTerrainZ();
+                        }
+                        catch
+                        {
+                            failed++;
+                            continue;
+                        }
+
+                        // small epsilon (matches createinst) so the object spawns just above the ground rather than clipping into it
+                        var newZ = terrainZ + 0.05f;
+
+                        if (Math.Abs(newZ - inst.OriginZ) > 0.001f)
+                        {
+                            inst.OriginZ = newZ;
+                            inst.LastModified = DateTime.Now;
+                            changed++;
+                            if (newZ < minZ) minZ = newZ;
+                            if (newZ > maxZ) maxZ = newZ;
+                            if (inst.Landblock.HasValue)
+                                affectedLandblocks.Add((inst.Landblock.Value, inst.VariationId));
+                        }
+                    }
+
+                    ctx.SaveChanges();
+                }
+            }
+            catch (Exception ex)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"fixinstz failed: {ex.Message}", ChatMessageType.Broadcast));
+                return;
+            }
+
+            // drop cached instances for affected landblocks so a reload picks up the corrected Z
+            foreach (var (lb, var) in affectedLandblocks)
+                DatabaseManager.World.ClearCachedInstancesByLandblock((ushort)lb, var);
+
+            var scopeLabel = all ? "ALL landblocks" : $"landblock 0x{currentLandblock:X4}";
+            var zRange = changed > 0 ? $" Z range now {minZ:F2}..{maxZ:F2}." : "";
+            session.Network.EnqueueSend(new GameMessageSystemChat(
+                $"fixinstz wcid {wcid} ({scopeLabel}): scanned {scanned}, updated {changed}, unresolved terrain {failed}.{zRange} " +
+                $"Reload the landblock (or restart) to respawn. Use /syncinst or export to persist for live.", ChatMessageType.Broadcast));
+            PlayerManager.BroadcastToAuditChannel(session.Player,
+                $"{session.Player.Name} ran /fixinstz wcid {wcid} ({scopeLabel}): updated {changed}/{scanned}, failed {failed}.");
+        }
+
+        [CommandHandler("spreadinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 2,
+            "Bulk-generates <count> randomly-positioned static landblock_instance rows of <wcid> per prestige landblock, mirrored across variation layers [minVar..maxVar] (default 11..25), with terrain-snapped Z. " +
+            "By default only fills landblocks that do NOT already have that wcid (add 'force' to also add to populated ones). Targets the prestige_allowed_landblocks set. Writes the world DB; restart/reload to spawn.",
+            "<wcid> <count> [minVar] [maxVar] [force]")]
+        public static void HandleSpreadInst(Session session, params string[] parameters)
+        {
+            if (!uint.TryParse(parameters[0], out var wcid))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse wcid '{parameters[0]}'. Usage: /spreadinst <wcid> <count> [minVar] [maxVar] [force]", ChatMessageType.Broadcast));
+                return;
+            }
+            if (!int.TryParse(parameters[1], out var count) || count <= 0)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse count '{parameters[1]}' (must be > 0).", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var minVar = 11;
+            var maxVar = 25;
+            var force = false;
+            var numericArgs = new List<int>();
+            for (var p = 2; p < parameters.Length; p++)
+            {
+                if (parameters[p].Equals("force", StringComparison.OrdinalIgnoreCase))
+                    force = true;
+                else if (int.TryParse(parameters[p], out var num))
+                    numericArgs.Add(num);
+            }
+            if (numericArgs.Count >= 1) minVar = numericArgs[0];
+            if (numericArgs.Count >= 2) maxVar = numericArgs[1];
+            if (minVar < 11 || maxVar < minVar)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Invalid variation range {minVar}..{maxVar} (min 11, max >= min).", ChatMessageType.Broadcast));
+                return;
+            }
+
+            // verify the weenie exists so we don't scatter bad rows
+            if (DatabaseManager.World.GetWeenie(wcid) == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Weenie {wcid} not found.", ChatMessageType.Broadcast));
+                return;
+            }
+
+            // valid prestige zones = union of all configured allowed-landblock sets
+            var allowed = new HashSet<ushort>();
+            foreach (var kvp in PrestigeManager.GetAllAllowedLandblocks())
+                allowed.UnionWith(kvp.Value);
+
+            if (allowed.Count == 0)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat("No prestige-allowed landblocks are configured; nothing to do.", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var totalRows = 0;
+            var landblocksFilled = 0;
+            var terrainFails = 0;
+            var guidExhausted = 0;
+
+            try
+            {
+                using (var ctx = new WorldDbContext())
+                {
+                    foreach (var lb in allowed.OrderBy(x => x))
+                    {
+                        var existing = ctx.LandblockInstance.Where(i => i.Landblock == lb).ToList();
+
+                        // which variations in range already have this wcid (skip unless force)
+                        var haveVars = existing.Where(i => i.WeenieClassId == wcid && i.VariationId.HasValue)
+                                               .Select(i => i.VariationId.Value).ToHashSet();
+
+                        var targetVars = Enumerable.Range(minVar, maxVar - minVar + 1)
+                                                   .Where(v => force || !haveVars.Contains(v)).ToList();
+                        if (targetVars.Count == 0)
+                            continue;
+
+                        // proper per-landblock static guid range: 0x70000000 | landblock<<12 | index (0..0xFFF)
+                        var firstGuid = ObjectGuid.LandblockInstanceGuidBase | ((uint)lb << 12);
+                        var lastGuid = firstGuid | 0xFFF;
+                        var maxUsed = existing.Where(i => i.Guid >= firstGuid && i.Guid <= lastGuid)
+                                              .Select(i => i.Guid).DefaultIfEmpty(firstGuid - 1).Max();
+                        var nextGuid = maxUsed + 1;
+
+                        // generate 'count' shared positions once, mirror them across the target variations
+                        var positions = new List<(uint cell, float x, float y, float z)>();
+                        for (var i = 0; i < count; i++)
+                        {
+                            var x = (float)ThreadSafeRandom.Next(0f, 191.9f);
+                            var y = (float)ThreadSafeRandom.Next(0f, 191.9f);
+                            var cellX = Math.Min(7, (int)(x / 24f));
+                            var cellY = Math.Min(7, (int)(y / 24f));
+                            var objCell = ((uint)lb << 16) | (uint)(cellX * 8 + cellY + 1);
+
+                            float z;
+                            try
+                            {
+                                var probe = new Position(objCell, x, y, 0f, 0f, 0f, 0f, 1f, false, minVar);
+                                z = probe.GetTerrainZ() + 0.05f;
+                            }
+                            catch
+                            {
+                                z = 0f;
+                                terrainFails++;
+                            }
+                            positions.Add((objCell, x, y, z));
+                        }
+
+                        var filledThisLb = false;
+                        foreach (var v in targetVars)
+                        {
+                            foreach (var pos in positions)
+                            {
+                                if (nextGuid > lastGuid)
+                                {
+                                    guidExhausted++;
+                                    break;
+                                }
+
+                                ctx.LandblockInstance.Add(new LandblockInstance
+                                {
+                                    Guid = nextGuid++,
+                                    Landblock = lb,
+                                    WeenieClassId = wcid,
+                                    ObjCellId = pos.cell,
+                                    OriginX = pos.x,
+                                    OriginY = pos.y,
+                                    OriginZ = pos.z,
+                                    AnglesW = 1f,
+                                    AnglesX = 0f,
+                                    AnglesY = 0f,
+                                    AnglesZ = 0f,
+                                    IsLinkChild = false,
+                                    LastModified = DateTime.Now,
+                                    VariationId = v
+                                });
+                                totalRows++;
+                                filledThisLb = true;
+                            }
+                        }
+
+                        if (filledThisLb)
+                            landblocksFilled++;
+                    }
+
+                    ctx.SaveChanges();
+                }
+            }
+            catch (Exception ex)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"spreadinst failed: {ex.Message}", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var msg = $"spreadinst wcid {wcid}: added {totalRows} rows across {landblocksFilled} landblocks, variations {minVar}..{maxVar}, {count}/landblock/variation." +
+                      (terrainFails > 0 ? $" ({terrainFails} positions had no terrain -> Z=0, run /fixinstz {wcid} all)" : "") +
+                      (guidExhausted > 0 ? $" ({guidExhausted} landblocks hit the 4096 static-guid cap)" : "") +
+                      " Restart/reload to spawn.";
+            session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Broadcast));
+            PlayerManager.BroadcastToAuditChannel(session.Player, $"{session.Player.Name} ran /spreadinst wcid {wcid}: {totalRows} rows / {landblocksFilled} landblocks.");
+        }
+
         /// <summary>
         /// Serializes landblock instances to XXYY.sql file,
         /// import into database, and clears the cached landblock instances

@@ -555,6 +555,15 @@ namespace ACE.Server.Entity
                 //Console.WriteLine($"[DEBUG] Final Mob Defender Enrage Damage Reduction Applied: {damageReduction * 100}%, Final Damage: {Damage}");
             }
 
+            // v11+ percent-HP floor: a high-variation monster always deals at least a %HP chunk to a player,
+            // bypassing life-aug damage reduction. Whichever is larger — normal mitigated damage or the floor — wins.
+            if (defender is Player pctHpPlayer && attacker != null)
+            {
+                var pctHpFloor = Creature.GetPercentHpFloorDamage(attacker, pctHpPlayer, IsCritical);
+                if (pctHpFloor > Damage)
+                    Damage = pctHpFloor;
+            }
+
             DebugDamagePrePetPhysicalMitigation = Damage;
             DebugCombatPetPhysicalMitigationMultiplier = 1.0f;
             DebugCombatPetCritDamageTakenMultiplier = 1.0f;
@@ -672,6 +681,14 @@ namespace ACE.Server.Entity
             AccuracyMod = attacker.GetAccuracyMod(Weapon);
 
             EffectiveAttackSkill = attacker.GetEffectiveAttackSkill();
+
+            // v11+ attack-skill floor: ensure endgame monsters can land hits vs very high player defense.
+            if (defender is Player v11Player)
+            {
+                var skillFloor = Creature.GetV11AttackSkillFloor(attacker, v11Player);
+                if (skillFloor > EffectiveAttackSkill)
+                    EffectiveAttackSkill = skillFloor;
+            }
 
             //var attackType = attacker.GetCombatType();
 

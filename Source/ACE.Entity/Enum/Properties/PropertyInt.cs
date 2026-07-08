@@ -797,6 +797,31 @@ namespace ACE.Entity.Enum.Properties
         /// 2 = Short (1.2K / 2.2M / 1.5B / 3.2T / 1Q)
         /// </summary>
         DamageNumberFormat = 50101,
+
+        /// <summary>
+        /// Group ID for the Empowered aura system. A creature with IsEmpowerSource only
+        /// empowers nearby creatures with CanBeEmpowered if they share the same EmpowerGroup value.
+        /// Example: Pirates = 1, Golems = 2, Gromnies = 3, etc.
+        /// </summary>
+        EmpowerGroup = 50102,
+
+        /// <summary>
+        /// If set on a generator, its total spawn count (InitCreate/MaxCreate) is overridden at
+        /// StartGenerator to: VariationScaledSpawnBase + (landblock variation - VariationScaledSpawnBaseline),
+        /// never dropping below the base. Used by prestige-zone camp generators.
+        /// </summary>
+        VariationScaledSpawnBase = 50103,
+
+        /// <summary>
+        /// The landblock variation at which a VariationScaledSpawnBase generator spawns exactly its
+        /// base count. Defaults to 11 (T11 Tou Tou) when not set.
+        /// </summary>
+        VariationScaledSpawnBaseline = 50104,
+
+        /// <summary>TEST HOOK (pairs with PropertyBool.ForceEndgameSystems): the prestige variation this creature
+        /// should SIMULATE when force-enabled at a non-prestige variation. Sets the tier for percent-HP growth,
+        /// per-tier scaling, etc. Unset/&lt;11 defaults to the base prestige variation (11 = tier 1). Never set on real mobs.</summary>
+        EndgameForcedVariation = 50105,
     }
 
     public static class PropertyIntExtensions

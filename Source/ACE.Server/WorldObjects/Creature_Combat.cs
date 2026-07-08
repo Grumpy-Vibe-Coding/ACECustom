@@ -520,7 +520,10 @@ namespace ACE.Server.WorldObjects
 
             // monsters don't use accuracy mod?
 
-            return (uint)Math.Round(attackSkill * offenseMod);
+            // v11+ per-tier scaling: optional attack-skill boost for higher prestige tiers (default off; no-op for players/non-prestige)
+            var tierAttackMod = ACE.Server.Managers.PrestigeManager.GetAttackSkillModifier(this);
+
+            return (uint)Math.Round(attackSkill * offenseMod * tierAttackMod);
         }
 
         /// <summary>
@@ -552,6 +555,11 @@ namespace ACE.Server.WorldObjects
                 //Console.WriteLine($"StanceMod: {stanceMod}");
 
             var effectiveDefense = (uint)Math.Round(GetCreatureSkill(defenseSkill).Current * defenseMod * burdenMod * stanceMod + defenseImbues + lumAugDefense);
+
+            // v11+ per-tier scaling: higher prestige tiers are harder to hit (monster defenders only; helper no-ops for players/non-prestige)
+            var tierDefenseMod = ACE.Server.Managers.PrestigeManager.GetDefenseSkillModifier(this);
+            if (tierDefenseMod != 1.0f)
+                effectiveDefense = (uint)Math.Round(effectiveDefense * tierDefenseMod);
 
             if (IsExhausted) effectiveDefense = 0;
 

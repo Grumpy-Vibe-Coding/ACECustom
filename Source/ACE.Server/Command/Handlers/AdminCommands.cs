@@ -28,6 +28,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Position = ACE.Entity.Position;
@@ -2200,7 +2201,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         // draw
-        [CommandHandler("draw", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0)]
+        // CUT 2026-07-07: empty retail no-op stub ("draws undrawable things"), no known purpose. De-registered.
+        // [CommandHandler("draw", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0)]
         public static void HandleDraw(Session session, params string[] parameters)
         {
             // @draw - Draws undrawable things.
@@ -6769,7 +6771,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         // raise
-        [CommandHandler("raise", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 2)]
+        // CUT 2026-07-07: empty retail no-op stub; redundant with working /grantxp and /spendxp. De-registered.
+        // [CommandHandler("raise", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 2)]
         public static void HandleRaise(Session session, params string[] parameters)
         {
             // @raise - Raises your experience (or the experience in a skill) by the given amount.
@@ -7040,7 +7043,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         // lbinterval
-        [CommandHandler("lbinterval", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
+        // CUT 2026-07-07: empty no-op stub; Turbine multi-server-farm load balancing, N/A on single-shard ACE. De-registered.
+        // [CommandHandler("lbinterval", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
         public static void Handlelbinterval(Session session, params string[] parameters)
         {
             // @lbinterval - Sets how often in seconds the server farm will rebalance the server farm load.
@@ -7049,7 +7053,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         // lbthresh
-        [CommandHandler("lbthresh", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
+        // CUT 2026-07-07: empty no-op stub; Turbine multi-server-farm load balancing, N/A on single-shard ACE. De-registered.
+        // [CommandHandler("lbthresh", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
         public static void Handlelbthresh(Session session, params string[] parameters)
         {
             // the @lbthresh command sets the maximum amount of load servers can trade at each balance. Large load transfers at once can cause poor server performance.  (Large would be about 400, small is about 20.)
@@ -7059,7 +7064,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         // radar
-        [CommandHandler("radar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0)]
+        // CUT 2026-07-07: empty retail no-op stub; radar is client-side, per-object hiding available via /setproperty radarbehavior. De-registered.
+        // [CommandHandler("radar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0)]
         public static void Handleradar(Session session, params string[] parameters)
         {
             // @radar - Toggles your radar on and off.
@@ -7068,16 +7074,54 @@ namespace ACE.Server.Command.Handlers
         }
 
         // rares dump
-        [CommandHandler("rares dump", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0)]
+        [CommandHandler("rares dump", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
+            "Lists the rare item pool by tier.",
+            "[tier]\nWith no argument, shows a summary of each tier (rare count + drop chance).\nWith a tier number (1-6), lists every rare WCID and name in that tier.")]
         public static void HandleRaresDump(Session session, params string[] parameters)
         {
             // @rares dump - Lists all tiers of rare items.
 
-            // TODO: output
+            if (LootGenerationFactory.RareWCIDs == null || LootGenerationFactory.RareWCIDs.Count == 0)
+            {
+                CommandHandlerHelper.WriteOutputInfo(session, "Rare tables are not initialized.");
+                return;
+            }
+
+            // Optional tier argument: "rares dump" is a two-word command, so the tier (if any) arrives as parameters[0].
+            if (parameters != null && parameters.Length > 0 && int.TryParse(parameters[0], out var reqTier))
+            {
+                if (!LootGenerationFactory.RareWCIDs.TryGetValue(reqTier, out var wcids))
+                {
+                    CommandHandlerHelper.WriteOutputInfo(session, $"No rare tier {reqTier}. Valid tiers: {string.Join(", ", LootGenerationFactory.RareWCIDs.Keys.OrderBy(k => k))}");
+                    return;
+                }
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"=== Rare Tier {reqTier} ({wcids.Count} items) ===");
+                foreach (var wcid in wcids.OrderBy(w => w))
+                {
+                    var weenie = DatabaseManager.World.GetCachedWeenie((uint)wcid);
+                    sb.AppendLine(weenie == null ? $"{wcid} - <not in database>" : $"{wcid} - {weenie.GetName()}");
+                }
+                CommandHandlerHelper.WriteOutputInfo(session, sb.ToString());
+                return;
+            }
+
+            // Summary view: tier, count, and the 1-in-N drop chance.
+            var summary = new StringBuilder();
+            summary.AppendLine("=== Rare Item Pool (use 'rares dump <tier>' for the full list) ===");
+            foreach (var tier in LootGenerationFactory.RareWCIDs.Keys.OrderBy(k => k))
+            {
+                var count = LootGenerationFactory.RareWCIDs[tier].Count;
+                var chance = LootGenerationFactory.RareChances.TryGetValue(tier, out var c) ? $"1 in {c:N0}" : "unknown";
+                summary.AppendLine($"Tier {tier}: {count} rares  (base chance {chance})");
+            }
+            CommandHandlerHelper.WriteOutputInfo(session, summary.ToString());
         }
 
         // stormnumstormed
-        [CommandHandler("stormnumstormed", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
+        // CUT 2026-07-07: empty no-op stub; automatic portal storms not used on this shard. De-registered.
+        // [CommandHandler("stormnumstormed", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
         public static void Handlestormnumstormed(Session session, params string[] parameters)
         {
             // @stormnumstormed - Sets how many characters are teleported away during a portal storm.
@@ -7086,7 +7130,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         // stormthresh
-        [CommandHandler("stormthresh", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
+        // CUT 2026-07-07: empty no-op stub; automatic portal storms not used on this shard. De-registered.
+        // [CommandHandler("stormthresh", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1)]
         public static void Handlestormthresh(Session session, params string[] parameters)
         {
             // @stormthresh - Sets how many character can be in a landblock before we do a portal storm.

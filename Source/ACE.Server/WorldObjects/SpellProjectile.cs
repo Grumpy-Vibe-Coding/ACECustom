@@ -730,6 +730,16 @@ namespace ACE.Server.WorldObjects
                     finalDamage *= m;
             }
 
+            // v11+ percent-HP floor: a high-variation monster's harmful health-damage spell always deals
+            // at least a %HP chunk to a player, bypassing life-aug damage reduction. Mirrors the melee floor.
+            if (finalDamage > 0 && Spell.IsHarmful && targetPlayer != null && sourceCreature != null
+                && Spell.DamageType != DamageType.Stamina && Spell.DamageType != DamageType.Mana)
+            {
+                var pctHpFloor = Creature.GetPercentHpFloorDamage(sourceCreature, targetPlayer, criticalHit);
+                if (pctHpFloor > finalDamage)
+                    finalDamage = pctHpFloor;
+            }
+
             return finalDamage;
         }
 

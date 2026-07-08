@@ -782,6 +782,11 @@ namespace ACE.Server.WorldObjects
 
             var baseDamageMod = new BaseDamageMod(baseDamage, wielder, weapon);
 
+            if (wielder != null && wielder.GetProperty(PropertyBool.IsEmpowered) == true)
+            {
+                baseDamageMod.DamageMod *= 1.5f;
+            }
+
             return baseDamageMod;
         }
 

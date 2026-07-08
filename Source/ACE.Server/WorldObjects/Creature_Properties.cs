@@ -117,6 +117,28 @@ namespace ACE.Server.WorldObjects
 
             var vulnMod = EnchantmentManager.GetVulnerabilityResistanceMod(damageType);
 
+            // v11+ monster vuln-defense: compress the vuln (Imperil) multiplier so stacked vulns can't produce
+            // absurd damage against endgame mobs. Only the vuln enchantment bonus is touched here (before the
+            // weaponResistanceMod max below), so base damage, offensive augs, and weapon rending are unaffected.
+            // Player defenders never hit this: Player overrides GetResistanceMod. Gate is the monster's instance
+            // Variation (same convention as the v11+ percent-HP offense system) -> auto-applies to all v11+ mobs.
+            if (vulnMod > 1.0f && ServerConfig.v11_vuln_enabled.Value && !(this is Player)
+                && ACE.Server.Managers.PrestigeManager.GetEffectiveVariation(this) >= ServerConfig.v11_vuln_min_variation.Value)
+            {
+                var vulnEff = GetProperty(PropertyFloat.VulnEffectivenessOverride) ?? ServerConfig.v11_vuln_effectiveness.Value;
+                var vulnCap = GetProperty(PropertyFloat.VulnCapOverride) ?? ServerConfig.v11_vuln_cap.Value;
+
+                // per-tier tightening: deeper prestige tiers resist vulns progressively more (no-op at tier 0 or when disabled)
+                vulnEff = Math.Max(0.0, vulnEff - ACE.Server.Managers.PrestigeManager.GetVulnEffectivenessReduction(this));
+
+                // diminishing curve: only a fraction of the vuln bonus lands, then clamp to the cap
+                vulnMod = 1.0f + (vulnMod - 1.0f) * (float)vulnEff;
+                if (vulnMod > vulnCap)
+                    vulnMod = (float)vulnCap;
+                if (vulnMod < 1.0f)
+                    vulnMod = 1.0f;
+            }
+
             var naturalResistMod = GetNaturalResistance(damageType);
 
             // protection mod becomes either life protection or natural resistance,
@@ -154,7 +176,26 @@ namespace ACE.Server.WorldObjects
                 vulnMod = GetPositiveRatingMod(addVuln);
             }
 
-            return protMod * vulnMod;
+            var resistMod = protMod * vulnMod;
+
+            // v11+ monster damage-taken mitigation: scale ALL incoming damage against endgame mobs by a flat factor so they are
+            // hard to kill via mitigation (not evasion). Applied after armor/resist, so it is rending-proof. Bosses (IsEmpowerSource)
+            // take even less. Per-tier ramp is 0 by default (flat). Player defenders never hit this (Player overrides GetResistanceMod).
+            if (ServerConfig.v11_mob_dmg_taken_enabled.Value && !(this is Player)
+                && ACE.Server.Managers.PrestigeManager.GetEffectiveVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)
+            {
+                var dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.v11_mob_dmg_taken_mult.Value;
+
+                if (GetProperty(PropertyBool.IsEmpowerSource) == true)
+                    dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
+
+                dmgMult -= ACE.Server.Managers.PrestigeManager.GetDamageTakenTierReduction(this);
+                dmgMult = Math.Clamp(dmgMult, ServerConfig.v11_mob_dmg_taken_floor.Value, 1.0);
+
+                resistMod *= (float)dmgMult;
+            }
+
+            return resistMod;
         }
 
         public virtual float GetNaturalResistance(DamageType damageType)

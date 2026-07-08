@@ -1189,7 +1189,11 @@ namespace ACE.Server.WorldObjects
             return burdenMod;
         }
 
-        public bool Adminvision;
+        public bool Adminvision
+        {
+            get => GetProperty(PropertyBool.PersistentAdminvision) ?? false;
+            set { if (!value) RemoveProperty(PropertyBool.PersistentAdminvision); else SetProperty(PropertyBool.PersistentAdminvision, value); }
+        }
 
         public void HandleAdminvisionToggle(int choice)
         {

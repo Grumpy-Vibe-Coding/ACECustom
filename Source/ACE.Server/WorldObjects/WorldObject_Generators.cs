@@ -5,6 +5,7 @@ using System.Threading;
 
 using ACE.Common;
 using ACE.Entity.Enum;
+using ACE.Entity.Enum.Properties;
 using ACE.Entity.Models;
 using ACE.Server.Diagnostics;
 using ACE.Server.Entity;
@@ -541,6 +542,8 @@ namespace ACE.Server.WorldObjects
             if (CurrentlyPoweringUp)
                 return;
 
+            ApplyVariationScaledSpawnCount();
+
             CurrentlyPoweringUp = true;
 
             // Calculate initial spawn time with optional randomization
@@ -583,6 +586,29 @@ namespace ACE.Server.WorldObjects
                 if (InitCreate == 0)
                     CurrentlyPoweringUp = false;
             }
+        }
+
+        /// <summary>
+        /// For generators flagged with VariationScaledSpawnBase, overrides the total spawn count to
+        /// base + (landblock variation - baseline). A v11 camp spawns its base count, v12 base+1, etc.
+        /// The count never drops below the base, so an unset/missing variation behaves like the baseline.
+        /// </summary>
+        private void ApplyVariationScaledSpawnCount()
+        {
+            var spawnBase = GetProperty(PropertyInt.VariationScaledSpawnBase);
+            if (spawnBase == null)
+                return;
+
+            var baseline = GetProperty(PropertyInt.VariationScaledSpawnBaseline) ?? 11;
+            var variation = Location?.Variation ?? baseline;
+
+            var count = spawnBase.Value + Math.Max(0, variation - baseline);
+
+            InitCreate = count;
+            MaxCreate = count;
+
+            if (ServerConfig.log_generator_debug.Value)
+                log.Debug($"[GENERATOR][VARIATION] 0x{Guid} {Name} ({WeenieClassId}): variation={Location?.Variation.ToString() ?? "null"}, baseline={baseline}, base={spawnBase.Value} -> InitCreate/MaxCreate={count}");
         }
 
         private double GetNextRegenerationTime(double generatorInitialDelay)

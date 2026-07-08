@@ -463,7 +463,14 @@ namespace ACE.Server.WorldObjects
             var variance = attackPart.DVar;
 
             var baseDamage = new BaseDamage(maxDamage, variance);
-            return new BaseDamageMod(baseDamage);
+            var baseDamageMod = new BaseDamageMod(baseDamage);
+
+            if (GetProperty(PropertyBool.IsEmpowered) == true)
+            {
+                baseDamageMod.DamageMod *= 1.5f;
+            }
+
+            return baseDamageMod;
         }
 
         /// <summary>

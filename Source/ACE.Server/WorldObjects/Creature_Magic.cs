@@ -185,6 +185,11 @@ namespace ACE.Server.WorldObjects
 
             var effectiveMagicDefense = (uint)Math.Round((current * weaponDefenseMod) + defenseImbues + lumAug);
 
+            // v11+ per-tier scaling: higher prestige tiers resist spells more (monster defenders only; no-op for players/non-prestige)
+            var tierDefenseMod = ACE.Server.Managers.PrestigeManager.GetDefenseSkillModifier(this);
+            if (tierDefenseMod != 1.0f)
+                effectiveMagicDefense = (uint)Math.Round(effectiveMagicDefense * tierDefenseMod);
+
             //Console.WriteLine($"EffectiveMagicDefense: {effectiveMagicDefense}");
 
             return effectiveMagicDefense;
