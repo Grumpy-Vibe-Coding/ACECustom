@@ -2098,6 +2098,22 @@ namespace ACE.Server.Command.Handlers.Processors
 
             if (instance == null)
             {
+                // Fallback: the per-(landblock, variation) cache can miss the row -- e.g. a stale cache, or the
+                // runtime object's Location.Variation not matching the stored variation_Id. guid is the primary key,
+                // so look the row up directly (bypassing the variation cache) across every variation of this
+                // landblock. This is what previously forced manual DB deletes for createinst'd generators in a variation.
+                var bypass = DatabaseManager.World.GetLandblockInstancesByLandblockBypassCache(landblock);
+                instance = bypass.FirstOrDefault(i => i.Guid == guid);
+
+                if (instance != null)
+                {
+                    instances = bypass;
+                    variation = instance.VariationId;   // use the stored variation for the post-delete cache clear
+                }
+            }
+
+            if (instance == null)
+            {
                 session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find landblock_instance for {wo.WeenieClassId} - {wo.Name} (0x{guid:X8})", ChatMessageType.Broadcast));
                 return;
             }
@@ -2149,6 +2165,10 @@ namespace ACE.Server.Command.Handlers.Processors
 
             //SyncInstances(session, landblock, instances, variation);
             DeleteInstanceFromWorldDatabase(instance);
+
+            // invalidate the variation cache so a reload re-queries fresh (esp. when the bypass fallback was used,
+            // where 'instances' is not the cached list reference)
+            DatabaseManager.World.ClearCachedInstancesByLandblock(landblock, variation);
 
             session.Network.EnqueueSend(new GameMessageSystemChat($"Removed {(instance.IsLinkChild ? "child " : "")}{wo.WeenieClassId} - {wo.Name} (0x{guid:X8}) from landblock instances", ChatMessageType.Broadcast));
             PlayerManager.BroadcastToAuditChannel(session.Player, $"{session.Player.Name} has removed {(instance.IsLinkChild ? "child " : "")}[WeenieID]: {wo.WeenieClassId} - {wo.Name} [GUID]: (0x{guid:X8}) from landblock instances");
