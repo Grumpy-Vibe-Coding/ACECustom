@@ -345,6 +345,11 @@ namespace ACE.Entity.Enum.Properties
         /// Tier simulated = PropertyInt.EndgameForcedVariation (default = base prestige v11). Never set on real mobs.</summary>
         ForceEndgameSystems = 50046,
 
+        /// <summary>ZONE SCALER opt-out: if TRUE on a monster, the Zone Scaler leaves it untouched (keeps its
+        /// weenie stats/loot) even inside a scaled zone/landblock. Set on event NPCs, vendors, quest mobs, or any
+        /// creature that must not be auto-scaled. Default (unset) = the mob IS scaled by any matching zone profile.</summary>
+        ExemptFromZoneScaling = 50047,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }
