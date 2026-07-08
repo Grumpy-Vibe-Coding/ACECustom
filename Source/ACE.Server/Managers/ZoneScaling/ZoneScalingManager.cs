@@ -388,6 +388,40 @@ namespace ACE.Server.Managers.ZoneScaling
             }
         }
 
+        /// <summary>Enable/disable an existing profile by scope key; persists. Returns false if not found.</summary>
+        public static bool SetProfileEnabled(string scopeKey, bool enabled)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                if (!_profiles.TryGetValue(scopeKey, out var p))
+                    return false;
+                p.Enabled = enabled;
+                Save();
+                return true;
+            }
+        }
+
+        /// <summary>Evaluate a profile (by scope key) at a tier + variant for display, ignoring the enabled flag. Null if not found.</summary>
+        public static EvaluatedProfile EvaluateScope(string scopeKey, int tier, ZoneVariant variant)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                return _profiles.TryGetValue(scopeKey, out var p) ? Evaluate(p, tier, variant) : null;
+            }
+        }
+
+        /// <summary>Zone-name membership snapshot (for display).</summary>
+        public static IReadOnlyDictionary<string, HashSet<ushort>> GetZoneMap()
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                return _zoneMap.ToDictionary(k => k.Key, v => new HashSet<ushort>(v.Value));
+            }
+        }
+
         /// <summary>Force a reload from the shard store (e.g. after out-of-band edits).</summary>
         public static void Reload()
         {
