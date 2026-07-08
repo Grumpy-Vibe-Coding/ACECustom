@@ -182,6 +182,7 @@ namespace ACE.Server.Managers.ZoneScaling
             SetCurve(global.Minion, ZoneStat.MagicDefense,       100,        1.0, false);
             SetCurve(global.Minion, ZoneStat.DamageRating,       10_000,     1.0, false);
             SetCurve(global.Minion, ZoneStat.DamageResistRating, 10_000,     1.0, false);
+            SetCurve(global.Minion, ZoneStat.ArmorLevel,         1_000,      1.0, false);
             SetCurve(global.Minion, ZoneStat.DamageTakenMult,    dtMult,     1.0, false);
             SetCurve(global.Minion, ZoneStat.VulnCap,            vulnCap,    1.0, false);
             SetCurve(global.Minion, ZoneStat.PercentHpBase,      pctBase,    pctGrow, false);
@@ -199,6 +200,7 @@ namespace ACE.Server.Managers.ZoneScaling
             SetCurve(global.Boss, ZoneStat.MagicDefense,       100,              1.0, false);
             SetCurve(global.Boss, ZoneStat.DamageRating,       10_000,           1.0, false);
             SetCurve(global.Boss, ZoneStat.DamageResistRating, 10_000,           1.0, false);
+            SetCurve(global.Boss, ZoneStat.ArmorLevel,         1_000,            1.0, false);
             SetCurve(global.Boss, ZoneStat.DamageTakenMult,    dtMult * dtBoss,  1.0, false);
             SetCurve(global.Boss, ZoneStat.VulnCap,            vulnCap,          1.0, false);
             SetCurve(global.Boss, ZoneStat.PercentHpBase,      pctBase,          pctGrow, false);

@@ -38,6 +38,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string MagicDefense = "magic_defense";
         public const string DamageRating = "damage_rating";
         public const string DamageResistRating = "damage_resist_rating";
+        public const string ArmorLevel = "armor_level";
         public const string DamageTakenMult = "damage_taken_mult";
         public const string VulnCap = "vuln_cap";
         public const string PercentHpBase = "percent_hp_base";
@@ -51,7 +52,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public static readonly string[] All =
         {
             MaxHealth, AttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
-            DamageResistRating, DamageTakenMult, VulnCap, PercentHpBase,
+            DamageResistRating, ArmorLevel, DamageTakenMult, VulnCap, PercentHpBase,
             LootTierBonus, LootQuantityMult, RareChanceMult, BonusCurrency,
         };
     }

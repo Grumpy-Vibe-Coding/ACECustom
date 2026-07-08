@@ -48,8 +48,13 @@ namespace ACE.Server.WorldObjects
             var ignoreMagicArmor = (weapon?.IgnoreMagicArmor ?? false) || (attacker?.IgnoreMagicArmor ?? false);
             var ignoreMagicResist = (weapon?.IgnoreMagicResist ?? false) || (attacker?.IgnoreMagicResist ?? false);
 
-            // get base AL / RL
-            var armorVsType = Biota.Value.BaseArmor * (float)Creature.GetArmorVsType(damageType);
+            // get base AL / RL — Zone Scaler can set the monster's base armor absolutely (null profile -> weenie
+            // base_Armor). Lets a 100-stat chassis mob get its physical mitigation entirely from the zone profile.
+            var baseArmor = (float)Biota.Value.BaseArmor;
+            var zoneArm = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(Creature);
+            if (zoneArm != null && zoneArm.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.ArmorLevel))
+                baseArmor = (float)zoneArm.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.ArmorLevel);
+            var armorVsType = baseArmor * (float)Creature.GetArmorVsType(damageType);
 
             // additive enchantments:
             // imperil / armor
