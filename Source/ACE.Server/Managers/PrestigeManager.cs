@@ -542,15 +542,33 @@ namespace ACE.Server.Managers
             if (prev > 0)
                 RemovePrestigeScaling(creature);
 
-            // 1. HP Scaling (Multiply Base) — keep current health % across max-HP change (no free full heal)
-            var hpMod = GetHPModifier(tier);
-            if (hpMod != 1.0f)
+            // 1. HP Scaling — spawn snapshot (keep current health % across max-HP change; no free full heal).
+            // Zone Scaler: if an authored profile defines an ABSOLUTE MaxHealth, set the base so MaxValue matches it
+            // (per-variant, per-tier). Otherwise fall back to the geometric per-tier hpMod. HP stays a snapshot
+            // (MaxValue feeds Current/Percent) -> changing the HP curve needs a respawn.
+            var zoneHp = ZoneScaling.ZoneScalingManager.GetProfile(creature);
+            if (zoneHp != null && zoneHp.Has(ZoneScaling.ZoneStat.MaxHealth))
             {
                 var maxBefore = creature.Health.MaxValue;
                 var healthPct = maxBefore > 0 ? (float)creature.Health.Current / maxBefore : 1f;
-                creature.Health.StartingValue = (uint)Math.Round(creature.Health.StartingValue * hpMod);
+                var target = (long)Math.Round(zoneHp.Get(ZoneScaling.ZoneStat.MaxHealth));
+                // subtract the non-starting contributions (endurance formula, ranks) so MaxValue lands on target
+                var nonStarting = (long)maxBefore - creature.Health.StartingValue;
+                creature.Health.StartingValue = (uint)Math.Clamp(target - nonStarting, 1L, uint.MaxValue);
                 var maxAfter = creature.Health.MaxValue;
                 creature.Health.Current = (uint)Math.Clamp((uint)Math.Round(healthPct * maxAfter), 0u, maxAfter);
+            }
+            else
+            {
+                var hpMod = GetHPModifier(tier);
+                if (hpMod != 1.0f)
+                {
+                    var maxBefore = creature.Health.MaxValue;
+                    var healthPct = maxBefore > 0 ? (float)creature.Health.Current / maxBefore : 1f;
+                    creature.Health.StartingValue = (uint)Math.Round(creature.Health.StartingValue * hpMod);
+                    var maxAfter = creature.Health.MaxValue;
+                    creature.Health.Current = (uint)Math.Clamp((uint)Math.Round(healthPct * maxAfter), 0u, maxAfter);
+                }
             }
 
             // 2. Damage Scaling (Apply as DamageRating)
