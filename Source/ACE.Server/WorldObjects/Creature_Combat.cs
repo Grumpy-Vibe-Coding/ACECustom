@@ -512,6 +512,12 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public virtual uint GetEffectiveAttackSkill()
         {
+            // Zone Scaler: an authored profile sets the monster's attack skill absolutely (null for players/exempt/
+            // non-endgame/no-match -> falls through to normal skill). The v11 attack-skill floor still applies on top.
+            var zoneAtk = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
+            if (zoneAtk != null && zoneAtk.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackSkill))
+                return (uint)Math.Round(zoneAtk.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackSkill));
+
             var attackSkill = GetCreatureSkill(GetCurrentAttackSkill()).Current;
 
             // TODO: don't use for bow?
@@ -532,6 +538,18 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public virtual uint GetEffectiveDefenseSkill(CombatType combatType)
         {
+            // Zone Scaler: an authored profile sets the monster's melee/missile defense absolutely so hits land as
+            // designed (null for players/exempt/non-endgame/no-match -> normal calc). Exhaustion still zeroes it.
+            var zoneDef = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
+            if (zoneDef != null)
+            {
+                var defStat = combatType == CombatType.Missile
+                    ? ACE.Server.Managers.ZoneScaling.ZoneStat.MissileDefense
+                    : ACE.Server.Managers.ZoneScaling.ZoneStat.MeleeDefense;
+                if (zoneDef.Has(defStat))
+                    return IsExhausted ? 0u : (uint)Math.Round(zoneDef.Get(defStat));
+            }
+
             var defenseSkill = combatType == CombatType.Missile ? Skill.MissileDefense : Skill.MeleeDefense;
             var defenseMod = defenseSkill == Skill.MissileDefense ? GetWeaponMissileDefenseModifier(this) : GetWeaponMeleeDefenseModifier(this);
             var burdenMod = GetBurdenMod();

@@ -829,6 +829,12 @@ namespace ACE.Entity.Enum.Properties
         /// elemental_weakness_default_factor knob). 0/unset = no weakness. Lets us make different mobs weak to
         /// different elements (e.g. Cold=0x8, Fire=0x10, Cold+Fire=0x18, Nether=0x400).</summary>
         ElementalWeaknessMask = 50106,
+
+        /// <summary>OFFENSE DAMAGE TYPE: a bitmask of ACE.Entity.Enum.DamageType flags a monster's natural/melee/missile
+        /// attacks should deal, OVERRIDING its body-part/weapon damage type. When set, each hit picks a random flag
+        /// from this mask (e.g. Cold 0x8, Fire 0x10, Cold+Fire 0x18 = randomly one per hit). 0/unset = normal weapon/
+        /// body-part type. Does NOT change magic-school (War/Void) spells — those come from the mob's spellbook.</summary>
+        OutgoingDamageTypeOverride = 50107,
     }
 
     public static class PropertyIntExtensions

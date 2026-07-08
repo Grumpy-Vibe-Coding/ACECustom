@@ -303,6 +303,12 @@ namespace ACE.Server.WorldObjects
 
         public DamageType GetDamageType(PropertiesBodyPart attackPart, CombatType? combatType = null)
         {
+            // OFFENSE DAMAGE TYPE override: force this mob's physical/melee/missile attacks to a chosen element,
+            // regardless of weapon or body-part type. Picks one random flag from the mask per hit. 0/unset = no-op.
+            var outOverride = GetProperty(PropertyInt.OutgoingDamageTypeOverride);
+            if (outOverride.HasValue && outOverride.Value != 0)
+                return EnumFlagRandom.SelectRandomFlag((DamageType)outOverride.Value, DamageType.Physical);
+
             // If there is a weapon equipped, get the damage type from that weapon.
             var weapon = GetEquippedWeapon();
             if (weapon != null) return GetDamageType(false, combatType);

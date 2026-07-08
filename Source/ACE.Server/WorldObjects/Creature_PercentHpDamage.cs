@@ -33,9 +33,15 @@ namespace ACE.Server.WorldObjects
             // floor fraction P: per-weenie override wins; otherwise tier-scaled (+ boss multiplier)
             double p;
             var pOverride = attacker.GetProperty(PropertyFloat.PercentHpDamageOverride);
+            var zoneProfile = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(attacker);
             if (pOverride.HasValue)
             {
                 p = pOverride.Value;
+            }
+            else if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.PercentHpBase))
+            {
+                // Zone profile value is per-variant (boss/minion) and per-tier already -> use directly, no boss mult.
+                p = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.PercentHpBase);
             }
             else
             {

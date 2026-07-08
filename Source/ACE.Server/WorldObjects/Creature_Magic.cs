@@ -178,6 +178,12 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public uint GetEffectiveMagicDefense()
         {
+            // Zone Scaler: an authored profile sets the monster's magic defense absolutely (null for players/exempt/
+            // non-endgame/no-match -> normal calc below).
+            var zoneMd = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
+            if (zoneMd != null && zoneMd.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicDefense))
+                return (uint)Math.Round(zoneMd.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicDefense));
+
             var current = GetCreatureSkill(Skill.MagicDefense).Current;
             var lumAug = this.LuminanceAugmentMagicDefenseCount ?? 0;
             var weaponDefenseMod = GetWeaponMagicDefenseModifier(this);
