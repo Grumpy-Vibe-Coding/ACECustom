@@ -1294,11 +1294,16 @@ namespace ACE.Server.Physics
                         var landblock = LScape.get_landblock(newPos.ObjCellID, newPos.Variation);
                         var groundZ = landblock.GetZ(newPos.Frame.Origin) + 0.05f;
 
+                        // The cell is already confirmed walkable (slope check above) and non-building, so the object
+                        // belongs on the terrain here. ALWAYS snap to ground Z. Previously a ground-Z diff beyond
+                        // ScatterThreshold_Z left the object at the generator's Z instead — which floats/sinks it and
+                        // makes SetPositionInternal reject the placement, so scatter spawns over uneven terrain (e.g.
+                        // large-radius camp generators on hilly Tou Tou blocks) silently failed. We keep the large-diff
+                        // case as a debug log for visibility but no longer skip the ground snap.
                         if (Math.Abs(newPos.Frame.Origin.Z - groundZ) > ScatterThreshold_Z)
-                            log.Debug($"{Name} ({ID:X8}).SetScatterPositionInternal() - tried to spawn outdoor object @ {newPos} ground Z {groundZ} (diff: {newPos.Frame.Origin.Z - groundZ}), investigate ScatterThreshold_Z");
-                        else
-                            newPos.Frame.Origin.Z = groundZ;
+                            log.Debug($"{Name} ({ID:X8}).SetScatterPositionInternal() - large ground-Z snap @ {newPos} ground Z {groundZ} (diff: {newPos.Frame.Origin.Z - groundZ})");
 
+                        newPos.Frame.Origin.Z = groundZ;
                     }
                     //else
                     //indoors = true;
