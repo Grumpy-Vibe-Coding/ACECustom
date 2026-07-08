@@ -1,0 +1,31 @@
+-- T11 Tou Tou: replicate master generator placements to all prestige variation layers.
+--
+-- landblock_instance rows are loaded per (landblock, variation_Id) with NO fallback:
+-- a v11 landblock only loads rows stamped variation_Id = 11. The original placements
+-- were authored ONLY at variation 12, so every other prestige tier had no generators
+-- at all. Each layer needs its own guid-distinct copies (guid is the primary key and
+-- concurrently loaded variation layers may not share object guids).
+--
+-- Layers covered: 11 through 25 (default prestige max tier is 10 = variation 20;
+-- extra layers are free insurance and never load unless those tiers exist).
+--
+-- MUST run AFTER "730001002 T11 Spawner Terrain Fixes.sql" - that file corrects
+-- weenie_Class_Id on the source (variation 12) rows, and the copies inherit them.
+-- Safe to re-run: deletes and rebuilds all non-v12 layers from the v12 source rows.
+
+DELETE FROM `landblock_instance`
+ WHERE `weenie_Class_Id` IN (730001001,730001002,730001003,730001004)
+   AND (`variation_Id` IS NULL OR `variation_Id` <> 12);
+
+INSERT INTO `landblock_instance`
+  (`weenie_Class_Id`, `obj_Cell_Id`, `origin_X`, `origin_Y`, `origin_Z`,
+   `angles_W`, `angles_X`, `angles_Y`, `angles_Z`, `is_Link_Child`, `variation_Id`)
+SELECT src.`weenie_Class_Id`, src.`obj_Cell_Id`, src.`origin_X`, src.`origin_Y`, src.`origin_Z`,
+       src.`angles_W`, src.`angles_X`, src.`angles_Y`, src.`angles_Z`, src.`is_Link_Child`, v.`variation`
+  FROM `landblock_instance` src
+  JOIN (SELECT 11 AS `variation` UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15
+        UNION ALL SELECT 16 UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19
+        UNION ALL SELECT 20 UNION ALL SELECT 21 UNION ALL SELECT 22 UNION ALL SELECT 23
+        UNION ALL SELECT 24 UNION ALL SELECT 25) v
+ WHERE src.`weenie_Class_Id` IN (730001001,730001002,730001003,730001004)
+   AND src.`variation_Id` = 12;

@@ -1,0 +1,23 @@
+/* 730001008 - Remove invalid T11 Tou Tou Water Generators in landblocks 0xF25C / 0xF25D
+
+   Reason: all rows were bulk-placed at origin_Z = 0 (terrain height never sampled). In these two
+   landblocks the ground sits above Z=0, so the generator is placed in an invalid/underground cell and
+   AddPhysicsObj fails at landblock load ("Failed to add world object T11 Tou Tou Water Generator ...").
+   Teleporting to the same coords is rejected for the same reason. These landblocks contain ONLY the
+   water generators (wcid 730001004) across variations 11-25, and nothing links to them, so removal is
+   self-contained. They will be re-placed manually (manual placement / /createinst computes correct Z).
+
+   Idempotent: re-running deletes nothing once the rows are gone.
+   Backup of the removed rows: scratchpad/backup_water_gen_f25c_f25d.sql
+*/
+
+DELETE FROM landblock_instance_link
+WHERE parent_GUID IN (
+    SELECT guid FROM (SELECT guid FROM landblock_instance
+        WHERE landblock IN (0xF25C, 0xF25D) AND weenie_Class_Id = 730001004) x)
+   OR child_GUID IN (
+    SELECT guid FROM (SELECT guid FROM landblock_instance
+        WHERE landblock IN (0xF25C, 0xF25D) AND weenie_Class_Id = 730001004) y);
+
+DELETE FROM landblock_instance
+WHERE landblock IN (0xF25C, 0xF25D) AND weenie_Class_Id = 730001004;

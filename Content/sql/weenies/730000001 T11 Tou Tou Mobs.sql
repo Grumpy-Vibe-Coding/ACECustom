@@ -1,4 +1,4 @@
--- T11 Tou Tou Mob Clones — 730000001 to 730000051
+﻿-- T11 Tou Tou Mob Clones â€” 730000001 to 730000051
 -- Stat template: Lich (WCID 204). Visuals from source WCIDs.
 -- Generated from DB on 2026-07-01
 
@@ -3543,7 +3543,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000030,133,4),
   (730000030,146,90000000),
   (730000030,307,500),
-  (730000030,332,700);
+  (730000030,332,700),
+  (730000030,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000030,1,5),
   (730000030,2,0),
@@ -3583,7 +3584,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000030,12,1),
   (730000030,13,0),
   (730000030,50,1),
-  (730000030,65,1);
+  (730000030,65,1),
+  (730000030,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000030,1,33554433),
   (730000030,2,150994967),
@@ -3672,7 +3674,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000031,133,4),
   (730000031,146,90000000),
   (730000031,307,250),
-  (730000031,332,700);
+  (730000031,332,700),
+  (730000031,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000031,1,5),
   (730000031,2,0),
@@ -3712,7 +3715,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000031,12,1),
   (730000031,13,0),
   (730000031,50,1),
-  (730000031,65,1);
+  (730000031,65,1),
+  (730000031,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000031,1,33559522),
   (730000031,2,150994967),
@@ -3803,7 +3807,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000032,133,4),
   (730000032,146,90000000),
   (730000032,307,250),
-  (730000032,332,700);
+  (730000032,332,700),
+  (730000032,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000032,1,5),
   (730000032,2,0),
@@ -3843,7 +3848,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000032,12,1),
   (730000032,13,0),
   (730000032,50,1),
-  (730000032,65,1);
+  (730000032,65,1),
+  (730000032,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000032,1,33554433),
   (730000032,2,150994967),
@@ -3932,7 +3938,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000033,133,4),
   (730000033,146,90000000),
   (730000033,307,250),
-  (730000033,332,700);
+  (730000033,332,700),
+  (730000033,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000033,1,5),
   (730000033,2,0),
@@ -3972,7 +3979,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000033,12,1),
   (730000033,13,0),
   (730000033,50,1),
-  (730000033,65,1);
+  (730000033,65,1),
+  (730000033,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000033,1,33559522),
   (730000033,2,150994967),
@@ -4062,7 +4070,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000034,133,4),
   (730000034,146,90000000),
   (730000034,307,500),
-  (730000034,332,700);
+  (730000034,332,700),
+  (730000034,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000034,1,5),
   (730000034,2,0),
@@ -4102,7 +4111,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000034,12,1),
   (730000034,13,0),
   (730000034,50,1),
-  (730000034,65,1);
+  (730000034,65,1),
+  (730000034,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000034,1,33554433),
   (730000034,2,150994967),
@@ -4170,9 +4180,10 @@ INSERT INTO `weenie_properties_create_list` (`object_Id`,`destination_Type`,`wee
   (730000034,2,90000031,0,0,-1,0),
   (730000034,2,36353,0,0,-1,0);
 
-INSERT INTO `weenie` (`class_Id`,`class_Name`,`type`,`last_Modified`) VALUES (730000035,'t11_tou_old_gregg',10,NOW());
+INSERT INTO `weenie` (`class_Id`,`class_Name`,`type`,`last_Modified`) VALUES (730000035,'t11_tou_scurvy_gregg',10,NOW());
 INSERT INTO `weenie_properties_string` (`object_Id`,`type`,`value`) VALUES
-  (730000035,1,'Old Gregg');
+  (730000035,1,'Scurvy Gregg'),
+  (730000035,16,'This damp, green-skinned wretch smells faintly of yeast, seawater, and old milk. He mutters endlessly about a \'downstairs mix-up\' and keeps offering to show you his paintings.');
 INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000035,1,16),
   (730000035,2,14),
@@ -4189,7 +4200,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000035,133,4),
   (730000035,146,90000000),
   (730000035,307,300),
-  (730000035,332,70000);
+  (730000035,332,70000),
+  (730000035,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000035,1,5),
   (730000035,2,0),
@@ -4230,7 +4242,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000035,13,0),
   (730000035,19,1),
   (730000035,50,1),
-  (730000035,65,1);
+  (730000035,65,1),
+  (730000035,50044,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000035,1,33554433),
   (730000035,2,150994967),
@@ -4312,9 +4325,10 @@ INSERT INTO `weenie_properties_create_list` (`object_Id`,`destination_Type`,`wee
   (730000035,9,90000021,0,0,1,0),
   (730000035,9,90000021,0,0,1,0);
 
-INSERT INTO `weenie` (`class_Id`,`class_Name`,`type`,`last_Modified`) VALUES (730000036,'t11_tou_chief_engineer_sanjo',10,NOW());
+INSERT INTO `weenie` (`class_Id`,`class_Name`,`type`,`last_Modified`) VALUES (730000036,'t11_tou_unhinged_sanjo',10,NOW());
 INSERT INTO `weenie_properties_string` (`object_Id`,`type`,`value`) VALUES
-  (730000036,1,'Chief Engineer Sanjo');
+  (730000036,1,'Unhinged Sanjo'),
+  (730000036,16,'The stress of keeping the steam boilers running amidst endless monster attacks has finally broken him. He mutters calculations to himself, waving his tools wildly at anyone who approaches.');
 INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000036,1,16),
   (730000036,2,14),
@@ -4331,7 +4345,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000036,133,4),
   (730000036,146,90000000),
   (730000036,307,300),
-  (730000036,332,70000);
+  (730000036,332,70000),
+  (730000036,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000036,1,5),
   (730000036,2,0),
@@ -4374,7 +4389,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000036,13,0),
   (730000036,19,1),
   (730000036,50,1),
-  (730000036,65,1);
+  (730000036,65,1),
+  (730000036,50044,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000036,1,33554839),
   (730000036,2,150994945),
@@ -4456,9 +4472,9 @@ INSERT INTO `weenie_properties_create_list` (`object_Id`,`destination_Type`,`wee
   (730000036,9,90000054,0,0,1,0),
   (730000036,9,90000054,0,0,1,0);
 
-INSERT INTO `weenie` (`class_Id`,`class_Name`,`type`,`last_Modified`) VALUES (730000037,'t11_tou_foreman_skippy',10,NOW());
+INSERT INTO `weenie` (`class_Id`,`class_Name`,`type`,`last_Modified`) VALUES (730000037,'t11_tou_damned_skippy',10,NOW());
 INSERT INTO `weenie_properties_string` (`object_Id`,`type`,`value`) VALUES
-  (730000037,1,'Foreman Skippy');
+  (730000037,1,'Damned Skippy');
 INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000037,1,16),
   (730000037,2,14),
@@ -4475,7 +4491,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000037,133,4),
   (730000037,146,90000000),
   (730000037,307,250),
-  (730000037,332,1100);
+  (730000037,332,1100),
+  (730000037,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000037,1,5),
   (730000037,2,0),
@@ -4514,7 +4531,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000037,12,1),
   (730000037,13,0),
   (730000037,50,1),
-  (730000037,65,1);
+  (730000037,65,1),
+  (730000037,50044,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000037,1,33555464),
   (730000037,2,150994981),
@@ -4615,7 +4633,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000038,133,4),
   (730000038,146,90000000),
   (730000038,307,250),
-  (730000038,332,70);
+  (730000038,332,70),
+  (730000038,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000038,1,5),
   (730000038,2,0),
@@ -4655,7 +4674,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000038,12,1),
   (730000038,13,0),
   (730000038,50,1),
-  (730000038,65,1);
+  (730000038,65,1),
+  (730000038,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000038,1,33554433),
   (730000038,2,150994967),
@@ -4745,7 +4765,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000039,133,4),
   (730000039,146,90000000),
   (730000039,307,250),
-  (730000039,332,70);
+  (730000039,332,70),
+  (730000039,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000039,1,5),
   (730000039,2,0),
@@ -4785,7 +4806,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000039,12,1),
   (730000039,13,0),
   (730000039,50,1),
-  (730000039,65,1);
+  (730000039,65,1),
+  (730000039,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000039,1,33559522),
   (730000039,2,150994967),
@@ -4876,7 +4898,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000040,133,4),
   (730000040,146,90000000),
   (730000040,307,250),
-  (730000040,332,70);
+  (730000040,332,70),
+  (730000040,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000040,1,5),
   (730000040,2,0),
@@ -4916,7 +4939,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000040,12,1),
   (730000040,13,0),
   (730000040,50,1),
-  (730000040,65,1);
+  (730000040,65,1),
+  (730000040,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000040,1,33554433),
   (730000040,2,150994967),
@@ -5005,7 +5029,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000041,133,4),
   (730000041,146,90000000),
   (730000041,307,250),
-  (730000041,332,70);
+  (730000041,332,70),
+  (730000041,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000041,1,5),
   (730000041,2,0),
@@ -5045,7 +5070,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000041,12,1),
   (730000041,13,0),
   (730000041,50,1),
-  (730000041,65,1);
+  (730000041,65,1),
+  (730000041,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000041,1,33559522),
   (730000041,2,150994967),
@@ -5132,7 +5158,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000042,101,183),
   (730000042,133,2),
   (730000042,140,1),
-  (730000042,146,125000);
+  (730000042,146,125000),
+  (730000042,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000042,1,5),
   (730000042,2,0),
@@ -5174,7 +5201,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000042,13,0),
   (730000042,14,1),
   (730000042,19,1),
-  (730000042,50,1);
+  (730000042,50,1),
+  (730000042,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000042,1,33554839),
   (730000042,2,150994967),
@@ -5265,7 +5293,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000043,101,183),
   (730000043,133,2),
   (730000043,140,1),
-  (730000043,146,80000);
+  (730000043,146,80000),
+  (730000043,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000043,1,5),
   (730000043,2,0),
@@ -5307,7 +5336,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000043,13,0),
   (730000043,14,1),
   (730000043,19,1),
-  (730000043,50,1);
+  (730000043,50,1),
+  (730000043,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000043,1,33554839),
   (730000043,2,150994967),
@@ -5396,7 +5426,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000044,101,183),
   (730000044,133,2),
   (730000044,140,1),
-  (730000044,146,80000);
+  (730000044,146,80000),
+  (730000044,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000044,1,5),
   (730000044,2,0),
@@ -5438,7 +5469,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000044,13,0),
   (730000044,14,1),
   (730000044,19,1),
-  (730000044,42,1);
+  (730000044,42,1),
+  (730000044,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000044,1,33554839),
   (730000044,2,150994967),
@@ -5525,7 +5557,8 @@ INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES
   (730000045,101,183),
   (730000045,133,2),
   (730000045,140,1),
-  (730000045,146,250000);
+  (730000045,146,250000),
+  (730000045,50102,1);
 INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES
   (730000045,1,5),
   (730000045,2,0),
@@ -5567,7 +5600,8 @@ INSERT INTO `weenie_properties_bool` (`object_Id`,`type`,`value`) VALUES
   (730000045,13,0),
   (730000045,14,1),
   (730000045,19,1),
-  (730000045,42,1);
+  (730000045,42,1),
+  (730000045,50043,1);
 INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES
   (730000045,1,33554839),
   (730000045,2,150994967),
