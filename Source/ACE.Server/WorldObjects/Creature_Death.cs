@@ -901,10 +901,15 @@ namespace ACE.Server.WorldObjects
             var droppedItems = new List<WorldObject>();
             var tier = PrestigeManager.GetKillScalingMonsterTier(this);
 
+            // Zone Scaler loot: an authored profile can bump the loot tier/quality/quantity and inject bonus
+            // currency for this mob (null for players/exempt/non-endgame/no-match -> normal loot).
+            var zoneLoot = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
+
             // create death treasure from loot generation factory
             if (DeathTreasure != null)
             {
-                List<WorldObject> items = LootGenerationFactory.CreateRandomLootObjects(DeathTreasure);
+                var effectiveTreasure = BuildZoneScaledTreasure(DeathTreasure, zoneLoot);
+                List<WorldObject> items = LootGenerationFactory.CreateRandomLootObjects(effectiveTreasure);
                 foreach (WorldObject wo in items)
                 {
                     if (tier > 0)
@@ -979,9 +984,109 @@ namespace ACE.Server.WorldObjects
                 }
             }
 
-
+            // Zone Scaler: inject the custom bonus-currency token (independent of the loot table).
+            InjectZoneBonusCurrency(zoneLoot, corpse, droppedItems);
 
             return droppedItems;
+        }
+
+        /// <summary>
+        /// Zone Scaler: returns a CLONE of the death-treasure profile with loot tier/quantity/quality scaled per the
+        /// resolved zone profile (never mutates the shared cached profile). Returns <paramref name="src"/> unchanged
+        /// when there is no profile or it defines no loot stats.
+        /// </summary>
+        private ACE.Database.Models.World.TreasureDeath BuildZoneScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile)
+        {
+            if (src == null || profile == null)
+                return src;
+
+            var hasTier = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus);
+            var hasQty = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
+            var hasRare = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult);
+            if (!hasTier && !hasQty && !hasRare)
+                return src;
+
+            var t = new ACE.Database.Models.World.TreasureDeath
+            {
+                Id = src.Id,
+                TreasureType = src.TreasureType,
+                Tier = src.Tier,
+                LootQualityMod = src.LootQualityMod,
+                UnknownChances = src.UnknownChances,
+                ItemChance = src.ItemChance,
+                ItemMinAmount = src.ItemMinAmount,
+                ItemMaxAmount = src.ItemMaxAmount,
+                ItemTreasureTypeSelectionChances = src.ItemTreasureTypeSelectionChances,
+                MagicItemChance = src.MagicItemChance,
+                MagicItemMinAmount = src.MagicItemMinAmount,
+                MagicItemMaxAmount = src.MagicItemMaxAmount,
+                MagicItemTreasureTypeSelectionChances = src.MagicItemTreasureTypeSelectionChances,
+                MundaneItemChance = src.MundaneItemChance,
+                MundaneItemMinAmount = src.MundaneItemMinAmount,
+                MundaneItemMaxAmount = src.MundaneItemMaxAmount,
+                MundaneItemTypeSelectionChances = src.MundaneItemTypeSelectionChances,
+                LastModified = src.LastModified,
+            };
+
+            if (hasTier)
+            {
+                var bonus = (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus));
+                var maxTier = Math.Max(1, (int)ServerConfig.zonescale_loot_max_tier.Value);
+                t.Tier = Math.Clamp(t.Tier + bonus, 1, maxTier);
+            }
+
+            if (hasQty)
+            {
+                var m = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
+                if (m > 0 && m != 1.0)
+                {
+                    t.ItemMinAmount = (int)Math.Round(t.ItemMinAmount * m);
+                    t.ItemMaxAmount = (int)Math.Round(t.ItemMaxAmount * m);
+                    t.MagicItemMinAmount = (int)Math.Round(t.MagicItemMinAmount * m);
+                    t.MagicItemMaxAmount = (int)Math.Round(t.MagicItemMaxAmount * m);
+                    t.MundaneItemMinAmount = (int)Math.Round(t.MundaneItemMinAmount * m);
+                    t.MundaneItemMaxAmount = (int)Math.Round(t.MundaneItemMaxAmount * m);
+                }
+            }
+
+            if (hasRare)
+            {
+                var m = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult);
+                if (m > 0 && m != 1.0)
+                    t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod * m, 0.0, 1.0);
+            }
+
+            return t;
+        }
+
+        /// <summary>
+        /// Zone Scaler: injects the configured custom bonus-currency token (zonescale_bonus_currency_wcid) onto the
+        /// corpse/drop list, stack size = the profile's evaluated bonus_currency. No-op when disabled or amount &lt;= 0.
+        /// </summary>
+        private void InjectZoneBonusCurrency(ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile, Corpse corpse, List<WorldObject> dropped)
+        {
+            if (profile == null || !profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.BonusCurrency))
+                return;
+
+            var amount = (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.BonusCurrency));
+            if (amount <= 0)
+                return;
+
+            var wcid = (uint)ServerConfig.zonescale_bonus_currency_wcid.Value;
+            if (wcid == 0)
+                return;
+
+            var token = WorldObjectFactory.CreateNewWorldObject(wcid);
+            if (token == null)
+                return;
+
+            if (token.MaxStackSize.HasValue && amount > 1)
+                token.SetStackSize(Math.Min(amount, token.MaxStackSize.Value));
+
+            if (corpse != null)
+                corpse.TryAddToInventory(token);
+            else
+                dropped.Add(token);
         }
 
         /// <summary>
