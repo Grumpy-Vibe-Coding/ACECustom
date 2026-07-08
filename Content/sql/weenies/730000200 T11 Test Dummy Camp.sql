@@ -109,5 +109,6 @@ UPDATE `weenie_properties_string` SET `value`='Patient Zero Minion'  WHERE `obje
 UPDATE `weenie_properties_string` SET `value`='Test Dummy Camp Gen'   WHERE `object_Id`=730000202 AND `type`=1;
 DELETE FROM `weenie_properties_string` WHERE `object_Id`=730000201 AND `type`=45; -- drop KillTaskShadowVortex tag
 UPDATE `weenie_properties_int` SET `value`=18 WHERE `object_Id` IN (730000200,730000201) AND `type`=50102; -- empower group 18
+UPDATE `weenie_properties_float` SET `value`=25 WHERE `object_Id`=730000202 AND `type`=41; -- GeneratorRadius 60->25 (tighter camp, fewer scatter fails on uneven terrain)
 
 SET FOREIGN_KEY_CHECKS = 1;
