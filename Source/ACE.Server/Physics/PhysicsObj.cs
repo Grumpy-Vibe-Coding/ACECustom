@@ -1045,11 +1045,16 @@ namespace ACE.Server.Physics
             // modified: maintain consistency for Position.Frame in change_cell
             set_frame(curPos.Frame);
 
-            if (transitCell.VariationId != CurCell?.VariationId)
+            // Outdoor LandCells never carry a VariationId and ObjCell.Equals is ID-only, so a
+            // same-spot variation switch (e.g. /tv) yielded "equal" cells from two different
+            // landblock instances and skipped change_cell, stranding CurCell/CurLandblock on the
+            // old variation (player sees an empty world until relog). Instance identity is the
+            // only reliable "already in this cell" test across variations and landblock reloads.
+            if (!ReferenceEquals(transitCell, CurCell))
             {
                 change_cell(transitCell);
             }
-            else if (transitCell.Equals(CurCell))
+            else
             {
                 Position.ObjCellID = curPos.ObjCellID;
                 if (PartArray != null && !State.HasFlag(PhysicsState.ParticleEmitter))
@@ -1064,10 +1069,6 @@ namespace ACE.Server.Physics
                             child.PartArray.SetCellID(curPos.ObjCellID);
                     }
                 }
-            }
-            else
-            {
-                change_cell(transitCell);
             }
 
             //set_frame(curPos.Frame);
@@ -2904,11 +2905,16 @@ namespace ACE.Server.Physics
 
         public void set_current_pos(Position newPos)
         {
+            // Capture before overwrite: comparing Position.Variation to newPos.Variation after the
+            // assignment below made the variation-change clause always false, so a same-cell
+            // variation switch never refetched the cell (CurCell stayed on the old variation).
+            var prevVariation = Position.Variation;
+
             Position.ObjCellID = newPos.ObjCellID;
             Position.Variation = newPos.Variation;
             Position.Frame = new AFrame(newPos.Frame);
 
-            if (CurCell == null || CurCell.ID != Position.ObjCellID || Position.Variation != newPos.Variation)
+            if (CurCell == null || CurCell.ID != Position.ObjCellID || prevVariation != newPos.Variation)
             {
                 var newCell = LScape.get_landcell(newPos.ObjCellID, newPos.Variation);
 
