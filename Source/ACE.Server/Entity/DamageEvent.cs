@@ -419,6 +419,12 @@ namespace ACE.Server.Entity
             if (Weapon != null && Weapon.HasImbuedEffect(ImbuedEffectType.ArmorRending))
             {
                 armorRendingMod = WorldObject.GetArmorRendingMod(attackSkill);
+
+                // Zone Control loot: per-weapon armor-rend amount (fraction of armor ignored) replaces
+                // the skill-scaled formula (cap 0.6) for weapons stamped by ZoneLootMutator
+                var armorRendOverride = Weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ArmorRendOverridePropId);
+                if (armorRendOverride.HasValue)
+                    armorRendingMod = 1.0f - (float)Math.Clamp(armorRendOverride.Value, 0.0, 1.0);
             }
             else if (attacker is CombatPet && attacker.HasImbuedEffect(ImbuedEffectType.ArmorRending))
             {

@@ -1925,13 +1925,17 @@ namespace ACE.Server.Physics
                 actionChain.AddDelaySeconds(TeleportCreateObjectDelay.TotalSeconds);
                 actionChain.AddAction(player, ActionType.PhysicsObj_TrackObjects, () =>
                 {
+                    // Re-evaluate at fire time: during a variation-switch teleport this chain is
+                    // queued while the player still carries the ORIGIN variation, so the captured
+                    // playerVar would let origin-variation objects through (ghost mobs after /tv).
+                    var playerVarNow = PrestigeManager.GetEffectiveVariationForVisibility(player);
                     foreach (var obj in newlyVisible)
                     {
                         var wo = obj.WeenieObj.WorldObject;
                         if (wo == null)
                             continue;
 
-                        if (!PrestigeManager.SameVariationForVisibility(playerVar, PrestigeManager.GetEffectiveVariationForVisibility(wo)))
+                        if (!PrestigeManager.SameVariationForVisibility(playerVarNow, PrestigeManager.GetEffectiveVariationForVisibility(wo)))
                             continue;
 
                         player.TrackObject(wo, true, "enqueue_objs_post_teleport_delay");
@@ -1983,7 +1987,17 @@ namespace ACE.Server.Physics
             {
                 var actionChain = new ActionChain();
                 actionChain.AddDelaySeconds(TeleportCreateObjectDelay.TotalSeconds);
-                actionChain.AddAction(player, ActionType.PhysicsObj_TrackObject, () => player.TrackObject(wo, true, "enqueue_obj_post_teleport_delay"));
+                actionChain.AddAction(player, ActionType.PhysicsObj_TrackObject, () =>
+                {
+                    // Same fire-time recheck as enqueue_objs: the outer variation check above ran
+                    // while the player could still carry the origin variation mid-teleport.
+                    if (!PrestigeManager.SameVariationForVisibility(
+                            PrestigeManager.GetEffectiveVariationForVisibility(player),
+                            PrestigeManager.GetEffectiveVariationForVisibility(wo)))
+                        return;
+
+                    player.TrackObject(wo, true, "enqueue_obj_post_teleport_delay");
+                });
                 actionChain.EnqueueChain();
             }
             else

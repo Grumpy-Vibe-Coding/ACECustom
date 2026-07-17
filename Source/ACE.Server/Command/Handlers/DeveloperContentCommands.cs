@@ -1394,6 +1394,15 @@ namespace ACE.Server.Command.Handlers.Processors
                 return;
             }
 
+            // Prestige/Zone Scaler HP+damage scaling is normally applied when landblock instances are
+            // loaded from the world DB (WorldObjectFactory.CreateNewWorldObjects); /createinst bypasses
+            // that path entirely, so it must be applied here too or spawned mobs never pick up tier HP.
+            if (wo is Creature createdCreature)
+            {
+                PrestigeManager.ApplyPrestigeScaling(createdCreature, variation);
+                Managers.ZoneControl.ZoneSpawnScaler.ApplyToSpawn(createdCreature);
+            }
+
             // create new landblock instance
             var instance = CreateLandblockInstance(wo, isLinkChild, variation);
 
@@ -2078,7 +2087,20 @@ namespace ACE.Server.Command.Handlers.Processors
         {
             var wo = CommandHandlerHelper.GetLastAppraisedObject(session);
 
-            if (wo?.Location == null) return;
+            if (wo == null)
+                return; // GetLastAppraisedObject already reported the reason to the player
+
+            if (wo.Location == null)
+            {
+                // Previously a SILENT return, which read as "removeinst does nothing" -- almost always because the
+                // stale appraisal target is a location-less object (e.g. a dynamic loot item), not the intended
+                // landblock instance. Tell the player instead of failing quietly.
+                session.Network.EnqueueSend(new GameMessageSystemChat(
+                    $"Cannot remove {wo.WeenieClassId} - {wo.Name} (0x{wo.Guid.Full:X8}): object has no Location " +
+                    $"(IsDestroyed={wo.IsDestroyed}, inLandblock={(wo.CurrentLandblock != null)}). Re-appraise it or reload the landblock, then retry.",
+                    ChatMessageType.Broadcast));
+                return;
+            }
 
             var landblock = (ushort)wo.Location.Landblock;
             int? variation = wo.Location.Variation;

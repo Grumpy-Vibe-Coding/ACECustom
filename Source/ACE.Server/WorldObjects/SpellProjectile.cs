@@ -711,6 +711,14 @@ namespace ACE.Server.WorldObjects
             if (IsForkProjectile)
                 finalDamage *= ForkDamageMult;
 
+            // Zone Control: a governed monster's zone profile can scale its spell damage (players resolve null).
+            if (sourceCreature != null && !(sourceCreature is Player))
+            {
+                var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
+                if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamageMult))
+                    finalDamage *= (float)zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamageMult);
+            }
+
             // show debug info (after fork mult so displayed damage matches actual dealt damage)
             if (sourceCreature != null && sourceCreature.DebugDamage.HasFlag(Creature.DebugDamageType.Attacker))
             {

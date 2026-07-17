@@ -33,6 +33,9 @@ namespace ACE.Server.WorldObjects
         private double houseRentWarnTimestamp;
         private const double houseRentWarnInterval = 3600;
 
+        /// <summary>Zone Control: unix time this player is next due for a zone-effect tick (see ZoneEffectManager).</summary>
+        public double ZoneEffectNextTick;
+
         public void Player_Tick(double currentUnixTime)
         {
             if (CharacterSaveFailed)
@@ -65,6 +68,10 @@ namespace ACE.Server.WorldObjects
 
             UCMChecker.Tick();
             TickJail();
+
+            // Zone Control: per-zone player effects (DoT, etc.), self-timed so ticks can be as fast as 1s
+            // regardless of the 5s heartbeat.
+            ACE.Server.Managers.ZoneControl.ZoneEffectManager.Tick(this, currentUnixTime);
 
             var recoverySecs = ServerConfig.PortalStuckRecoverySecondsEffective;
             if (Teleporting && PortalSpaceEnteredUtc.HasValue && recoverySecs > 0)
@@ -118,11 +125,14 @@ namespace ACE.Server.WorldObjects
             }
             
             
-            // Sync Location with Physics before boundary checks; skip prestige logic when physics has no cell (stale Location).
+            // Sync Location with Physics before boundary checks; skip boundary logic when physics has no cell (stale Location).
+            // The two boundary systems are independent: prestige enforces its tier table, Zone Control enforces
+            // its bounded-zone unions (Player_ZoneBoundary.cs). Each gates itself and no-ops when not applicable.
             if (PhysicsObj?.CurCell != null)
             {
                 SyncLocationWithPhysics();
                 CheckPrestigeBoundary();
+                CheckZoneBoundary();
             }
 
             // Staggered choreographed visual animation playout for Auto-Rebuff Charm
@@ -525,6 +535,11 @@ namespace ACE.Server.WorldObjects
 
             _lastPrestigeBoundaryCheck = Time.GetUnixTime();
 
+            // Master kill-switch: with prestige systems off, the whole boundary loop is inert
+            // (GetTier=0 would make every landblock allowed anyway — this just skips the work).
+            if (!PrestigeManager.SystemsEnabled)
+                return;
+
             var variation = Location.Variation;
             var currentLBVal = (ushort)(Location.Cell >> 16);
 
@@ -574,7 +589,7 @@ namespace ACE.Server.WorldObjects
                     // 2. Text: Center Screen (Yellow) ONLY
                     Session.Network.EnqueueSend(new ACE.Server.Network.GameEvent.Events.GameEventCommunicationTransientString(
                         Session, 
-                        "!!! YOU ARE LEAVING THE PRESTIGE ZONE! RETURN IMMEDIATELY! !!!"));
+                        "!!! YOU ARE LEAVING THE ZONE! RETURN IMMEDIATELY! !!!"));
 
                     // 3. Damage: Force update vital (Direct HP reduction)
                     var dmg = (int)(Health.MaxValue * 0.05f);
@@ -604,7 +619,7 @@ namespace ACE.Server.WorldObjects
                 if (danger)
                 {
                     Session.Network.EnqueueSend(new ACE.Server.Network.GameEvent.Events.GameEventCommunicationTransientString(
-                        Session, "!!! PRESTIGE BOUNDARY NEARBY !!!"));
+                        Session, "!!! ZONE BOUNDARY NEARBY !!!"));
                 }
                 else
                 {
@@ -700,7 +715,8 @@ namespace ACE.Server.WorldObjects
                             var wisp = Factories.WorldObjectFactory.CreateNewWorldObject(weenie) as Creature;
                             if (wisp != null)
                             {
-                                wisp.Name = "Prestige Guide";
+                                wisp.Name = "Guide";
+                                wisp.SuppressShardPersistence = true; // ephemeral escort — never save to shard
                                 wisp.SetProperty(PropertyBool.Invincible, true);
                                 wisp.SetProperty(PropertyBool.IgnoreCollisions, true);
                                 wisp.SetProperty(PropertyBool.Attackable, false);

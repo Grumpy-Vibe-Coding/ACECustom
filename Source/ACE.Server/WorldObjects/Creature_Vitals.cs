@@ -134,8 +134,23 @@ namespace ACE.Server.WorldObjects
             var enchantmentMod = EnchantmentManager.GetRegenerationMod(vital);
 
             var augMod = 1.0f;
-            if (this is Player player && player.AugmentationFasterRegen > 0)
-                augMod += player.AugmentationFasterRegen;
+            if (this is Player player)
+            {
+                if (player.AugmentationFasterRegen > 0)
+                    augMod += player.AugmentationFasterRegen;
+
+                // Zone Control cantrip gear: per-vital regen boosters (multiply with the enchantment
+                // regen mods, so they stack on top of Prodigal Regeneration etc.)
+                var regenProp = vital.Vital switch
+                {
+                    PropertyAttribute2nd.MaxHealth => ACE.Server.Managers.ZoneControl.ZoneCantrips.HealthRegenAdd,
+                    PropertyAttribute2nd.MaxStamina => ACE.Server.Managers.ZoneControl.ZoneCantrips.StaminaRegenAdd,
+                    PropertyAttribute2nd.MaxMana => ACE.Server.Managers.ZoneControl.ZoneCantrips.ManaRegenAdd,
+                    _ => 0,
+                };
+                if (regenProp != 0)
+                    augMod += player.GetZoneCantripBonus(regenProp);
+            }
 
             // cap rate?
             var currentTick = vital.RegenRate * attributeMod * stanceMod * enchantmentMod * augMod;

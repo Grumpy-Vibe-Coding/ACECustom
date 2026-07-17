@@ -65,13 +65,23 @@ namespace ACE.Server.Managers
             }
         }
 
+        /// <summary>Master kill-switch for every prestige system (config <c>prestige_systems_enabled</c>).
+        /// When false, <see cref="GetTier(int)"/> reports 0 for every variation, which neutralizes all
+        /// tier-driven systems (spawn scaling, boundaries/markers/wisp, live combat tier mods, kill
+        /// XP/luminance and loot scaling); the variation-triggered v11 combat rules check this flag at
+        /// their own gates. Variation instancing itself (visibility, effective variation) is NOT gated —
+        /// other systems (Zone Control, rifts) depend on it.</summary>
+        public static bool SystemsEnabled => ServerConfig.prestige_systems_enabled.Value;
+
         /// <summary>
         /// Converts a Variation ID to a Prestige Tier.
         /// Retail (Null/0-10) returns 0.
         /// Variation 11 returns Tier 1.
+        /// Always 0 when <see cref="SystemsEnabled"/> is off (the master kill-switch choke point).
         /// </summary>
         public static int GetTier(int variation)
         {
+            if (!SystemsEnabled) return 0;
             if (variation <= PRESTIGE_VAR_OFFSET) return 0;
             return variation - PRESTIGE_VAR_OFFSET;
         }
@@ -523,12 +533,17 @@ namespace ACE.Server.Managers
 
         /// <summary>
         /// Applies HP and Damage scaling to a spawned creature based on its location's prestige tier.
+        /// Prestige-only: Zone Control's spawn snapshot is applied independently (ZoneSpawnScaler) at the
+        /// same spawn call sites — the two systems don't consult each other.
         /// </summary>
         public static void ApplyPrestigeScaling(Creature creature, int? variation = null)
         {
             var prev = creature.GetProperty(PropertyInt.PrestigeLevel) ?? 0;
-            // Variations 11-20 are Prestige Tiers 1-10
-            var tier = GetTier(variation ?? creature.Location?.Variation);
+            // Variations 11-20 are Prestige Tiers 1-10. Use the ForceEndgameSystems-aware effective
+            // variation (not the raw Location.Variation) so a test dummy can be scaled while standing
+            // in a normal (variation 0) landblock, matching how the live combat systems resolve tier.
+            var tier = GetTier(GetEffectiveVariation(creature));
+
             if (tier <= 0)
             {
                 if (prev > 0)
@@ -542,33 +557,16 @@ namespace ACE.Server.Managers
             if (prev > 0)
                 RemovePrestigeScaling(creature);
 
-            // 1. HP Scaling — spawn snapshot (keep current health % across max-HP change; no free full heal).
-            // Zone Scaler: if an authored profile defines an ABSOLUTE MaxHealth, set the base so MaxValue matches it
-            // (per-variant, per-tier). Otherwise fall back to the geometric per-tier hpMod. HP stays a snapshot
-            // (MaxValue feeds Current/Percent) -> changing the HP curve needs a respawn.
-            var zoneHp = ZoneScaling.ZoneScalingManager.GetProfile(creature);
-            if (zoneHp != null && zoneHp.Has(ZoneScaling.ZoneStat.MaxHealth))
+            // 1. HP Scaling: geometric per-tier hpMod on the health StartingValue, preserving the current %
+            // across the max change (no free heal/refill).
+            var hpMod = GetHPModifier(tier);
+            if (hpMod != 1.0f)
             {
                 var maxBefore = creature.Health.MaxValue;
                 var healthPct = maxBefore > 0 ? (float)creature.Health.Current / maxBefore : 1f;
-                var target = (long)Math.Round(zoneHp.Get(ZoneScaling.ZoneStat.MaxHealth));
-                // subtract the non-starting contributions (endurance formula, ranks) so MaxValue lands on target
-                var nonStarting = (long)maxBefore - creature.Health.StartingValue;
-                creature.Health.StartingValue = (uint)Math.Clamp(target - nonStarting, 1L, uint.MaxValue);
+                creature.Health.StartingValue = (uint)Math.Round(creature.Health.StartingValue * hpMod);
                 var maxAfter = creature.Health.MaxValue;
                 creature.Health.Current = (uint)Math.Clamp((uint)Math.Round(healthPct * maxAfter), 0u, maxAfter);
-            }
-            else
-            {
-                var hpMod = GetHPModifier(tier);
-                if (hpMod != 1.0f)
-                {
-                    var maxBefore = creature.Health.MaxValue;
-                    var healthPct = maxBefore > 0 ? (float)creature.Health.Current / maxBefore : 1f;
-                    creature.Health.StartingValue = (uint)Math.Round(creature.Health.StartingValue * hpMod);
-                    var maxAfter = creature.Health.MaxValue;
-                    creature.Health.Current = (uint)Math.Clamp((uint)Math.Round(healthPct * maxAfter), 0u, maxAfter);
-                }
             }
 
             // 2. Damage Scaling (Apply as DamageRating)

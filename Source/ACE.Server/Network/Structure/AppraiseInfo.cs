@@ -518,27 +518,8 @@ namespace ACE.Server.Network.Structure
             {
                 if ((dec & 4) != 0) // AppraisalLongDescDecorations.AppendGemInfo
                 {
-                    if (wo.GemType.HasValue && wo.GemCount.HasValue)
-                    {
-                        var gemName = System.Text.RegularExpressions.Regex.Replace(wo.GemType.Value.ToString(), "(\\B[A-Z])", " $1");
-                        if (wo.GemCount > 1)
-                        {
-                            if (gemName.EndsWith("y"))
-                                gemName = gemName.Substring(0, gemName.Length - 1) + "ies";
-                            else if (gemName.EndsWith("x"))
-                                gemName += "es";
-                            else
-                                gemName += "s";
-                        }
-
-                        var gemString = $", set with {wo.GemCount} {gemName}";
-                        if (PropertiesString.ContainsKey(PropertyString.LongDesc))
-                            PropertiesString[PropertyString.LongDesc] += gemString;
-                        else
-                            PropertiesString[PropertyString.LongDesc] = gemString.TrimStart(',', ' ');
-                    }
-
-                    // Remove the AppendGemInfo flag so the client doesn't double-append
+                    // Gem-socket "set with N <gem>" label suppressed globally (owner 2026-07-14): don't
+                    // append it server-side, but still clear the flag so the client doesn't append it either.
                     dec &= ~4;
                     if (dec == 0)
                         PropertiesInt.Remove(PropertyInt.AppraisalLongDescDecoration);
@@ -942,6 +923,11 @@ namespace ACE.Server.Network.Structure
                 effectDescriptions.Add($"- Biting Strike: +{val:P0} Crit Chance");
             }
 
+            // Cleaving (multi-target): the raw prop stores TOTAL targets (extra + 1), so raw-prop
+            // readouts look one higher than authored — this line shows the true extra-target count.
+            if (weapon.IsCleaving)
+                effectDescriptions.Add($"- Cleaving: +{weapon.CleaveTargets} Targets");
+
             // Resistance Cleaving (Fixed Resistance Modifier)
             if (weapon.ResistanceModifier.HasValue && weapon.ResistanceModifierType.HasValue)
             {
@@ -966,10 +952,11 @@ namespace ACE.Server.Network.Structure
                 effectDescriptions.Add($"- Split Arrow: +{count} Targets, {val:P0} Dmg");
             }
 
-            // Crushing Blow
+            // Crushing Blow: engine crit damage = 1 + CriticalMultiplier, so the true multiplier the
+            // player actually deals is prop + 1 (a stored 1.0 = normal 2x crit).
             if (weapon.GetProperty(PropertyFloat.CriticalMultiplier) > 1.0f)
             {
-                var val = weapon.GetProperty(PropertyFloat.CriticalMultiplier);
+                var val = weapon.GetProperty(PropertyFloat.CriticalMultiplier).Value + 1.0;
                 effectDescriptions.Add($"- Crushing Blow: {val:0.##}x Crit Dmg");
             }
 
@@ -980,11 +967,18 @@ namespace ACE.Server.Network.Structure
                 effectDescriptions.Add($"- {ImbuedEffectType.CripplingBlow.DisplayName()}: {mod:0.##}x Crit Dmg");
             }
 
-            // Armor Rending
+            // Armor Rending: fraction of the target's armor IGNORED. Zone Control loot carries a
+            // per-weapon override (ArmorRendOverridePropId) = the configured fraction directly, which
+            // DamageEvent uses at hit time; retail weapons use the skill formula, which returns armor
+            // REMAINING, so the ignored fraction is 1 - that. (Old code showed the skill 'remaining'
+            // value mislabeled as "Ignored" and never reflected the Zone override.)
             if (weapon.HasImbuedEffect(ImbuedEffectType.ArmorRending))
             {
-                var mod = WorldObject.GetArmorRendingMod(skill);
-                effectDescriptions.Add($"- {ImbuedEffectType.ArmorRending.DisplayName()}: {mod:P1} Ignored");
+                var rendOverride = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ArmorRendOverridePropId);
+                var ignored = rendOverride.HasValue
+                    ? Math.Clamp(rendOverride.Value, 0.0, 1.0)
+                    : 1.0 - WorldObject.GetArmorRendingMod(skill);
+                effectDescriptions.Add($"- {ImbuedEffectType.ArmorRending.DisplayName()}: {ignored:P1} Ignored");
             }
 
             // Critical Strike
@@ -1012,10 +1006,29 @@ namespace ACE.Server.Network.Structure
                 if (weapon.HasImbuedEffect(type))
                 {
                     var mod = WorldObject.GetRendingMod(skill);
+
+                    // Zone Control loot: rend power override is a DIRECT vuln bonus (rendingMod = 1 +
+                    // override), mirroring GetWeaponResistanceModifier, so the tooltip shows exactly the
+                    // configured strength (e.g. wire 7.0 -> +700% Dmg).
+                    var rendOverride = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.RendingModOverridePropId);
+                    if (rendOverride.HasValue && rendOverride.Value > 0)
+                        mod = 1.0f + (float)rendOverride.Value;
+
                     var bonusPct = (mod - 1.0);
                     effectDescriptions.Add($"- {type.DisplayName()}: +{bonusPct:P0} Dmg (vuln)");
                 }
             }
+
+            // Shield Cleaving: fraction of the target's shield AL the weapon ignores. Stored directly on
+            // the weapon (PropertyFloat.IgnoreShield); GetIgnoreShieldMod reads it at hit time.
+            if (weapon.IgnoreShield.HasValue && weapon.IgnoreShield.Value > 0)
+                effectDescriptions.Add($"- Shield Cleaving: {Math.Clamp(weapon.IgnoreShield.Value, 0.0, 1.0):P0} Shield Ignored");
+
+            // Phantom (hollow): the weapon bypasses the target's protective magic — Impen/Banes on armor
+            // and Life prots. Our loot card always sets both; some retail items set only one, but it's the
+            // same category, so one short line covers every case.
+            if (weapon.IgnoreMagicArmor || weapon.IgnoreMagicResist)
+                effectDescriptions.Add("- Phantom: Ignores Magic Protections");
 
             // Calculate Effective Melee Defense
             var meleeSkill = examiner.GetCreatureSkill(Skill.MeleeDefense).Current;

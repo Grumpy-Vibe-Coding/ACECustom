@@ -22,11 +22,20 @@ namespace ACE.Server.WorldObjects
             var newPosition = new ACE.Entity.Position(_newPosition);
             newPosition.PositionZ += 0.005f * (ObjScale ?? 1.0f);
 
+            // Variation 0 == retail base. The landblock/physics caches key variation 0 and null as
+            // SEPARATE instances, but visibility and ZoneControl treat 0 as the base world — teleporting
+            // to an explicit 0 lands in an empty parallel landblock copy (invisible/unattackable mobs).
+            // Normalize at this single choke point so no teleport path (@tv, /tele, portals, recalls)
+            // can ever place an object in the explicit layer-0 instance.
+            if (newPosition.Variation == 0)
+                newPosition.Variation = null;
+
             if (player != null && player.HandleFogBeforeTeleport(_newPosition))
                 return;
 
             // After fog deferral path returns false: cleanup runs with the real teleport (not ~1s early on a no-op).
             player?.CleanupPrestigeEffects();
+            player?.CleanupZoneBoundaryEffects();
 
             Teleporting = true;
             var timestamp = Time.GetUnixTime();
@@ -36,6 +45,12 @@ namespace ACE.Server.WorldObjects
 
             if (player != null)
                 player.LastTeleportTime = DateTime.UtcNow;
+
+            // A teleport interrupts any in-progress attack loop. A stale live MeleeTarget/MissileTarget
+            // otherwise swallows every subsequent attack request silently (the "already in melee loop"
+            // early-out in HandleActionTargetedMeleeAttack), which presents as "cannot attack anything".
+            if (player != null && (player.MeleeTarget != null || player.MissileTarget != null || player.AttackTarget != null))
+                player.OnAttackDone();
 
             if (fromPortal)
                 SetProperty(PropertyFloat.LastPortalTeleportTimestamp, timestamp);
@@ -71,6 +86,38 @@ namespace ACE.Server.WorldObjects
             player?.HandlePreTeleportVisibility(newPosition);
 
             UpdatePosition(new ACE.Entity.Position(newPosition), true);
+
+            // The physics placement above runs cell-entry enumerations (handle_visible_cells etc.)
+            // while the player still carries the ORIGIN variation, which can re-track origin-variation
+            // objects right after the cleanup at the top of this method (ghost mobs after /tv).
+            // Sweep again now that Location holds the destination variation.
+            if (prevLoc.Variation != newPosition.Variation)
+            {
+                try
+                {
+                    HandleVariationChangeVisbilityCleanup(prevLoc.Variation, newPosition.Variation);
+                }
+                catch (Exception e)
+                {
+                    log.Warn(e);
+                }
+            }
+
+            // Post-teleport invariant: a player's CurrentLandblock must be the destination landblock
+            // INSTANCE (landblock id + variation). Any path that leaves it stale makes creatures in the
+            // destination instance untargetable — Landblock.GetObject resolves from CurrentLandblock and
+            // its same-variation adjacents, and the melee/missile handlers silently no-op on a miss.
+            if (player != null)
+            {
+                var lb = player.CurrentLandblock;
+                if (lb == null || lb.Id.Landblock != Location.LandblockId.Landblock || lb.VariationId != Location.Variation)
+                {
+                    log.Warn($"{Name}.Teleport() - stale CurrentLandblock after teleport: " +
+                             $"lb={(lb == null ? "null" : $"0x{lb.Id.Landblock:X4} v={lb.VariationId?.ToString() ?? "null"}")} " +
+                             $"vs Location 0x{Location.LandblockId.Landblock:X4} v={Location.Variation?.ToString() ?? "null"} - forcing relocation");
+                    LandblockManager.RelocateObjectForPhysics(this, true);
+                }
+            }
         }
 
         /// <summary>
@@ -229,7 +276,16 @@ namespace ACE.Server.WorldObjects
 
             if (Teleporting && !forceUpdate) return true;
 
-            if (!success) return false;
+            if (!success)
+            {
+                // During a forced teleport this leaves Location and CurrentLandblock at the ORIGIN while
+                // the client is already mid-teleport — log loudly so a variation/instance desync is traceable.
+                if (Teleporting && forceUpdate)
+                    log.Warn($"{Name}.UpdatePosition() - physics placement FAILED during teleport to {newPosition} " +
+                             $"(v={newPosition.Variation?.ToString() ?? "null"}); Location/CurrentLandblock left at origin " +
+                             $"(loc v={Location.Variation?.ToString() ?? "null"}, lb v={CurrentLandblock?.VariationId?.ToString() ?? "null"})");
+                return false;
+            }
 
             var landblockUpdate = (Location.Cell >> 16 != newPosition.Cell >> 16) || variationChange;
 

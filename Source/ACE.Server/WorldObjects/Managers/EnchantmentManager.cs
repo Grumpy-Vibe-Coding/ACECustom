@@ -185,9 +185,10 @@ namespace ACE.Server.WorldObjects.Managers
                 // should be update the StatModVal here?
 
                 var duration = spell.Duration;
-                if (caster is Player player && (player.AugmentationIncreasedSpellDuration > 0 || (player.LuminanceAugmentSpellDurationCount ?? 0) > 0) && spell.DotDuration == 0)
+                if (caster is Player player && (player.AugmentationIncreasedSpellDuration > 0 || (player.LuminanceAugmentSpellDurationCount ?? 0) > 0 || player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SpellDurationLevels) > 0) && spell.DotDuration == 0)
                 {
-                    duration *= 1.0f + (player.AugmentationIncreasedSpellDuration * 0.2f) + ((player.LuminanceAugmentSpellDurationCount ?? 0) * 0.05f);
+                    duration *= 1.0f + (player.AugmentationIncreasedSpellDuration * 0.2f) + ((player.LuminanceAugmentSpellDurationCount ?? 0) * 0.05f)
+                        + (player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SpellDurationLevels) * 0.2f);
                 }
 
                 var timeRemaining = refreshSpell.Duration + refreshSpell.StartTime;
@@ -231,14 +232,16 @@ namespace ACE.Server.WorldObjects.Managers
             {
                 entry.Duration = spell.Duration;
 
-                if (caster is Player player && !spell.IsFellowshipSpell && (player.AugmentationIncreasedSpellDuration > 0 || (player.LuminanceAugmentSpellDurationCount ?? 0) > 0) && spell.DotDuration == 0)
-                { 
-                    entry.Duration *= 1.0f + (player.AugmentationIncreasedSpellDuration * 0.2f) + ((player.LuminanceAugmentSpellDurationCount ?? 0) * 0.05f);
+                if (caster is Player player && !spell.IsFellowshipSpell && (player.AugmentationIncreasedSpellDuration > 0 || (player.LuminanceAugmentSpellDurationCount ?? 0) > 0 || player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SpellDurationLevels) > 0) && spell.DotDuration == 0)
+                {
+                    entry.Duration *= 1.0f + (player.AugmentationIncreasedSpellDuration * 0.2f) + ((player.LuminanceAugmentSpellDurationCount ?? 0) * 0.05f)
+                        + (player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SpellDurationLevels) * 0.2f);
                     //entry.Duration *= (caster as Player).LuminanceAugmentSpellDurationCount ?? 0 * 0.001f;
                 }
-                else if (caster is Player dotPlayer && (dotPlayer.AugmentationIncreasedSpellDuration > 0 || (dotPlayer.LuminanceAugmentSpellDurationCount ?? 0) > 0) && spell.DotDuration > 0)
+                else if (caster is Player dotPlayer && (dotPlayer.AugmentationIncreasedSpellDuration > 0 || (dotPlayer.LuminanceAugmentSpellDurationCount ?? 0) > 0 || dotPlayer.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SpellDurationLevels) > 0) && spell.DotDuration > 0)
                 {
-                    entry.Duration *= 1.0f + (dotPlayer.AugmentationIncreasedSpellDuration * 0.2f) + ((dotPlayer.LuminanceAugmentSpellDurationCount ?? 0) * ServerConfig.void_dot_duration_aug_effect.Value);
+                    entry.Duration *= 1.0f + (dotPlayer.AugmentationIncreasedSpellDuration * 0.2f) + ((dotPlayer.LuminanceAugmentSpellDurationCount ?? 0) * ServerConfig.void_dot_duration_aug_effect.Value)
+                        + (dotPlayer.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SpellDurationLevels) * 0.2f);
                 }
             }
             else

@@ -27,13 +27,19 @@ namespace ACE.Server.WorldObjects
 
             var variation = PrestigeManager.GetEffectiveVariation(attacker);
             var minVariation = ServerConfig.v11_pcthp_min_variation.Value;
-            if (variation < minVariation)
-                return 0f;
 
             // floor fraction P: per-weenie override wins; otherwise tier-scaled (+ boss multiplier)
             double p;
             var pOverride = attacker.GetProperty(PropertyFloat.PercentHpDamageOverride);
-            var zoneProfile = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(attacker);
+            var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
+
+            // Gate: fire for prestige mobs (variation >= min, only while the prestige master switch is on)
+            // OR a controlled area that authored percent_hp_base (Zone Control path — never gated by prestige).
+            // Retail mobs with no such area keep the old behavior (no %HP floor).
+            var prestigeEligible = PrestigeManager.SystemsEnabled && variation >= minVariation;
+            if (!prestigeEligible
+                && !(zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.PercentHpBase)))
+                return 0f;
             if (pOverride.HasValue)
             {
                 p = pOverride.Value;
@@ -102,6 +108,10 @@ namespace ACE.Server.WorldObjects
         public static uint GetV11AttackSkillFloor(Creature attacker, Player defender)
         {
             if (attacker == null || defender == null)
+                return 0;
+
+            // Purely variation-triggered (no zone path) — fully off with the prestige master switch.
+            if (!PrestigeManager.SystemsEnabled)
                 return 0;
 
             var floor = ServerConfig.v11_min_attack_skill.Value;

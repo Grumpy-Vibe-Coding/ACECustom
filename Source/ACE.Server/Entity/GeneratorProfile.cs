@@ -300,6 +300,8 @@ namespace ACE.Server.Entity
                 {
                     CreatureVariantHelper.MaybeApplyRandomVariant(creature, (float)ServerConfig.creature_variant_chance.Value);
                     PrestigeManager.ApplyPrestigeScaling(creature, Generator.Location.Variation);
+                    Managers.ZoneControl.ZoneSpawnScaler.ApplyToSpawn(creature);
+                    Managers.Rifts.RiftManager.TryApplyRiftScaling(creature, Generator.Location.Variation);
                 }
 
                 if (Biota.PaletteId.HasValue && Biota.PaletteId > 0)
@@ -576,7 +578,9 @@ namespace ACE.Server.Entity
                 log.Warn($"[GENERATOR] 0x{Generator.Guid}:{Generator.WeenieClassId} {Generator.Name}.RemoveTreasure(): container not found");
                 return;
             }
-            foreach (var spawned in Spawned.Keys)
+            // Snapshot first: inventoryObj.Destroy -> NotifyGenerator -> Spawned.Remove would
+            // mutate the dictionary we're enumerating.
+            foreach (var spawned in new List<uint>(Spawned.Keys))
             {
                 var inventoryObjGuid = new ObjectGuid(spawned);
                 if (!container.Inventory.TryGetValue(inventoryObjGuid, out var inventoryObj))
@@ -637,7 +641,9 @@ namespace ACE.Server.Entity
 
         public void Reset()
         {
-            foreach (var rNode in Spawned.Values)
+            // Snapshot first: wo.Destroy raises NotifyOfEvent(Destruction) -> NotifyGenerator ->
+            // Spawned.Remove, which would mutate the dictionary we're enumerating.
+            foreach (var rNode in new List<WorldObjectInfo>(Spawned.Values))
             {
                 var wo = rNode.TryGetWorldObject();
 
@@ -662,7 +668,9 @@ namespace ACE.Server.Entity
 
         public void KillAll()
         {
-            foreach (var rNode in Spawned.Values)
+            // Snapshot first: Smite -> death -> NotifyGenerator can call Spawned.Remove, which would
+            // mutate the dictionary we're enumerating and throw "Collection was modified".
+            foreach (var rNode in new List<WorldObjectInfo>(Spawned.Values))
             {
                 var wo = rNode.TryGetWorldObject();
 
@@ -675,7 +683,10 @@ namespace ACE.Server.Entity
 
         public void DestroyAll(bool fromLandblockUnload = false)
         {
-            foreach (var rNode in Spawned.Values)
+            // Snapshot first: wo.Destroy raises NotifyOfEvent(Destruction) -> NotifyGenerator ->
+            // Spawned.Remove, which would mutate the dictionary we're enumerating and throw
+            // "Collection was modified" (aborting removeinst/landblock-unload mid-destroy).
+            foreach (var rNode in new List<WorldObjectInfo>(Spawned.Values))
             {
                 var wo = rNode.TryGetWorldObject();
 

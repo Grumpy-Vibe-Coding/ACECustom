@@ -576,6 +576,14 @@ namespace ACE.Server.WorldObjects
             if (hasRending && skill != null)
             {
                 var rendingMod = GetRendingMod(skill);
+
+                // Zone Control loot: per-weapon rend power override (ZoneLootMutator stamp) is a DIRECT
+                // vuln bonus (wire 1.5..10.0 = +150%..+1000%). rendingMod = 1 + override, REPLACING the
+                // skill-scaled formula and its 2.5 cap, so the drop's rolled strength is exactly 1000% max.
+                var rendOverride = weapon?.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.RendingModOverridePropId);
+                if (rendOverride.HasValue && rendOverride.Value > 0)
+                    rendingMod = 1.0f + (float)rendOverride.Value;
+
                 resistMod = Math.Max(resistMod, rendingMod);
             }
 

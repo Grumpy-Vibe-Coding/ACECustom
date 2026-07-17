@@ -38,6 +38,7 @@ namespace ACE.Server.WorldObjects
                 EquippedObjects[worldObject.Guid] = worldObject;
 
                 AddItemToEquippedItemsRatingCache(worldObject);
+                UpdateZoneCantripCache(worldObject, +1);
 
                 EncumbranceVal += (worldObject.EncumbranceVal ?? 0);
             }
@@ -266,6 +267,46 @@ namespace ACE.Server.WorldObjects
             equippedItemsRatingCache[PropertyInt.GearNetherResist] -= (wo.GearNetherResistRating ?? 0);
         }
 
+        /// <summary>
+        /// Zone Control cantrip gear: per-creature sums of the custom cantrip props (block 50200-50399,
+        /// see ZoneCantrips) across equipped items. Maintained on equip/dequip alongside the rating cache;
+        /// null until the first cantripped item is worn, so non-cantrip creatures pay nothing.
+        /// </summary>
+        private Dictionary<int, int> zoneCantripCache;
+
+        private void UpdateZoneCantripCache(WorldObject wo, int sign)
+        {
+            wo.BiotaDatabaseLock.EnterReadLock();
+            try
+            {
+                if (wo.Biota.PropertiesInt == null)
+                    return;
+
+                foreach (var kv in wo.Biota.PropertiesInt)
+                {
+                    var id = (int)kv.Key;
+                    if (id < ACE.Server.Managers.ZoneControl.ZoneCantrips.PropMin || id > ACE.Server.Managers.ZoneControl.ZoneCantrips.PropMax)
+                        continue;
+
+                    zoneCantripCache ??= new Dictionary<int, int>();
+                    zoneCantripCache.TryGetValue(id, out var cur);
+                    zoneCantripCache[id] = cur + sign * kv.Value;
+                }
+            }
+            finally
+            {
+                wo.BiotaDatabaseLock.ExitReadLock();
+            }
+        }
+
+        /// <summary>Sum of a Zone Control cantrip prop across this creature's equipped items.</summary>
+        public int GetZoneCantripBonus(int propId)
+        {
+            if (zoneCantripCache == null)
+                return 0;
+            return zoneCantripCache.TryGetValue(propId, out var v) ? v : 0;
+        }
+
         public int GetEquippedItemsRatingSum(PropertyInt rating)
         {
             if (equippedItemsRatingCache == null)
@@ -328,6 +369,7 @@ namespace ACE.Server.WorldObjects
             EquippedObjects[worldObject.Guid] = worldObject;
 
             AddItemToEquippedItemsRatingCache(worldObject);
+            UpdateZoneCantripCache(worldObject, +1);
 
             EncumbranceVal += (worldObject.EncumbranceVal ?? 0);
             Value += (worldObject.Value ?? 0);
@@ -387,6 +429,7 @@ namespace ACE.Server.WorldObjects
             }
 
             RemoveItemFromEquippedItemsRatingCache(worldObject);
+            UpdateZoneCantripCache(worldObject, -1);
 
             wieldedLocation = worldObject.CurrentWieldedLocation ?? EquipMask.None;
 

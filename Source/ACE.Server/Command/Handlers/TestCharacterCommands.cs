@@ -1479,7 +1479,9 @@ namespace ACE.Server.Command.Handlers
             claw.SetProperty(PropertyInt.Value, 0); // Sets value to 0
             claw.SetProperty(PropertyInt.Bonded, 1);
             claw.SetProperty(PropertyInt.Attuned, 1);
-            claw.SetProperty(PropertyInt.AttackType, 486); // Fine Bandit Hilt multi-strike attack style
+            // NO AttackType override: 486 (the hilt's thrust/slash multi-strike set) has no motions in the
+            // unarmed stance table, which made these un-attackable — and the protocol has no UA multi-strike
+            // AttackTypes at all. The weenie's native Punch (1) applies.
             claw.SetProperty(PropertyInt.WieldRequirements2, 8);
             claw.SetProperty(PropertyInt.WieldSkillType2, 46);
             claw.SetProperty(PropertyInt.WieldDifficulty2, 3);

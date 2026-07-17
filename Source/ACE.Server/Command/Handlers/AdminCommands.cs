@@ -243,6 +243,7 @@ namespace ACE.Server.Command.Handlers
                         PrestigeManager.RemovePrestigeScaling(creature);
                         var variationForTier = tier + PrestigeManager.PRESTIGE_VAR_OFFSET;
                         PrestigeManager.ApplyPrestigeScaling(creature, variationForTier);
+                        Managers.ZoneControl.ZoneSpawnScaler.ApplyToSpawn(creature);
                         CommandHandlerHelper.WriteOutputInfo(session,
                             $"Replaced prestige scaling on {creature.Name} for tier {tier} (variation {variationForTier}).");
                         PlayerManager.BroadcastToAuditChannel(session.Player,
@@ -2862,31 +2863,37 @@ namespace ACE.Server.Command.Handlers
         // televariant variation (other /tele* live in TeleportCommands on master)
         [CommandHandler("televariant", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1,
             "Teleport yourself to the specified variation at your current location.",
-            "variation — retail | default | null (unlayered base, same as omitting variation), or an integer id (use 0 for variation 0)\n" +
+            "variation — retail | default | null | 0 (all mean the unlayered base world), or an integer id (-1..-999 = rift design variations)\n" +
             "Example: @televariant 1\n" +
+            "Example: @televariant -1\n" +
             "Example: @televariant retail")]
         public static void HandleTelevariant(Session session, params string[] parameters)
         {
             int? variation = null;
             var param = parameters[0].ToLower();
 
-            // retail / default / null => true base (unlayered); 0 is explicit variation id 0, not base
-            if (param == "retail" || param == "null" || param == "default")
+            // retail / default / null / 0 => the unlayered base world. Explicit "layer 0" was a trap:
+            // the landblock cache keys 0 and null as separate instances, so @tv 0 stranded players in an
+            // empty parallel copy of the landblock (invisible/unattackable mobs), and that 0 persisted
+            // into the character's saved Location, re-breaking them on every login.
+            if (param == "retail" || param == "null" || param == "default" || param == "0")
             {
                 variation = null;
             }
             else if (int.TryParse(parameters[0], out int varId))
             {
-                if (varId < 0)
+                // -1..-999 = rift DESIGN variations (author rift layouts there; prestige ignores all
+                // negatives). -1000 and below are ephemeral rift RUN instances — no manual entry.
+                if (varId <= -1000)
                 {
-                    CommandHandlerHelper.WriteOutputInfo(session, "Invalid variation ID. Use 'retail', 'default', 'null' for base, or a non-negative integer (0 = variation 0).");
+                    CommandHandlerHelper.WriteOutputInfo(session, "Variations -1000 and below are reserved for live rift run instances. Use -1..-999 for rift design variations.");
                     return;
                 }
-                variation = varId;
+                variation = varId == 0 ? null : varId;
             }
             else
             {
-                CommandHandlerHelper.WriteOutputInfo(session, "Invalid variation ID. Use 'retail', 'default', 'null' for base, or a non-negative integer (0 = variation 0).");
+                CommandHandlerHelper.WriteOutputInfo(session, "Invalid variation ID. Use 'retail', 'default', 'null' or 0 for base, or an integer variation id.");
                 return;
             }
 
@@ -2905,8 +2912,9 @@ namespace ACE.Server.Command.Handlers
         // tv {variation} - Alias for televariant
         [CommandHandler("tv", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1,
             "Teleport yourself to the specified variation at your current location (alias for televariant).",
-            "variation — retail | default | null (unlayered base), or an integer id (use 0 for variation 0)\n" +
+            "variation — retail | default | null (unlayered base), or an integer id (use 0 for variation 0; -1..-999 = rift design variations)\n" +
             "Example: @tv 1\n" +
+            "Example: @tv -1\n" +
             "Example: @tv retail")]
         public static void HandleTV(Session session, params string[] parameters)
         {

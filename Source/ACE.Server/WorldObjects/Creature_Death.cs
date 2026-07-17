@@ -66,6 +66,10 @@ namespace ACE.Server.WorldObjects
 
             //QuestManager.OnDeath(lastDamager?.TryGetAttacker());
 
+            // Greater Rifts: progress + guardian-death detection. Fast-bails for the whole normal world
+            // (rift instances live exclusively at negative variations).
+            ACE.Server.Managers.Rifts.RiftManager.OnCreatureDeath(this, lastDamager);
+
             if (KillQuest != null)
                 OnDeath_HandleKillTask(KillQuest);
             if (KillQuest2 != null)
@@ -824,7 +828,14 @@ namespace ACE.Server.WorldObjects
             corpse.RemoveProperty(PropertyInt.Value);
 
             if (CanGenerateRare && killer != null)
-                corpse.TryGenerateRare(killer);
+            {
+                // Zone Control loot: rare_chance_mult scales the actual rare roll (0 = no rares in this zone)
+                var zoneRare = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
+                var rareMult = zoneRare != null && zoneRare.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult)
+                    ? zoneRare.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult) : 1.0;
+
+                corpse.TryGenerateRare(killer, rareMult);
+            }
 
             corpse.InitPhysicsObj(Location.Variation);
 
@@ -903,7 +914,7 @@ namespace ACE.Server.WorldObjects
 
             // Zone Scaler loot: an authored profile can bump the loot tier/quality/quantity and inject bonus
             // currency for this mob (null for players/exempt/non-endgame/no-match -> normal loot).
-            var zoneLoot = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
+            var zoneLoot = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
 
             // create death treasure from loot generation factory
             if (DeathTreasure != null)
@@ -914,6 +925,10 @@ namespace ACE.Server.WorldObjects
                 {
                     if (tier > 0)
                         PrestigeManager.ApplyLootScaling(wo, tier);
+
+                    // Zone Control loot: post-roll per-item mutations (weapon stats, AL, workmanship, coins,
+                    // value, and the low-chance special-property rolls)
+                    ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateLootItem(wo, zoneLoot, this, effectiveTreasure.Tier);
 
                     if (corpse != null)
                         corpse.TryAddToInventory(wo);
@@ -976,6 +991,9 @@ namespace ACE.Server.WorldObjects
                         if (tier > 0)
                             PrestigeManager.ApplyLootScaling(wo, tier);
 
+                        // Zone Control loot: scale stackable always-drop materials (what drops stays the weenie's table)
+                        ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateCreateListItem(wo, zoneLoot);
+
                         if (corpse != null)
                             corpse.TryAddToInventory(wo);
                         else
@@ -985,7 +1003,7 @@ namespace ACE.Server.WorldObjects
             }
 
             // Zone Scaler: inject the custom bonus-currency token (independent of the loot table).
-            InjectZoneBonusCurrency(zoneLoot, corpse, droppedItems);
+            InjectZoneBonusCurrency(zoneLoot, killer, corpse, droppedItems);
 
             return droppedItems;
         }
@@ -1002,8 +1020,8 @@ namespace ACE.Server.WorldObjects
 
             var hasTier = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus);
             var hasQty = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
-            var hasRare = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult);
-            if (!hasTier && !hasQty && !hasRare)
+            var hasQuality = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQualityMult);
+            if (!hasTier && !hasQty && !hasQuality)
                 return src;
 
             var t = new ACE.Database.Models.World.TreasureDeath
@@ -1049,9 +1067,9 @@ namespace ACE.Server.WorldObjects
                 }
             }
 
-            if (hasRare)
+            if (hasQuality)
             {
-                var m = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult);
+                var m = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQualityMult);
                 if (m > 0 && m != 1.0)
                     t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod * m, 0.0, 1.0);
             }
@@ -1060,33 +1078,89 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// Zone Scaler: injects the configured custom bonus-currency token (zonescale_bonus_currency_wcid) onto the
-        /// corpse/drop list, stack size = the profile's evaluated bonus_currency. No-op when disabled or amount &lt;= 0.
+        /// Zone Scaler: injects bonus currency onto the corpse/drop list. Two independent sources, both
+        /// loot-table independent: the legacy single-token bonus_currency stat (server-wide token wcid from
+        /// zonescale_bonus_currency_wcid) and the zone's per-entry currency drop table (each entry = its own
+        /// item wcid + stack amount + per-kill chance).
         /// </summary>
-        private void InjectZoneBonusCurrency(ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile, Corpse corpse, List<WorldObject> dropped)
+        private void InjectZoneBonusCurrency(ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile, DamageHistoryInfo killer, Corpse corpse, List<WorldObject> dropped)
         {
-            if (profile == null || !profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.BonusCurrency))
+            if (profile == null)
                 return;
 
-            var amount = (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.BonusCurrency));
-            if (amount <= 0)
-                return;
+            if (profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.BonusCurrency))
+            {
+                var amount = (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.BonusCurrency));
+                var wcid = (uint)ServerConfig.zonescale_bonus_currency_wcid.Value;
+                if (amount > 0 && wcid != 0)
+                    SpawnZoneCurrency(wcid, amount, corpse, dropped);
+            }
 
-            var wcid = (uint)ServerConfig.zonescale_bonus_currency_wcid.Value;
-            if (wcid == 0)
-                return;
+            if (profile.CurrencyDrops != null)
+            {
+                foreach (var drop in profile.CurrencyDrops)
+                {
+                    if (drop == null || drop.Wcid == 0 || drop.Amount <= 0)
+                        continue;
+                    if (drop.Chance < 1.0 && ACE.Common.ThreadSafeRandom.Next(0.0f, 1.0f) >= drop.Chance)
+                        continue;
 
+                    if (drop.Direct && TryGiveZoneCurrencyToKiller(killer, drop.Wcid, drop.Amount))
+                        continue;
+
+                    SpawnZoneCurrency(drop.Wcid, drop.Amount, corpse, dropped);
+                }
+            }
+        }
+
+        private static WorldObject CreateZoneCurrencyToken(uint wcid, int amount)
+        {
             var token = WorldObjectFactory.CreateNewWorldObject(wcid);
             if (token == null)
-                return;
+                return null;
 
             if (token.MaxStackSize.HasValue && amount > 1)
                 token.SetStackSize(Math.Min(amount, token.MaxStackSize.Value));
+
+            return token;
+        }
+
+        private static void SpawnZoneCurrency(uint wcid, int amount, Corpse corpse, List<WorldObject> dropped)
+        {
+            var token = CreateZoneCurrencyToken(wcid, amount);
+            if (token == null)
+                return;
 
             if (corpse != null)
                 corpse.TryAddToInventory(token);
             else
                 dropped.Add(token);
+        }
+
+        /// <summary>Direct-delivery currency drop: straight into the killing player's inventory with a chat
+        /// message. Returns false (caller falls back to the corpse) when the killer isn't a player, the
+        /// token can't be created, or their inventory is full.</summary>
+        private static bool TryGiveZoneCurrencyToKiller(DamageHistoryInfo killer, uint wcid, int amount)
+        {
+            var player = killer?.TryGetPetOwnerOrAttacker() as Player;
+            if (player == null || player.Session == null)
+                return false;
+
+            var token = CreateZoneCurrencyToken(wcid, amount);
+            if (token == null)
+                return false;
+
+            if (!player.TryCreateInInventoryWithNetworking(token))
+            {
+                token.Destroy();
+                return false;
+            }
+
+            var qty = token.StackSize ?? 1;
+            var name = qty > 1 ? token.GetPluralName() : token.Name;
+            player.Session.Network.EnqueueSend(
+                new GameMessageSystemChat($"You receive {qty:N0} {name} from the kill!", ChatMessageType.Broadcast));
+            return true;
         }
 
         /// <summary>

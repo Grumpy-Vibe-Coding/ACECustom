@@ -126,9 +126,22 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
-                if (creature is Player player && Vital == PropertyAttribute2nd.MaxHealth)
-                    return (uint)player.GetGearMaxHealth();
-                return 0;
+                if (creature is not Player player)
+                    return 0;
+
+                switch (Vital)
+                {
+                    case PropertyAttribute2nd.MaxHealth:
+                        // retail gear prop (also carries the Zone Control health cantrip)
+                        return (uint)player.GetGearMaxHealth();
+                    case PropertyAttribute2nd.MaxStamina:
+                        // Zone Control cantrip gear
+                        return (uint)player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxStaminaBonus);
+                    case PropertyAttribute2nd.MaxMana:
+                        return (uint)player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxManaBonus);
+                    default:
+                        return 0;
+                }
             }
         }
 

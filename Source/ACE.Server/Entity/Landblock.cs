@@ -125,6 +125,7 @@ namespace ACE.Server.Entity
         /// These are static objects visible to all players in this variation.
         /// </summary>
         private readonly List<WorldObject> _prestigeBoundaryMarkers = new List<WorldObject>();
+        private readonly List<WorldObject> _zoneBoundaryMarkers = new List<WorldObject>();
 
         private readonly ActionQueue actionQueue = new();
 
@@ -322,8 +323,28 @@ namespace ACE.Server.Entity
                 
             //    Console.WriteLine($"From: {new StackTrace()}");
             //}
-            var objects = DatabaseManager.World.GetCachedInstancesByLandblock(Id.Landblock, variationId);
-            var shardObjects = DatabaseManager.Shard.BaseDatabase.GetStaticObjectsByLandblock(Id.Landblock, variationId);
+            // Greater Rifts: instance rows are per-variation EXACT-match and rift variations (negative) have
+            // none — load the run's configured source variation's rows instead. The source copy may be LIVE
+            // at the same time, so rift copies get the rows CLONED with fresh dynamic guids (static guids
+            // shared across two live landblocks break guid-keyed lookups: selection, attack targeting).
+            // Shard statics stay out of rift copies. The factory below still stamps every spawned object
+            // with THIS landblock's variation. Pass-through for non-rift loads.
+            var instanceVariationId = ACE.Server.Managers.Rifts.RiftManager.ResolveInstanceSourceVariation(variationId);
+
+            List<ACE.Database.Models.World.LandblockInstance> objects;
+            List<ACE.Database.Models.Shard.Biota> shardObjects;
+            if (!Nullable.Equals(instanceVariationId, variationId))
+            {
+                objects = ACE.Server.Managers.Rifts.RiftManager.CloneInstancesForRift(
+                    DatabaseManager.World.GetCachedInstancesByLandblock(Id.Landblock, instanceVariationId));
+                shardObjects = new List<ACE.Database.Models.Shard.Biota>();
+            }
+            else
+            {
+                objects = DatabaseManager.World.GetCachedInstancesByLandblock(Id.Landblock, variationId);
+                shardObjects = DatabaseManager.Shard.BaseDatabase.GetStaticObjectsByLandblock(Id.Landblock, variationId);
+            }
+
             var factoryObjects = WorldObjectFactory.CreateNewWorldObjects(objects, shardObjects, null, variationId);
 
 
@@ -365,8 +386,9 @@ namespace ACE.Server.Entity
 
                 CreateWorldObjectsCompleted = true;
 
-                // Spawn prestige boundary markers after normal objects
+                // Spawn boundary markers after normal objects (two independent systems, each self-gating)
                 SpawnPrestigeBoundaryMarkers();
+                SpawnZoneBoundaryMarkers();
 
                 PhysicsLandblock.SortObjects();
             }, ActionPriority.Low));
@@ -430,12 +452,16 @@ namespace ACE.Server.Entity
                     return;
                 }
 
-                marker.Name = "Prestige Boundary";
+                marker.Name = "Boundary Marker";
                 marker.SetProperty(PropertyFloat.DefaultScale, 2.5f);
-                
+
                 // Prevent despawning - make it persistent like static objects
                 marker.SetProperty(PropertyBool.Stuck, true);
                 marker.TimeToRot = -1;  // Never rot/despawn
+
+                // Ephemeral: re-derived at every load — must never be saved to the shard (persisted
+                // markers become permanent ghosts; 7000+ had accumulated in biota before this guard).
+                marker.SuppressShardPersistence = true;
 
                 // Use physics system to calculate proper position (like encounters do)
                 var pos = new Physics.Common.Position();
@@ -515,6 +541,172 @@ namespace ACE.Server.Entity
 
                 _prestigeBoundaryMarkers.Clear();
                 SpawnPrestigeBoundaryMarkers();
+            }));
+        }
+
+        /// <summary>
+        /// Spawns Zone Control boundary perimeter markers (lanterns). Standalone system: consults only
+        /// <see cref="Managers.ZoneControl.ZoneControlManager"/> — markers appear on the edges of allowed
+        /// (bounded-zone member) landblocks that face landblocks outside the bounded union.
+        /// </summary>
+        private void SpawnZoneBoundaryMarkers()
+        {
+            // Boot-time landblocks (permaload) can reach here before any command touched Zone Control.
+            Managers.ZoneControl.ZoneControlManager.EnsureLoaded();
+
+            // Only spawn when a bounded zone exists at this landblock's variation
+            if (!Managers.ZoneControl.ZoneControlManager.HasBoundedZonesAt(VariationId))
+                return;
+
+            if (log.IsDebugEnabled)
+                log.Debug($"[ZoneControl] Landblock {Id.Landblock:X4} (Var {VariationId}): Checking boundary markers...");
+
+            // Only spawn markers in allowed (member) landblocks
+            if (!Managers.ZoneControl.ZoneControlManager.IsLandblockAllowed(VariationId, Id.Landblock))
+            {
+                if (log.IsDebugEnabled)
+                    log.Debug($"[ZoneControl] Landblock {Id.Landblock:X4} is outside the bounded union - skipping boundary markers.");
+                return;
+            }
+
+            var weenie = DatabaseManager.World.GetCachedWeenie((uint)ACE.Entity.Enum.WeenieClassName.W_SHOLANTERN_CLASS);
+            if (weenie == null)
+            {
+                log.Warn($"[ZoneControl] SpawnZoneBoundaryMarkers: W_SHOLANTERN_CLASS weenie not found!");
+                return;
+            }
+
+            // Edge boundaries (inset 10m from actual edge)
+            const float edgeMin = 10.0f;
+            const float edgeMax = 182.0f;
+            const int markersPerEdge = 6;
+
+            // Calculate evenly spaced positions including corners
+            float edgeLength = edgeMax - edgeMin;
+            float spacing = edgeLength / (markersPerEdge - 1);
+
+            bool MarkerExistsAt(List<WorldObject> markers, float x, float y)
+            {
+                const float cornerEpsilon = 0.25f;
+                foreach (var existing in markers)
+                {
+                    if (existing?.Location == null)
+                        continue;
+                    if (Math.Abs(existing.Location.PositionX - x) < cornerEpsilon && Math.Abs(existing.Location.PositionY - y) < cornerEpsilon)
+                        return true;
+                }
+                return false;
+            }
+
+            void SpawnMarkerAtPosition(float x, float y)
+            {
+                if (MarkerExistsAt(_zoneBoundaryMarkers, x, y))
+                    return;
+                // Cosmetic only: when another boundary system already placed a lantern on this exact spot
+                // (e.g. an overlapping perimeter at the same variation), don't stack a second one on top.
+                if (MarkerExistsAt(_prestigeBoundaryMarkers, x, y))
+                    return;
+
+                var marker = WorldObjectFactory.CreateNewWorldObject(weenie);
+                if (marker == null)
+                {
+                    log.Warn($"[ZoneControl] Failed to create marker WorldObject");
+                    return;
+                }
+
+                marker.Name = "Boundary Marker";
+                marker.SetProperty(PropertyFloat.DefaultScale, 2.5f);
+
+                // Prevent despawning - make it persistent like static objects
+                marker.SetProperty(PropertyBool.Stuck, true);
+                marker.TimeToRot = -1;  // Never rot/despawn
+
+                // Ephemeral: re-derived from the bounded union at every load — must never be saved to the
+                // shard (persisted markers become permanent ghosts that ignore later boundary changes).
+                marker.SuppressShardPersistence = true;
+
+                // Use physics system to calculate proper position (like encounters do)
+                var pos = new Physics.Common.Position();
+                pos.ObjCellID = (uint)(Id.Landblock << 16) | 1;
+                pos.Variation = VariationId;
+                pos.Frame = new Physics.Animation.AFrame(new Vector3(x, y, 0), Quaternion.Identity);
+                pos.adjust_to_outside();
+
+                // Get terrain Z height
+                pos.Frame.Origin.Z = PhysicsLandblock.GetZ(pos.Frame.Origin);
+
+                marker.Location = new Position(pos.ObjCellID, pos.Frame.Origin, pos.Frame.Orientation, pos.Variation);
+                marker.Location.Variation = VariationId;
+
+                if (AddWorldObject(marker, VariationId))
+                {
+                    _zoneBoundaryMarkers.Add(marker);
+                }
+                else
+                {
+                    marker.Destroy();
+                }
+            }
+
+            void SpawnMarkersOnEdge(float fixedCoord, bool isXFixed)
+            {
+                for (int i = 0; i < markersPerEdge; i++)
+                {
+                    float offset = edgeMin + (i * spacing);
+                    float x = isXFixed ? fixedCoord : offset;
+                    float y = isXFixed ? offset : fixedCoord;
+                    SpawnMarkerAtPosition(x, y);
+                }
+            }
+
+            bool ShouldSpawnOnEdge(ushort neighborLB)
+            {
+                return !Managers.ZoneControl.ZoneControlManager.IsLandblockAllowed(VariationId, neighborLB);
+            }
+
+            // Check each cardinal direction and spawn markers on edges facing outside landblocks
+            // East edge (X = edgeMax)
+            if (Id.LandblockX < 255 && ShouldSpawnOnEdge(Id.East.Landblock))
+                SpawnMarkersOnEdge(edgeMax, true);
+
+            // West edge (X = edgeMin)
+            if (Id.LandblockX > 0 && ShouldSpawnOnEdge(Id.West.Landblock))
+                SpawnMarkersOnEdge(edgeMin, true);
+
+            // North edge (Y = edgeMax)
+            if (Id.LandblockY < 255 && ShouldSpawnOnEdge(Id.North.Landblock))
+                SpawnMarkersOnEdge(edgeMax, false);
+
+            // South edge (Y = edgeMin)
+            if (Id.LandblockY > 0 && ShouldSpawnOnEdge(Id.South.Landblock))
+                SpawnMarkersOnEdge(edgeMin, false);
+
+            if (_zoneBoundaryMarkers.Count > 0)
+            {
+                log.Info($"[ZoneControl] Landblock {Id.Landblock:X4} (Var {VariationId}): Spawned {_zoneBoundaryMarkers.Count} boundary markers.");
+            }
+        }
+
+        /// <summary>
+        /// Despawns and re-derives this landblock's Zone Control perimeter markers. Enqueued by
+        /// <see cref="Managers.LandblockManager.EnqueueRefreshLoadedZoneBoundaryMarkers"/> whenever a
+        /// mutation changes the bounded union at this landblock's variation.
+        /// </summary>
+        public void RefreshZoneBoundaryMarkers()
+        {
+            actionQueue.EnqueueAction(new ActionEventDelegate(ActionType.Landblock_CreateWorldObjects, () =>
+            {
+                foreach (var marker in _zoneBoundaryMarkers.ToList())
+                {
+                    if (marker == null)
+                        continue;
+
+                    RemoveWorldObject(marker.Guid, false, false, false);
+                    marker.Destroy();
+                }
+
+                _zoneBoundaryMarkers.Clear();
+                SpawnZoneBoundaryMarkers();
             }));
         }
 
@@ -896,7 +1088,13 @@ namespace ACE.Server.Entity
                     }
                 }
 
-                if (!Permaload && HasNoKeepAliveObjects)
+                // players.Count guard: an occupied landblock must never go dormant or unload, even when the
+                // player-heartbeat SetActive refresh fails to reach it (observed on variant instances entered
+                // via a same-landblock variation teleport: lastActiveTime froze at creation, the instance went
+                // dormant at +1min — passive mobs — and unloaded at exactly +5min WITH the player inside,
+                // destroying every non-persisted creature; rift test-5's vanishing guardian, and the all-day
+                // 0148 cell-raw unloads in the 2026-07-11 log during authoring).
+                if (!Permaload && HasNoKeepAliveObjects && players.Count == 0)
                 {
                     if (lastActiveTime + dormantInterval < thisHeartBeat)
                     {

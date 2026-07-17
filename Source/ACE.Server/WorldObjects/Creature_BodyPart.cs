@@ -48,12 +48,19 @@ namespace ACE.Server.WorldObjects
             var ignoreMagicArmor = (weapon?.IgnoreMagicArmor ?? false) || (attacker?.IgnoreMagicArmor ?? false);
             var ignoreMagicResist = (weapon?.IgnoreMagicResist ?? false) || (attacker?.IgnoreMagicResist ?? false);
 
-            // get base AL / RL — Zone Scaler can set the monster's base armor absolutely (null profile -> weenie
-            // base_Armor). Lets a 100-stat chassis mob get its physical mitigation entirely from the zone profile.
+            // get base AL / RL — Zone Control can set the monster's base armor absolutely (null profile -> weenie
+            // base_Armor). Precedence: per-part override > armor_level (all parts) > weenie. Lets a 100-chassis
+            // mob get its physical mitigation entirely from the zone profile, incl. weak spots (e.g. a soft head).
             var baseArmor = (float)Biota.Value.BaseArmor;
-            var zoneArm = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(Creature);
-            if (zoneArm != null && zoneArm.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.ArmorLevel))
-                baseArmor = (float)zoneArm.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.ArmorLevel);
+            var zoneArm = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(Creature);
+            if (zoneArm != null)
+            {
+                var zonePart = zoneArm.GetBodyPart((int)Biota.Key);
+                if (zonePart?.Armor != null)
+                    baseArmor = (float)zonePart.Armor.Value;
+                else if (zoneArm.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.ArmorLevel))
+                    baseArmor = (float)zoneArm.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.ArmorLevel);
+            }
             var armorVsType = baseArmor * (float)Creature.GetArmorVsType(damageType);
 
             // additive enchantments:

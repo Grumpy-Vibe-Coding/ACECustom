@@ -250,9 +250,10 @@ namespace ACE.Server.WorldObjects
         private string killerName;
 
         /// <summary>
-        /// Called to attempt to generate rare and add to corpse inventory
+        /// Called to attempt to generate rare and add to corpse inventory.
+        /// chanceMult scales the base rare chance (Zone Control rare_chance_mult; 1.0 = normal, 0 = never).
         /// </summary>
-        public void TryGenerateRare(DamageHistoryInfo killer)
+        public void TryGenerateRare(DamageHistoryInfo killer, double chanceMult = 1.0)
         {
             var killerPlayer = killer.TryGetAttacker() as Player;
             var timestamp = (int)Time.GetUnixTime();
@@ -307,12 +308,12 @@ namespace ACE.Server.WorldObjects
                     killerPlayer.RaresLoginTimestamp = timestamp;
             }
 
-            var wo = LootGenerationFactory.TryCreateRare(luck);
+            var wo = LootGenerationFactory.TryCreateRare(luck, chanceMult);
 
             if (secondChanceGranted && wo == null)
             {
                 luck = 2490;
-                wo = LootGenerationFactory.TryCreateRare(luck);
+                wo = LootGenerationFactory.TryCreateRare(luck, chanceMult);
             }
 
             if (wo == null)

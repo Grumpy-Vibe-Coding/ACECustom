@@ -206,9 +206,10 @@ namespace ACE.Server.WorldObjects
             // get from base properties (monsters)?
             var damageRating = DamageRating ?? 0;
 
-            // Zone Scaler: an authored profile sets the monster's base DamageRating (null for players/exempt/
-            // non-endgame/no-match). Enchantment/equipment/aug bonuses below still stack (all 0 for monsters).
-            var zoneDr = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
+            // Zone Control: an authored profile REPLACES the monster's weenie-base DamageRating
+            // (null for players/exempt/non-endgame/no-match -> weenie base). Uniform with every other zone stat.
+            // Enchantment/equipment/aug bonuses below still stack (all 0 for monsters).
+            var zoneDr = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
             if (zoneDr != null && zoneDr.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageRating))
                 damageRating = (int)Math.Round(zoneDr.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageRating));
 
@@ -256,6 +257,13 @@ namespace ACE.Server.WorldObjects
             // get from base properties (monsters)?
             var damageResistRating = DamageResistRating ?? 0;
 
+            // Zone Control: an authored profile REPLACES the monster's weenie-base DRR
+            // (null for players/exempt/non-endgame/no-match -> weenie base). Uniform with every other zone stat.
+            // Enchantment/equipment bonuses below still stack (all 0 for monsters).
+            var zoneDrr = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
+            if (zoneDrr != null && zoneDrr.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating))
+                damageResistRating = (int)Math.Round(zoneDrr.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating));
+
             // additive enchantments
             var enchantments = EnchantmentManager.GetRating(PropertyInt.DamageResistRating);
 
@@ -282,13 +290,9 @@ namespace ACE.Server.WorldObjects
 
         public float GetDamageResistRatingMod(CombatType? combatType = null, bool directDamage = true)
         {
+            // Zone Control DRR override is applied inside GetDamageResistRating (weenie-base replacement),
+            // so appraisal and this mod both see the same zone value.
             var damageResistRating = GetDamageResistRating(combatType, directDamage);
-
-            // Zone Scaler: an authored profile sets the monster's DamageResistRating absolutely (null for players/
-            // exempt/non-endgame/no-match -> normal rating).
-            var zoneDrr = ACE.Server.Managers.ZoneScaling.ZoneScalingManager.GetProfile(this);
-            if (zoneDrr != null && zoneDrr.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating))
-                damageResistRating = (int)Math.Round(zoneDrr.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating));
 
             var allowBug = ServerConfig.allow_negative_rating_curve.Value;
 

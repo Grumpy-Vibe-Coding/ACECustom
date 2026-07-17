@@ -467,6 +467,31 @@ namespace ACE.Server.Managers
         }
 
         /// <summary>
+        /// Enqueues <see cref="Landblock.RefreshZoneBoundaryMarkers"/> on each matching loaded landblock (async per landblock queue); does not wait for completion.
+        /// Called by ZoneControlManager whenever a mutation changes a variation's bounded union.
+        /// </summary>
+        /// <returns>Number of landblocks that had a refresh enqueued.</returns>
+        public static int EnqueueRefreshLoadedZoneBoundaryMarkers(int? variation = null)
+        {
+            var queued = 0;
+            var loaded = loadedLandblocks.Values.ToList();
+
+            foreach (var landblock in loaded)
+            {
+                if (landblock == null)
+                    continue;
+
+                if (variation.HasValue && landblock.VariationId != variation.Value)
+                    continue;
+
+                landblock.RefreshZoneBoundaryMarkers();
+                queued++;
+            }
+
+            return queued;
+        }
+
+        /// <summary>
         /// Returns a reference to a landblock, loading the landblock if not already active
         /// TODO: Make this Variation Aware
         /// </summary>

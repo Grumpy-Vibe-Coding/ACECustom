@@ -554,6 +554,75 @@ namespace ACE.Server.WorldObjects
                 EnqueueBroadcast(new GameMessageSound(Guid, Sound.Wound1, 1.0f));
         }
 
+        /// <summary>
+        /// Applies a single Zone Control effect "tick" to this player. Stamina/Mana drain their own pool;
+        /// every other damage type reduces Health. The periodic message names the element (fire/cold/lightning/
+        /// nether/…) and Health drains read as "drained". Kept separate from <see cref="TakeDamageOverTime"/> so
+        /// it can name the element + drain stamina/mana without changing retail DoT wording.
+        /// </summary>
+        public void TakeZoneEffectDamage(uint amount, DamageType damageType)
+        {
+            if (Invincible || IsDead || amount == 0)
+                return;
+
+            if (UnderLifestoneProtection)
+            {
+                HandleLifestoneProtection();
+                return;
+            }
+
+            switch (damageType)
+            {
+                case DamageType.Stamina:
+                {
+                    var drained = Math.Min(amount, (uint)Math.Max(0, Stamina.Current));
+                    if (drained > 0)
+                        UpdateVitalDelta(Stamina, -(int)drained);
+                    SendMessage($"The zone drains {drained} points of your stamina.", ChatMessageType.Combat);
+                    return;
+                }
+                case DamageType.Mana:
+                {
+                    var drained = Math.Min(amount, (uint)Math.Max(0, Mana.Current));
+                    if (drained > 0)
+                        UpdateVitalDelta(Mana, -(int)drained);
+                    SendMessage($"The zone drains {drained} points of your mana.", ChatMessageType.Combat);
+                    return;
+                }
+                default:
+                {
+                    UpdateVitalDelta(Health, -(int)amount);
+
+                    string text;
+                    ChatMessageType chan;
+                    if (damageType == DamageType.Health)
+                    {
+                        text = $"The zone drains {amount} points of your health.";
+                        chan = ChatMessageType.Combat;
+                    }
+                    else
+                    {
+                        var typeName = damageType == DamageType.Nether ? "nether"
+                                     : damageType == DamageType.Electric ? "lightning"
+                                     : damageType.ToString().ToLowerInvariant();
+                        text = $"You receive {amount} points of periodic {typeName} damage.";
+                        chan = damageType == DamageType.Nether ? ChatMessageType.Magic : ChatMessageType.Combat;
+                    }
+                    SendMessage(text, chan);
+
+                    var splatter = new GameMessageScript(Guid, damageType == DamageType.Nether ? PlayScript.HealthDownVoid : PlayScript.DirtyFightingDamageOverTime);
+                    EnqueueBroadcast(splatter);
+
+                    if (Health.Current <= 0)
+                    {
+                        OnDeath(DamageHistory.LastDamager, damageType, false);
+                        Die();
+                    }
+                    return;
+                }
+            }
+        }
+
         public int TakeDamage(WorldObject source, DamageEvent damageEvent)
         {
             var result = TakeDamageInternal(source, damageEvent.DamageType, damageEvent.Damage, damageEvent.BodyPart, out var absorbed, damageEvent.IsCritical, damageEvent.AttackConditions);
