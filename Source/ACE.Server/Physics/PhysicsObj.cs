@@ -1936,7 +1936,15 @@ namespace ACE.Server.Physics
                             continue;
 
                         if (!VariationManager.SameVariationForVisibility(playerVarNow, VariationManager.GetEffectiveVariationForVisibility(wo)))
+                        {
+                            // Non-cementing skip: AddVisibleObjects already marked this object
+                            // Known+Visible; dropping the CO here would leave a permanent
+                            // known-without-client tear (object invisible until relog). Purge so a
+                            // later visibility tick re-adds it cleanly once variations agree.
+                            ObjMaint.RemoveObject(obj);
+                            ACE.Server.Managers.VisibilityCreateObjectDiag.LogEnqueueSkipPurge(player, obj, "enqueue_objs_post_teleport_delay");
                             continue;
+                        }
 
                         player.TrackObject(wo, true, "enqueue_objs_post_teleport_delay");
                     }
@@ -1953,7 +1961,12 @@ namespace ACE.Server.Physics
                         continue;
 
                     if (!VariationManager.SameVariationForVisibility(playerVar, VariationManager.GetEffectiveVariationForVisibility(wo)))
+                    {
+                        // Non-cementing skip — see the post-teleport branch above.
+                        ObjMaint.RemoveObject(obj);
+                        ACE.Server.Managers.VisibilityCreateObjectDiag.LogEnqueueSkipPurge(player, obj, "enqueue_objs_handle_visible_cells");
                         continue;
+                    }
 
                     if (wo.Teleporting)
                     {
@@ -1981,7 +1994,12 @@ namespace ACE.Server.Physics
             if (!VariationManager.SameVariationForVisibility(
                     VariationManager.GetEffectiveVariationForVisibility(player),
                     VariationManager.GetEffectiveVariationForVisibility(wo)))
+            {
+                // Non-cementing skip — see enqueue_objs.
+                ObjMaint.RemoveObject(newlyVisible);
+                ACE.Server.Managers.VisibilityCreateObjectDiag.LogEnqueueSkipPurge(player, newlyVisible, "enqueue_obj_outer");
                 return;
+            }
 
             if (DateTime.UtcNow - player.LastTeleportTime < TeleportCreateObjectDelay)
             {
@@ -1994,7 +2012,12 @@ namespace ACE.Server.Physics
                     if (!VariationManager.SameVariationForVisibility(
                             VariationManager.GetEffectiveVariationForVisibility(player),
                             VariationManager.GetEffectiveVariationForVisibility(wo)))
+                    {
+                        // Non-cementing skip — see enqueue_objs.
+                        ObjMaint.RemoveObject(newlyVisible);
+                        ACE.Server.Managers.VisibilityCreateObjectDiag.LogEnqueueSkipPurge(player, newlyVisible, "enqueue_obj_post_teleport_delay");
                         return;
+                    }
 
                     player.TrackObject(wo, true, "enqueue_obj_post_teleport_delay");
                 });

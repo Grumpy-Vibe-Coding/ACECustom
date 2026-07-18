@@ -505,8 +505,19 @@ namespace ACE.Server.Physics.Common
         /// <returns>TRUE if object was previously not visible, and added to the visible list</returns>
         public bool AddVisibleObject(PhysicsObj obj)
         {
+            return AddVisibleObject(obj, out _);
+        }
+
+        /// <summary>
+        /// Adds an object to the list of visible objects, reporting whether it was already in
+        /// KnownObjects at add time (see the known-without-CreateObject heal in <see cref="AddVisibleObjects"/>).
+        /// </summary>
+        /// <returns>TRUE if object was previously not visible, and added to the visible list</returns>
+        public bool AddVisibleObject(PhysicsObj obj, out bool wasKnownAlready)
+        {
             bool added = false;
             bool callInverse = false;
+            wasKnownAlready = false;
 
             rwLock.EnterWriteLock();
             try
@@ -519,6 +530,7 @@ namespace ACE.Server.Physics.Common
                     return false;
 
                 var wasKnown = KnownObjects.ContainsKey(obj.ID);
+                wasKnownAlready = wasKnown;
                 var dist2DSq = PhysicsObj.Position.Distance2DSquared(obj.Position);
 
                 // Always clamp distance — do not skip when already in KnownObjects (AddTrackedObject used to
@@ -566,16 +578,37 @@ namespace ACE.Server.Physics.Common
             // No outer lock — each call manages its own lock and cross-instance calls
             // are made outside their respective locks (matching the pattern used by AddVisibleTargets).
             var visibleAdded = new List<PhysicsObj>();
+            List<PhysicsObj> knownNotVisibleHeals = null;
 
             foreach (var obj in objs)
             {
-                if (AddVisibleObject(obj))
-                    visibleAdded.Add(obj);
+                if (!AddVisibleObject(obj, out var wasKnownAlready))
+                    continue;
+
+                visibleAdded.Add(obj);
+
+                // Known-without-CreateObject heal: a healthy object is Known while not Visible only
+                // inside the <=25s destruction-queue window (DestroyObjects removes Known at expiry).
+                // Known + not visible + NOT queued means the client never got (or no longer has) this
+                // object while the known-flag suppresses every CreateObject path — the "invisible
+                // until relog" state. Route it through the caller's CreateObject batch; a duplicate
+                // CO for an object the client does hold is a no-op (post-teleport reconcile relies
+                // on that already). Queue membership must be read before RemoveObjectsToBeDestroyed
+                // below rescues re-entering objects.
+                if (wasKnownAlready && !IsInDestructionQueue(obj))
+                {
+                    (knownNotVisibleHeals ??= new List<PhysicsObj>()).Add(obj);
+                    if (PhysicsObj.IsPlayer && PhysicsObj.WeenieObj.WorldObject is Player viewerHeal)
+                        VisibilityCreateObjectDiag.LogKnownNotVisibleHeal(viewerHeal, obj);
+                }
             }
 
             RemoveObjectsToBeDestroyed(objs);
 
-            return AddKnownObjects(visibleAdded);
+            var newlyKnown = AddKnownObjects(visibleAdded);
+            if (knownNotVisibleHeals != null)
+                newlyKnown.AddRange(knownNotVisibleHeals);
+            return newlyKnown;
         }
 
         /// <summary>
@@ -682,6 +715,20 @@ namespace ACE.Server.Physics.Common
         /// Removes an object from the destruction queue if it has been invisible for less than 25s
         /// this is only used for players
         /// </summary>
+        /// <summary>Read-only destruction-queue membership check (see the known-without-CreateObject heal in AddVisibleObjects).</summary>
+        public bool IsInDestructionQueue(PhysicsObj obj)
+        {
+            rwLock.EnterReadLock();
+            try
+            {
+                return DestructionQueue.ContainsKey(obj);
+            }
+            finally
+            {
+                rwLock.ExitReadLock();
+            }
+        }
+
         public bool RemoveObjectToBeDestroyed(PhysicsObj obj)
         {
             rwLock.EnterWriteLock();
