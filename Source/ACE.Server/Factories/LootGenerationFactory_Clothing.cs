@@ -28,7 +28,6 @@ namespace ACE.Server.Factories
             switch (profile.Tier)
             {
                 case 1:
-                default:
                     maxType = LootTables.ArmorType.ChainmailArmor;
                     break;
                 case 2:
@@ -46,6 +45,7 @@ namespace ACE.Server.Factories
                     break;
                 case 7:
                 case 8:
+                default:    // tiers above the last authored case clamp to the highest
                     maxType = LootTables.ArmorType.OlthoiAlduressaArmor;
                     break;
             }
@@ -162,7 +162,7 @@ namespace ACE.Server.Factories
             if (roll != null && profile.Tier == 9)
                 TryMutateGearRatingT9(wo, profile, roll);
 
-            if (roll != null && profile.Tier == 10)
+            if (roll != null && profile.Tier >= 10)
                 TryMutateGearRatingT10(wo, profile, roll);
 
             // item value
@@ -392,6 +392,7 @@ namespace ACE.Server.Factories
                             armorModValue = ThreadSafeRandom.Next(107, 124);
                         break;
                     case 8:
+                    default:    // tiers above the last authored case clamp to the highest
                         if (wo.ArmorType == (int)ArmorType.Cloth)
                             armorModValue = ThreadSafeRandom.Next(175, 200);
                         if (wo.ArmorType == (int)ArmorType.Leather
@@ -435,7 +436,7 @@ namespace ACE.Server.Factories
                     {
                         7 => ThreadSafeRandom.Next(0, 40),
                         8 => ThreadSafeRandom.Next(91, 115),
-                        9 => ThreadSafeRandom.Next(115, 140),
+                        >= 9 => ThreadSafeRandom.Next(115, 140),    // tiers above the last authored arm clamp to the highest
                         _ => 0,
                     };
                 }
@@ -866,7 +867,7 @@ namespace ACE.Server.Factories
                 TryMutateGearRating(wo, profile, roll);
             else if (roll != null && profile.Tier == 9)
                 TryMutateGearRatingT9(wo, profile, roll);
-            else if (roll != null && profile.Tier == 10)
+            else if (roll != null && profile.Tier >= 10)
                 TryMutateGearRatingT10(wo, profile, roll);
 
             // item value
@@ -884,7 +885,6 @@ namespace ACE.Server.Factories
             {
                 case 1:
                 case 2:
-                default:
                     cloakLevel = 1;
                     break;
                 case 3:
@@ -933,6 +933,7 @@ namespace ACE.Server.Factories
                         cloakLevel = 5;
                     break;
                 case 9:  // From data, no chance to get a lvl 1 cloak
+                default:    // tiers above the last authored case clamp to the highest
                     if (chance <= 451)
                         cloakLevel = 3;
                     else if (chance <= 920)
@@ -1163,7 +1164,7 @@ namespace ACE.Server.Factories
 
         private static bool TryMutateGearRatingT10(WorldObject wo, TreasureDeath profile, TreasureRoll roll)
         {
-            if (profile.Tier != 10)
+            if (profile.Tier < 10)  // tiers above 10 use the T10 (highest authored) ratings
                 return false;
 
             bool applied = false;

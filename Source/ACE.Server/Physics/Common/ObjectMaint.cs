@@ -29,15 +29,19 @@ namespace ACE.Server.Physics.Common
         /// </summary>
         private static int? GetVariationForVisibility(PhysicsObj obj, int? variationOverride = null)
         {
-            if (variationOverride.HasValue)
-                return variationOverride;
-
-            return PrestigeManager.GetEffectiveVariationForVisibility(obj?.WeenieObj?.WorldObject) ?? obj?.Position?.Variation;
+            // Always prefer the effective (Location-first) variation so this matches the
+            // networking/visibility gates. A raw physics-position variation passed by a caller is
+            // only a last-resort fallback for objects that have no WorldObject/Location yet
+            // (e.g. a projectile mid-flight); it must never override the effective value, or a
+            // Location/Position variation split makes missiles/spells enumerate the wrong layer.
+            return VariationManager.GetEffectiveVariationForVisibility(obj?.WeenieObj?.WorldObject)
+                ?? obj?.Position?.Variation
+                ?? variationOverride;
         }
 
         private static bool SameVariationForVisibility(PhysicsObj a, PhysicsObj b, int? aOverride = null, int? bOverride = null)
         {
-            return PrestigeManager.SameVariationForVisibility(
+            return VariationManager.SameVariationForVisibility(
                 GetVariationForVisibility(a, aOverride),
                 GetVariationForVisibility(b, bOverride));
         }
@@ -350,7 +354,10 @@ namespace ACE.Server.Physics.Common
             rwLock.EnterReadLock();
             try
             {
-                return VisibleObjects.Values.Where(x=>x.Position.Variation == Variation).ToList();
+                // Filter by the effective (Location-first) variation of self vs each candidate,
+                // consistent with GetVisibleObjects. The passed Variation is retained for call
+                // compatibility but is no longer trusted as a raw physics-position value.
+                return VisibleObjects.Values.Where(x => SameVariationForVisibility(PhysicsObj, x)).ToList();
             }
             finally
             {
@@ -849,7 +856,9 @@ namespace ACE.Server.Physics.Common
         /// to all players who currently know about this object
         /// </summary>
         /// <returns>true if previously an unknown object</returns>
-        private bool AddKnownPlayer(PhysicsObj obj)
+        /// <remarks>Public since the ghost-mob fix (2026-07-17): the stale-known CO resend path
+        /// re-adds the inverse link from Player_Tracking to heal one-way objects.</remarks>
+        public bool AddKnownPlayer(PhysicsObj obj)
         {
             rwLock.EnterWriteLock();
             try
@@ -880,7 +889,15 @@ namespace ACE.Server.Physics.Common
             }
             if (!SameVariationForVisibility(PhysicsObj, obj))
             {
-                log.Debug($"{PhysicsObj.Name}.ObjectMaint.AddKnownPlayer({obj.Name}): tried to add player in a different Variation");
+                // Ghost-mob diagnostic (2026-07-17): this refusal is the primary tear point for one-way
+                // CreateObjects (client renders an object whose KnownPlayers list misses them, so death
+                // deletes and movement updates skip that client). It used to be log.Debug = invisible.
+                if (ServerConfig.prestige_interaction_diag_verbose.Value)
+                    log.Warn($"[GhostMob] {PhysicsObj.Name}(0x{PhysicsObj.ID:X8}).AddKnownPlayer({obj.Name}): REFUSED - different variation " +
+                             $"(objVar={GetVariationForVisibility(PhysicsObj)?.ToString() ?? "null"} playerVar={GetVariationForVisibility(obj)?.ToString() ?? "null"}); " +
+                             $"if a CreateObject was already delivered this is now a one-way object for that client.");
+                else
+                    log.Debug($"{PhysicsObj.Name}.ObjectMaint.AddKnownPlayer({obj.Name}): tried to add player in a different Variation");
                 return false;
             }
 
@@ -1025,22 +1042,14 @@ namespace ACE.Server.Physics.Common
                         return new List<Creature>();
                     }
 
-                    int? curVariation = this.PhysicsObj?.Position?.Variation;
-                    if (curVariation.HasValue)
-                    {
-                        return VisibleTargets.Values
-                            .Where(v => v.WeenieObj.WorldObject?.Location.Variation == curVariation)
-                            .Select(v => v.WeenieObj.WorldObject)
-                            .OfType<Creature>()
-                            .ToList();
-                    }
-                    else
-                    {
-                        return VisibleTargets.Values
-                            .Select(v => v.WeenieObj.WorldObject)
-                            .OfType<Creature>()
-                            .ToList();
-                    }
+                    // Match targets on the effective (Location-first) variation of self vs each
+                    // candidate - consistent with visibility/collision, so a Location/Position
+                    // variation split can't drop valid targets (mob wouldn't aggro / retaliate).
+                    return VisibleTargets.Values
+                        .Where(v => SameVariationForVisibility(PhysicsObj, v))
+                        .Select(v => v.WeenieObj.WorldObject)
+                        .OfType<Creature>()
+                        .ToList();
                 }
                 finally
                 {

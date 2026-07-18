@@ -82,7 +82,7 @@ namespace ACE.Server.Command.Handlers
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
             + "cantrip <name> <add|remove|list> [spellId] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
-            + "boundary <name> <on|off|show> | survey <name> [lbHex] | terrain <name> <hex> <type|clear> | "
+            + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | effect <name> [dot on|off | dmg <amount> | type <name|percent> | interval <secs>] | reload")]
         public static void HandleZoneControl(Session session, params string[] parameters)
         {
@@ -108,6 +108,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
                 Msg("  /zonecontrol survey <name> [lbHex]   (per-landblock content: generator + creature summary; lbHex = full detail for one landblock)");
+                Msg("  /zonecontrol quests <name>   (quest registry for the plugin Quests tab; throttled to one pull per 60s)");
                 Msg("  /zonecontrol terrain <name> <hex> <type|clear>   (override the map terrain color for one landblock; type = " + string.Join("/", ZoneControlManager.TerrainTags) + "; display-only)");
                 Msg("  /zonecontrol mobinfo <wcid>   (weenie base data: body parts, resists, wields)");
                 Msg("  parts = " + string.Join(", ", Enum.GetNames(typeof(CombatBodyPart)).Where(n => n != "Undefined")));
@@ -755,6 +756,37 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "quests":
+                    {
+                        if (args.Count < 2) { Msg("Usage: quests <name>"); return; }
+                        var name = args[1];
+                        var area = ZoneControlManager.GetArea(name);
+                        if (area == null) { Msg($"No zone '{name}'."); return; }
+                        name = area.Name;   // echo the STORED name so the plugin's zone= match works
+
+                        // Owner rule: quest data may be pulled at most once per 60s per player. A throttled
+                        // pull gets a short notice line so the plugin can show a countdown on its Refresh.
+                        var nowUtc = DateTime.UtcNow;
+                        if (_questPulls.TryGetValue(session, out var lastPull) &&
+                            (nowUtc - lastPull).TotalSeconds < QuestPullCooldownSeconds)
+                        {
+                            var wait = (int)Math.Ceiling(QuestPullCooldownSeconds - (nowUtc - lastPull).TotalSeconds);
+                            Msg($"[[ZCQ]]zone={name}|throttle={wait}");
+                            return;
+                        }
+                        _questPulls[session] = nowUtc;
+                        if (_questPulls.Count > 128)
+                            foreach (var dead in _questPulls.Keys.Where(s => s.IsTerminated).ToList())
+                                _questPulls.TryRemove(dead, out _);
+
+                        var quests = ZoneControlManager.GetZoneQuests(name);
+                        var qi = 0;
+                        foreach (var q in quests)
+                            Msg(BuildQuestPayload(name, q, ++qi, session));
+                        Msg($"[[ZCQ]]zone={name}|done={quests.Count}");
+                        return;
+                    }
+
                     case "mobinfo":
                     {
                         if (args.Count < 2 || !uint.TryParse(args[1], out var infoWcid)) { Msg("Usage: mobinfo <wcid>"); return; }
@@ -1260,6 +1292,59 @@ namespace ACE.Server.Command.Handlers
         /// <summary>Wire-safe display string: the [[ZCS]] separators (| , ~ =) replaced with spaces.</summary>
         private static string SurveySafe(string s)
             => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
+
+        // ── Quests tab ([[ZCQ]]) ──
+        private const double QuestPullCooldownSeconds = 60.0;
+        private static readonly ConcurrentDictionary<Session, DateTime> _questPulls = new();
+
+        /// <summary>[[ZCQ]] text fields keep commas (fields split on '|', k=v on FIRST '='); '~' only
+        /// matters inside the tg= list, escaped separately.</summary>
+        private static string QuestSafe(string s)
+            => (s ?? "").Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ');
+
+        /// <summary>One [[ZCQ]] line per quest. Static registry fields plus the REQUESTING player's live
+        /// progress: pr=solves/max while the task is started, cd=cooldown seconds remaining (0 = ready).</summary>
+        private static string BuildQuestPayload(string zone, ZoneControlManager.ZoneQuestRow q, int index, Session session)
+        {
+            var sb = new StringBuilder();
+            sb.Append("[[ZCQ]]zone=").Append(zone)
+              .Append("|i=").Append(index)
+              .Append("|w=").Append(QuestSafe(q.Wave))
+              .Append("|cat=").Append(QuestSafe(q.Category))
+              .Append("|st=").Append(QuestSafe(q.Stage))
+              .Append("|ok=").Append(q.Wired ? 1 : 0)
+              .Append("|t=").Append(QuestSafe(q.Title))
+              .Append("|npc=").Append(QuestSafe(q.NpcName))
+              .Append("|wcid=").Append(q.NpcWcid)
+              .Append("|lb=").Append(q.LandblockHex)
+              .Append("|co=").Append(QuestSafe(q.Coords))
+              .Append("|n=").Append(q.Count)
+              .Append("|rep=").Append(q.RepeatHours)
+              .Append("|rw=").Append(QuestSafe(q.Reward))
+              .Append("|obj=").Append(QuestSafe(q.Objective))
+              .Append("|tg=").Append(string.Join("~",
+                  (q.Targets ?? "").Split('~').Select(t => QuestSafe(t).Trim()).Where(t => t.Length > 0)));
+
+            // Live per-player progress (only meaningful for live rows with a real stamp)
+            var qm = session?.Player?.QuestManager;
+            var pr = "";
+            var cd = 0;
+            if (qm != null && !string.IsNullOrEmpty(q.QuestKey) &&
+                string.Equals(q.Stage, "live", StringComparison.OrdinalIgnoreCase))
+            {
+                var reg = qm.GetQuest(q.QuestKey);
+                if (reg != null)
+                    pr = reg.NumTimesCompleted + "/" + q.Count;
+                if (!string.IsNullOrEmpty(q.CompletedKey))
+                {
+                    var next = qm.GetNextSolveTime(q.CompletedKey);
+                    if (next != TimeSpan.MinValue && next != TimeSpan.MaxValue)
+                        cd = (int)Math.Max(0, next.TotalSeconds);
+                }
+            }
+            sb.Append("|pr=").Append(pr).Append("|cd=").Append(cd);
+            return sb.ToString();
+        }
 
         /// <summary>One survey SUMMARY line per landblock:
         /// [[ZCS]]zone=x|lb=F559|gens=4|creatures=5|monsters=4|types=Drudge~3,Skeleton~1|g=wcid~name~count,...

@@ -192,7 +192,6 @@ namespace ACE.Server.Factories.Tables
             switch (tier)
             {
                 case 1:
-                default:
                     return T1_QualityChances;
                 case 2:
                     return T2_QualityChances;
@@ -211,6 +210,7 @@ namespace ACE.Server.Factories.Tables
                 case 9:
                     return T9_QualityChances;
                 case 10:
+                default:    // tiers above the last authored table clamp to the highest
                     return T10_QualityChances;
             }
         }
@@ -222,7 +222,7 @@ namespace ACE.Server.Factories.Tables
         private static bool RollTierChance(TreasureDeath treasureDeath)
         {
             var tier = Math.Clamp(treasureDeath.Tier, 1, 10);
-            var tierChance = QualityChancePerTier[tier - 1];
+            var tierChance = TierTable.Entry(QualityChancePerTier, tier);
 
             // use for initial roll? logic seems backwards here...
             var rng = ThreadSafeRandom.NextInterval(treasureDeath.LootQualityMod);

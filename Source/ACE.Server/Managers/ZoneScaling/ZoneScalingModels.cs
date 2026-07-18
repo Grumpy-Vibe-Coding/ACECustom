@@ -149,6 +149,16 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponHiltChance = "weapon_hilt_chance";       // melee drops with a Fine Bandit Blade Hilt pre-attached (full recipe minus ManaStoneDestroyChance)
         public const string WeaponBowstringChance = "weapon_bowstring_chance"; // bow drops restrung with a Finely Oiled Bowstring (full recipe)
 
+        // C4. structured loot set + QB scaling (T11+ endgame loot; see ACE_Loot_Systems_DeepDive doc §12-13)
+        public const string LootSetEnabled = "loot_set_enabled";           // nonzero = every governed kill drops the structured BLANK gear set
+        public const string LootSetArmor = "loot_set_armor";               // armor pieces per kill (default 3)
+        public const string LootSetJewelry = "loot_set_jewelry";           // jewelry/trinket pieces per kill (default 2)
+        public const string LootSetCloaks = "loot_set_cloaks";             // cloaks per kill (default 1)
+        public const string QbStepSize = "qb_step_size";                   // killer QB per progression step (default 1000)
+        public const string QbQualityPerStep = "qb_quality_per_step";      // LootQualityMod added per QB step (setting this ENABLES QB scaling; suggested 0.05)
+        public const string QbMaxSteps = "qb_max_steps";                   // QB step cap (default 20)
+        public const string QbQuantityPerStep = "qb_quantity_per_step";    // RESERVED: no effect yet (quantity semantics undecided)
+
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
@@ -174,6 +184,8 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponShieldCleaveChance, WeaponShieldCleaveMin, WeaponShieldCleaveMax,
             WeaponPhantomChance, WeaponRendPowerMin, WeaponRendPowerMax,
             WeaponHiltChance, WeaponBowstringChance,
+            LootSetEnabled, LootSetArmor, LootSetJewelry, LootSetCloaks,
+            QbStepSize, QbQualityPerStep, QbMaxSteps, QbQuantityPerStep,
         };
     }
 

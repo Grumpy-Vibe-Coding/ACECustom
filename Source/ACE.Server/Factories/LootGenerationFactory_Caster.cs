@@ -373,6 +373,7 @@ namespace ACE.Server.Factories
                         magicMod = 5;
                     break;
                 case 10:
+                default:    // tiers above the last authored case clamp to the highest
                     chance = ThreadSafeRandom.Next(1, 1000);
                     if (chance > 950)
                         magicMod = 12;
@@ -382,19 +383,6 @@ namespace ACE.Server.Factories
                         magicMod = 10;
                     else
                         magicMod = 9;
-                    break;
-                default:
-                    chance = ThreadSafeRandom.Next(1, 1000);
-                    if (chance > 980)
-                        magicMod = 8;
-                    else if (chance > 900)
-                        magicMod = 7;
-                    else if (chance > 800)
-                        magicMod = 6;
-                    else if (chance > 700)
-                        magicMod = 5;
-                    else
-                        magicMod = 4;
                     break;
             }
 

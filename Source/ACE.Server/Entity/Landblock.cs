@@ -1096,29 +1096,43 @@ namespace ACE.Server.Entity
                 // 0148 cell-raw unloads in the 2026-07-11 log during authoring).
                 if (!Permaload && HasNoKeepAliveObjects && players.Count == 0)
                 {
-                    if (lastActiveTime + dormantInterval < thisHeartBeat)
+                    // Variation-instance guard: a player can be physically standing on this landblock
+                    // (or an adjacent one) while registered on a DIFFERENT variation instance, so this
+                    // instance's `players` list is empty even though someone is right here. Without this
+                    // the v11 instance the player is actually interacting with goes dormant at +1min ->
+                    // Monster AI + physics ticking suppressed -> mobs go passive (missiles/magic pass
+                    // through stale physics, no aggro/attack) while melee still works. Judge presence by
+                    // physical position across all variations, not the (drifting) instance bookkeeping.
+                    if (lastActiveTime + dormantInterval < thisHeartBeat && HasPhysicalPlayerOnOrAdjacent())
                     {
-                        if (!IsDormant)
+                        SetActive();
+                    }
+                    else
+                    {
+                        if (lastActiveTime + dormantInterval < thisHeartBeat)
                         {
-                            var spellProjectiles = worldObjects.Values.Where(i => i is SpellProjectile).ToList();
-                            foreach (var spellProjectile in spellProjectiles)
+                            if (!IsDormant)
                             {
-                                spellProjectile.PhysicsObj.set_active(false);
-                                spellProjectile.Destroy();
+                                var spellProjectiles = worldObjects.Values.Where(i => i is SpellProjectile).ToList();
+                                foreach (var spellProjectile in spellProjectiles)
+                                {
+                                    spellProjectile.PhysicsObj.set_active(false);
+                                    spellProjectile.Destroy();
+                                }
                             }
-                        }
 
-                        IsDormant = true;
-                    }
-                    if (lastActiveTime + UnloadInterval < thisHeartBeat)
-                    {
-                        // log.Info($"[Landblock Unload] Landblock {Id.Raw:X8} queuing for destruction. (UnloadInterval: {UnloadInterval})");
-                        LandblockManager.AddToDestructionQueue(this, this.VariationId);
-                    }
-                    else if (IsDormant && (DateTime.UtcNow.Second % 10 == 0)) // Log periodically if dormant but not unloading
-                    {
-                        // Debug logging to see why it's not unloading
-                        // log.Warn($"[Landblock Debug] {Id.Raw:X8} Dormant. Time until unload: {(lastActiveTime + UnloadInterval - thisHeartBeat).TotalSeconds:F1}s");
+                            IsDormant = true;
+                        }
+                        if (lastActiveTime + UnloadInterval < thisHeartBeat)
+                        {
+                            // log.Info($"[Landblock Unload] Landblock {Id.Raw:X8} queuing for destruction. (UnloadInterval: {UnloadInterval})");
+                            LandblockManager.AddToDestructionQueue(this, this.VariationId);
+                        }
+                        else if (IsDormant && (DateTime.UtcNow.Second % 10 == 0)) // Log periodically if dormant but not unloading
+                        {
+                            // Debug logging to see why it's not unloading
+                            // log.Warn($"[Landblock Debug] {Id.Raw:X8} Dormant. Time until unload: {(lastActiveTime + UnloadInterval - thisHeartBeat).TotalSeconds:F1}s");
+                        }
                     }
                 }
                 else if (!Permaload && thisHeartBeat.Second % 15 == 0)
@@ -1678,6 +1692,44 @@ namespace ACE.Server.Entity
                 // really remove it - send message to client to remove object
                 wo.EnqueueActionBroadcast(p => p.RemoveTrackedObject(wo, fromPickup));
 
+                // Ghost-mob safety net (2026-07-17): the broadcast above only reaches the object's
+                // KnownPlayers. That inverse link can be torn while a client still holds the CreateObject
+                // (transient variation refusal in ObjectMaint.AddKnownPlayer during leash teleports;
+                // stale-known CO resends never re-added it) — that client then keeps a frozen "ghost"
+                // that never receives this delete. Sweep every player on this landblock instance and its
+                // same-variation adjacents and send the delete to any player the object did NOT know:
+                // a delete for a guid the client doesn't hold is a no-op, so over-sending is harmless.
+                if (!fromPickup)
+                {
+                    var notified = new HashSet<uint>();
+                    if (wo.PhysicsObj != null)
+                        foreach (var kp in wo.PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer())
+                            notified.Add(kp.Guid.Full);
+
+                    var missed = 0;
+                    void SweepLandblock(Landblock lb)
+                    {
+                        foreach (var p in lb.players.ToList())
+                        {
+                            if (p == null || p.Guid == wo.Guid || !notified.Add(p.Guid.Full))
+                                continue;
+                            missed++;
+                            var player = p;
+                            player.EnqueueAction(new ActionEventDelegate(ActionType.WorldObjectNetworking_BroadcastOther,
+                                () => player.RemoveTrackedObject(wo, false)));
+                        }
+                    }
+
+                    SweepLandblock(this);
+                    foreach (var adj in Adjacents.ToList())
+                        if (adj != null)
+                            SweepLandblock(adj);
+
+                    if (missed > 0 && wo is Creature && ServerConfig.prestige_interaction_diag_verbose.Value)
+                        log.Warn($"[GhostMob] {wo.Name}(0x{wo.Guid.Full:X8}) destroy on lb 0x{Id.Landblock:X4} v={VariationId?.ToString() ?? "null"}: " +
+                                 $"delete sent to {missed} nearby same-variation player(s) missing from KnownPlayers (one-way CO healed).");
+                }
+
                 wo.PhysicsObj.DestroyObject();
             }
         }
@@ -1803,6 +1855,30 @@ namespace ACE.Server.Entity
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// True when an online player is physically standing on this landblock id or an adjacent one,
+        /// regardless of which variation instance they are registered on. Keeps a landblock awake when
+        /// variation-instance player bookkeeping drifts (this instance's `players` list can be empty even
+        /// with a player right here). Only called when a landblock is otherwise about to go dormant, so
+        /// the online-player scan is rare.
+        /// </summary>
+        private bool HasPhysicalPlayerOnOrAdjacent()
+        {
+            int thisX = (Id.Landblock >> 8) & 0xFF;
+            int thisY = Id.Landblock & 0xFF;
+            foreach (var player in PlayerManager.GetAllOnline())
+            {
+                var loc = player.Location;
+                if (loc == null)
+                    continue;
+                int px = (loc.LandblockId.Landblock >> 8) & 0xFF;
+                int py = loc.LandblockId.Landblock & 0xFF;
+                if (Math.Abs(px - thisX) <= 1 && Math.Abs(py - thisY) <= 1)
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>

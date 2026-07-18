@@ -1917,7 +1917,7 @@ namespace ACE.Server.Physics
             if (!IsPlayer || WeenieObj.WorldObject is not Player player)
                 return;
 
-            var playerVar = PrestigeManager.GetEffectiveVariationForVisibility(player);
+            var playerVar = VariationManager.GetEffectiveVariationForVisibility(player);
 
             if (DateTime.UtcNow - player.LastTeleportTime < TeleportCreateObjectDelay)
             {
@@ -1928,14 +1928,14 @@ namespace ACE.Server.Physics
                     // Re-evaluate at fire time: during a variation-switch teleport this chain is
                     // queued while the player still carries the ORIGIN variation, so the captured
                     // playerVar would let origin-variation objects through (ghost mobs after /tv).
-                    var playerVarNow = PrestigeManager.GetEffectiveVariationForVisibility(player);
+                    var playerVarNow = VariationManager.GetEffectiveVariationForVisibility(player);
                     foreach (var obj in newlyVisible)
                     {
                         var wo = obj.WeenieObj.WorldObject;
                         if (wo == null)
                             continue;
 
-                        if (!PrestigeManager.SameVariationForVisibility(playerVarNow, PrestigeManager.GetEffectiveVariationForVisibility(wo)))
+                        if (!VariationManager.SameVariationForVisibility(playerVarNow, VariationManager.GetEffectiveVariationForVisibility(wo)))
                             continue;
 
                         player.TrackObject(wo, true, "enqueue_objs_post_teleport_delay");
@@ -1952,7 +1952,7 @@ namespace ACE.Server.Physics
                     if (wo == null)
                         continue;
 
-                    if (!PrestigeManager.SameVariationForVisibility(playerVar, PrestigeManager.GetEffectiveVariationForVisibility(wo)))
+                    if (!VariationManager.SameVariationForVisibility(playerVar, VariationManager.GetEffectiveVariationForVisibility(wo)))
                         continue;
 
                     if (wo.Teleporting)
@@ -1978,9 +1978,9 @@ namespace ACE.Server.Physics
             if (wo == null)
                 return;
 
-            if (!PrestigeManager.SameVariationForVisibility(
-                    PrestigeManager.GetEffectiveVariationForVisibility(player),
-                    PrestigeManager.GetEffectiveVariationForVisibility(wo)))
+            if (!VariationManager.SameVariationForVisibility(
+                    VariationManager.GetEffectiveVariationForVisibility(player),
+                    VariationManager.GetEffectiveVariationForVisibility(wo)))
                 return;
 
             if (DateTime.UtcNow - player.LastTeleportTime < TeleportCreateObjectDelay)
@@ -1991,9 +1991,9 @@ namespace ACE.Server.Physics
                 {
                     // Same fire-time recheck as enqueue_objs: the outer variation check above ran
                     // while the player could still carry the origin variation mid-teleport.
-                    if (!PrestigeManager.SameVariationForVisibility(
-                            PrestigeManager.GetEffectiveVariationForVisibility(player),
-                            PrestigeManager.GetEffectiveVariationForVisibility(wo)))
+                    if (!VariationManager.SameVariationForVisibility(
+                            VariationManager.GetEffectiveVariationForVisibility(player),
+                            VariationManager.GetEffectiveVariationForVisibility(wo)))
                         return;
 
                     player.TrackObject(wo, true, "enqueue_obj_post_teleport_delay");
@@ -2455,9 +2455,9 @@ namespace ACE.Server.Physics
             var isVisible = CurCell.IsVisible(obj.CurCell);
             if (isVisible)
             {
-                var myVar = PrestigeManager.GetEffectiveVariationForVisibility(WeenieObj?.WorldObject);
-                var objVar = PrestigeManager.GetEffectiveVariationForVisibility(obj.WeenieObj?.WorldObject);
-                if (!PrestigeManager.SameVariationForVisibility(myVar, objVar))
+                var myVar = VariationManager.GetEffectiveVariationForVisibility(WeenieObj?.WorldObject);
+                var objVar = VariationManager.GetEffectiveVariationForVisibility(obj.WeenieObj?.WorldObject);
+                if (!VariationManager.SameVariationForVisibility(myVar, objVar))
                     isVisible = false;
             }
 

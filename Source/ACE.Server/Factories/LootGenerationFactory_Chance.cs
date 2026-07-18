@@ -1,3 +1,5 @@
+using System;
+
 using ACE.Common;
 using ACE.Database.Models.World;
 using ACE.Server.Factories.Enum;
@@ -12,6 +14,9 @@ namespace ACE.Server.Factories
 
         private static int RollWieldDifficulty(int tier, TreasureWeaponType weaponType)
         {
+            // tiers above the last authored case (10) clamp to the highest authored values
+            tier = Math.Min(tier, 10);
+
             int wield = 0;
             int chance = ThreadSafeRandom.Next(1, 100);
 
@@ -258,6 +263,9 @@ namespace ACE.Server.Factories
 
         private static double GetMaxDamageMod(int tier, int maxDamageMod)
         {
+            // tiers above the last authored case (9) clamp to the highest authored values
+            tier = Math.Min(tier, 9);
+
             double damageMod = 0;
 
             switch (maxDamageMod)

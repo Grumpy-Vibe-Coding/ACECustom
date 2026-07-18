@@ -920,7 +920,24 @@ namespace ACE.Server.WorldObjects
             if (DeathTreasure != null)
             {
                 var effectiveTreasure = BuildZoneScaledTreasure(DeathTreasure, zoneLoot);
+
+                // Zone Control QB scaling: the killer's Quest Bonus count lifts the profile's
+                // LootQualityMod (per-kill clone; enabled by the zone's qb_quality_per_step stat)
+                effectiveTreasure = BuildQBScaledTreasure(effectiveTreasure, zoneLoot, killer);
+
                 List<WorldObject> items = LootGenerationFactory.CreateRandomLootObjects(effectiveTreasure);
+
+                // Zone Control structured loot set: one blank weapon per family + gear allotment
+                // (items join the normal per-item mutation/corpse pipeline below)
+                if (zoneLoot != null && zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetEnabled, 0) != 0)
+                {
+                    var setArmor = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetArmor, 3));
+                    var setJewelry = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetJewelry, 2));
+                    var setCloaks = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetCloaks, 1));
+
+                    items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, setArmor, setJewelry, setCloaks));
+                }
+
                 foreach (WorldObject wo in items)
                 {
                     if (tier > 0)
@@ -1073,6 +1090,66 @@ namespace ACE.Server.WorldObjects
                 if (m > 0 && m != 1.0)
                     t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod * m, 0.0, 1.0);
             }
+
+            return t;
+        }
+
+        /// <summary>
+        /// Zone Control QB loot scaling: returns a CLONE of the treasure profile with LootQualityMod
+        /// raised by the killing player's Quest Bonus count (QuestCompletionCount). Enabled per-zone by
+        /// defining the qb_quality_per_step stat; qb_step_size (default 1000) and qb_max_steps (default
+        /// 20) tune the curve. Quality clamps at 1.0. qb_quantity_per_step is reserved (no effect yet).
+        /// Returns <paramref name="src"/> unchanged for non-player kills or zones without the stat.
+        /// </summary>
+        private ACE.Database.Models.World.TreasureDeath BuildQBScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile, DamageHistoryInfo killer)
+        {
+            if (src == null || profile == null || killer == null)
+                return src;
+
+            if (!profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.QbQualityPerStep))
+                return src;
+
+            var player = killer.TryGetPetOwnerOrAttacker() as Player;
+            if (player == null)
+                return src;
+
+            var qb = player.QuestCompletionCount ?? 0;
+            if (qb <= 0)
+                return src;
+
+            var stepSize = Math.Max(1.0, profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.QbStepSize, 1000.0));
+            var maxSteps = Math.Max(0, (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.QbMaxSteps, 20.0)));
+            var steps = (int)Math.Min(qb / stepSize, maxSteps);
+            if (steps <= 0)
+                return src;
+
+            var perStep = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.QbQualityPerStep);
+            if (perStep <= 0)
+                return src;
+
+            var t = new ACE.Database.Models.World.TreasureDeath
+            {
+                Id = src.Id,
+                TreasureType = src.TreasureType,
+                Tier = src.Tier,
+                LootQualityMod = src.LootQualityMod,
+                UnknownChances = src.UnknownChances,
+                ItemChance = src.ItemChance,
+                ItemMinAmount = src.ItemMinAmount,
+                ItemMaxAmount = src.ItemMaxAmount,
+                ItemTreasureTypeSelectionChances = src.ItemTreasureTypeSelectionChances,
+                MagicItemChance = src.MagicItemChance,
+                MagicItemMinAmount = src.MagicItemMinAmount,
+                MagicItemMaxAmount = src.MagicItemMaxAmount,
+                MagicItemTreasureTypeSelectionChances = src.MagicItemTreasureTypeSelectionChances,
+                MundaneItemChance = src.MundaneItemChance,
+                MundaneItemMinAmount = src.MundaneItemMinAmount,
+                MundaneItemMaxAmount = src.MundaneItemMaxAmount,
+                MundaneItemTypeSelectionChances = src.MundaneItemTypeSelectionChances,
+                LastModified = src.LastModified,
+            };
+
+            t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod + steps * perStep, 0.0, 1.0);
 
             return t;
         }

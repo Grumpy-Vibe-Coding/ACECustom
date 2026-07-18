@@ -12,9 +12,11 @@ namespace ACE.Server.Managers
 {
     public static class PrestigeManager
     {
-        // Tier 1 starts at Variation 11
-        // Retail is 0-10 (technically 0 is main world, others are specialized)
-        public const int PRESTIGE_VAR_OFFSET = 10;
+        // Prestige tiers live ABOVE this offset so they never collide with other explicit
+        // variation layers. Variations 1..PRESTIGE_VAR_OFFSET are ordinary explicit layers
+        // (retail instanced content, Zone Control's Tide v11-25, rifts, etc.) and are NOT
+        // owned by the prestige system — see IsPrestigeVariation. Tier N == PRESTIGE_VAR_OFFSET + N.
+        public const int PRESTIGE_VAR_OFFSET = 1000;
         public const int PRESTIGE_BASE_VARIATION = PRESTIGE_VAR_OFFSET + 1;
         private const int DEFAULT_PRESTIGE_MAX_TIER = 10;
 
@@ -604,75 +606,14 @@ namespace ACE.Server.Managers
         }
 
         /// <summary>
-        /// Prefer <see cref="WorldObject.Location"/>.Variation, then physics position variation, when comparing who should see whom.
+        /// Generic variation identity now lives in <see cref="VariationManager"/>. These thin
+        /// delegators remain only for source compatibility; the prestige system does not own
+        /// generic visibility/collision variation logic.
         /// </summary>
-        public static int? GetEffectiveVariationForVisibility(WorldObject wo)
-        {
-            if (wo == null)
-                return null;
+        public static int? GetEffectiveVariationForVisibility(WorldObject wo) => VariationManager.GetEffectiveVariationForVisibility(wo);
 
-            // Most world objects have a location (or physics position) with a variation.
-            // However, non-spatial objects (inventory items, escrow items, etc.) may not.
-            // For networking boundaries we still need a deterministic "effective variation"
-            // so we inherit it from the closest spatial owner (wielder/container/owner player).
-
-            var direct = wo.Location?.Variation ?? wo.PhysicsObj?.Position.Variation;
-            if (direct.HasValue)
-                return direct;
-
-            // Walk wielder / container chain (nested packs, etc.): same precedence as single-hop (wielder before container).
-            var visited = new HashSet<uint> { wo.Guid.Full };
-            for (var curr = wo; ; )
-            {
-                WorldObject next = null;
-                if (curr.Wielder != null)
-                    next = curr.Wielder;
-                else if (curr.Container != null)
-                    next = curr.Container;
-                if (next == null)
-                    break;
-                if (!visited.Add(next.Guid.Full))
-                    break;
-                curr = next;
-                var v = curr.Location?.Variation ?? curr.PhysicsObj?.Position.Variation;
-                if (v.HasValue)
-                    return v;
-            }
-
-            // Fallback for typical inventory items: inherit from online player owner.
-            // (OwnerId is usually set for items in a player's inventory/equipment.)
-            if (wo.OwnerId.HasValue)
-            {
-                var ownerPlayer = PlayerManager.GetOnlinePlayer(wo.OwnerId.Value);
-                var viaOwnerPlayer = ownerPlayer?.Location?.Variation ?? ownerPlayer?.PhysicsObj?.Position.Variation;
-                if (viaOwnerPlayer.HasValue)
-                    return viaOwnerPlayer;
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// True when two variation values should share client <c>CreateObject</c> networking.
-        /// Prestige variations (&gt; <see cref="PRESTIGE_VAR_OFFSET"/>) require an exact nullable match.
-        /// Retail treats <c>null</c> and <c>0</c> as one &quot;base&quot; bucket; explicit retail layers <c>1..PRESTIGE_VAR_OFFSET</c> match only the same value.
-        /// </summary>
-        public static bool SameVariationForVisibility(int? a, int? b)
-        {
-            if (IsPrestigeVariation(a) || IsPrestigeVariation(b))
-                return a == b;
-
-            static int? NormalizeRetailBase(int? v)
-            {
-                if (!v.HasValue || v.Value == 0)
-                    return null;
-                return v;
-            }
-
-            var ca = NormalizeRetailBase(a);
-            var cb = NormalizeRetailBase(b);
-            return ca == cb;
-        }
+        /// <inheritdoc cref="VariationManager.SameVariationForVisibility"/>
+        public static bool SameVariationForVisibility(int? a, int? b) => VariationManager.SameVariationForVisibility(a, b);
 
         public static int GetBasePrestigeVariation()
         {

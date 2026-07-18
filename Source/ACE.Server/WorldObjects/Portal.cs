@@ -106,7 +106,7 @@ namespace ACE.Server.WorldObjects
             // Don't fire portals that belong to a different variation than the player.
             // This prevents base-world portals (Town Network, lifestone recalls, etc.)
             // from being invisibly usable inside a prestige variation zone.
-            if (!PrestigeManager.SameVariationForVisibility(Location?.Variation, player.Location?.Variation))
+            if (!VariationManager.SameVariationForVisibility(Location?.Variation, player.Location?.Variation))
                 return;
 
             OnActivate(player);

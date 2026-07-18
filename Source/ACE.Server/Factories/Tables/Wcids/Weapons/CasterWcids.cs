@@ -233,7 +233,7 @@ namespace ACE.Server.Factories.Tables.Wcids
         public static WeenieClassName Roll(int tier)
         {
             tier = Math.Clamp(tier, 1, 10);
-            return casterTiers[tier - 1].Roll();
+            return TierTable.Entry(casterTiers, tier).Roll();
         }
 
         private static readonly HashSet<WeenieClassName> _combined = new HashSet<WeenieClassName>();

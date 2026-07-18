@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using log4net;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using ACE.Database;
 using ACE.Database.Models.Shard;
@@ -763,8 +764,166 @@ namespace ACE.Server.Managers.ZoneControl
             lock (_lock)
             {
                 _initialized = false;
+                _questRows = null;   // quest registry re-reads from ace_world on next pull
                 EnsureInitialized();
             }
+        }
+
+        // ── Quest registry (plugin "Quests" tab) ──
+        // Authored rows live in ace_world.zonecontrol_quest (one row per quest; each content wave's SQL
+        // artifact appends its own rows). The registry is display data only — stamps/emotes/KillQuest props
+        // are the real quest machinery. NPC coords are resolved from landblock_instance by npc_wcid so
+        // moving an NPC never stales the tab, and "wired" flags rows whose stamp or NPC is missing.
+
+        public sealed class ZoneQuestRow
+        {
+            public string Zone;
+            public string QuestKey;       // counter stamp; empty = planned-only row
+            public string CompletedKey;   // cooldown stamp
+            public string Title;
+            public string Category;       // kill | collect | story | boss | event
+            public string Wave;           // plan key (B1, A3, ...) for grouping/sorting
+            public string NpcName;
+            public uint NpcWcid;
+            public string Objective;
+            public string Targets;        // '~'-separated display list
+            public int Count;
+            public int RepeatHours;
+            public string Reward;
+            public string Stage;          // planned | testing | live
+            public int SortOrder;
+            // resolved at load:
+            public string LandblockHex = "";   // NPC's landblock, "F659"
+            public string Coords = "";         // NPC map coords, "30.3S, 94.9E"
+            public bool Wired = true;          // stamp exists (if keyed) AND npc placed (if wcid set)
+        }
+
+        private static List<ZoneQuestRow> _questRows;   // guarded by _lock; null = load on next request
+
+        /// <summary>Registry rows for one zone, sort_order then wave. Loads (and bootstraps the table) lazily.</summary>
+        public static List<ZoneQuestRow> GetZoneQuests(string zoneName)
+        {
+            List<ZoneQuestRow> rows;
+            lock (_lock)
+            {
+                if (_questRows == null)
+                    _questRows = LoadQuestRegistry();
+                rows = _questRows;
+            }
+            var area = GetArea(zoneName);
+            var name = area?.Name ?? zoneName;
+            return rows.Where(q => string.Equals(q.Zone, name, StringComparison.OrdinalIgnoreCase))
+                       .OrderBy(q => q.SortOrder)
+                       .ThenBy(q => q.Wave, StringComparer.OrdinalIgnoreCase)
+                       .ToList();
+        }
+
+        private static List<ZoneQuestRow> LoadQuestRegistry()
+        {
+            var result = new List<ZoneQuestRow>();
+            try
+            {
+                using var ctx = new ACE.Database.Models.World.WorldDbContext();
+                var conn = ctx.Database.GetDbConnection();
+                if (conn.State != System.Data.ConnectionState.Open)
+                    ctx.Database.OpenConnection();
+
+                using (var create = conn.CreateCommand())
+                {
+                    create.CommandText = @"CREATE TABLE IF NOT EXISTS `zonecontrol_quest` (
+                        `id`            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                        `zone`          VARCHAR(64)  NOT NULL,
+                        `quest_key`     VARCHAR(64)  NULL,
+                        `completed_key` VARCHAR(64)  NULL,
+                        `title`         VARCHAR(64)  NOT NULL,
+                        `category`      VARCHAR(16)  NOT NULL,
+                        `wave`          VARCHAR(16)  NULL,
+                        `npc_name`      VARCHAR(64)  NULL,
+                        `npc_wcid`      INT UNSIGNED NULL,
+                        `objective`     VARCHAR(255) NOT NULL,
+                        `targets`       VARCHAR(255) NULL,
+                        `count`         INT          NULL,
+                        `repeat_hours`  INT          NULL,
+                        `reward`        VARCHAR(128) NULL,
+                        `stage`         VARCHAR(16)  NOT NULL DEFAULT 'planned',
+                        `sort_order`    INT          NOT NULL DEFAULT 0,
+                        `notes`         VARCHAR(255) NULL,
+                        KEY `idx_zone` (`zone`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+                    create.ExecuteNonQuery();
+                }
+
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT `zone`, `quest_key`, `completed_key`, `title`, `category`, `wave`, " +
+                                      "`npc_name`, `npc_wcid`, `objective`, `targets`, `count`, `repeat_hours`, " +
+                                      "`reward`, `stage`, `sort_order` FROM `zonecontrol_quest`";
+                    using var rdr = cmd.ExecuteReader();
+                    while (rdr.Read())
+                    {
+                        result.Add(new ZoneQuestRow
+                        {
+                            Zone         = rdr.IsDBNull(0)  ? "" : rdr.GetString(0),
+                            QuestKey     = rdr.IsDBNull(1)  ? "" : rdr.GetString(1),
+                            CompletedKey = rdr.IsDBNull(2)  ? "" : rdr.GetString(2),
+                            Title        = rdr.IsDBNull(3)  ? "" : rdr.GetString(3),
+                            Category     = rdr.IsDBNull(4)  ? "" : rdr.GetString(4),
+                            Wave         = rdr.IsDBNull(5)  ? "" : rdr.GetString(5),
+                            NpcName      = rdr.IsDBNull(6)  ? "" : rdr.GetString(6),
+                            NpcWcid      = rdr.IsDBNull(7)  ? 0u : Convert.ToUInt32(rdr.GetValue(7)),
+                            Objective    = rdr.IsDBNull(8)  ? "" : rdr.GetString(8),
+                            Targets      = rdr.IsDBNull(9)  ? "" : rdr.GetString(9),
+                            Count        = rdr.IsDBNull(10) ? 0  : Convert.ToInt32(rdr.GetValue(10)),
+                            RepeatHours  = rdr.IsDBNull(11) ? 0  : Convert.ToInt32(rdr.GetValue(11)),
+                            Reward       = rdr.IsDBNull(12) ? "" : rdr.GetString(12),
+                            Stage        = rdr.IsDBNull(13) ? "planned" : rdr.GetString(13),
+                            SortOrder    = rdr.IsDBNull(14) ? 0  : Convert.ToInt32(rdr.GetValue(14)),
+                        });
+                    }
+                }
+
+                // Resolve NPC placement (coords + landblock) once per distinct wcid; prefer the base(NULL)
+                // row, else the lowest variation — coordinates are identical across mirrored rows.
+                var placements = new Dictionary<uint, (string lb, string co)>();
+                foreach (var wcid in result.Where(r => r.NpcWcid != 0).Select(r => r.NpcWcid).Distinct())
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT `obj_Cell_Id`, `origin_X`, `origin_Y`, `origin_Z` FROM `landblock_instance` " +
+                                      "WHERE `weenie_Class_Id` = @w ORDER BY (`variation_Id` IS NULL) DESC, `variation_Id` LIMIT 1";
+                    var p = cmd.CreateParameter();
+                    p.ParameterName = "@w";
+                    p.Value = wcid;
+                    cmd.Parameters.Add(p);
+                    using var rdr = cmd.ExecuteReader();
+                    if (rdr.Read())
+                    {
+                        var cell = Convert.ToUInt32(rdr.GetValue(0));
+                        var pos = new ACE.Entity.Position(cell,
+                            Convert.ToSingle(rdr.GetValue(1)), Convert.ToSingle(rdr.GetValue(2)), Convert.ToSingle(rdr.GetValue(3)),
+                            0f, 0f, 0f, 1f);
+                        var co = ACE.Server.Entity.PositionExtensions.GetMapCoordStr(pos) ?? "";
+                        placements[wcid] = (((ushort)(cell >> 16)).ToString("X4"), co);
+                    }
+                }
+
+                foreach (var q in result)
+                {
+                    var stampOk = string.IsNullOrEmpty(q.QuestKey) || DatabaseManager.World.GetCachedQuest(q.QuestKey) != null;
+                    var npcOk = q.NpcWcid == 0 || placements.ContainsKey(q.NpcWcid);
+                    if (q.NpcWcid != 0 && placements.TryGetValue(q.NpcWcid, out var pl))
+                    {
+                        q.LandblockHex = pl.lb;
+                        q.Coords = pl.co;
+                    }
+                    // planned rows aren't expected to be wired yet — only flag testing/live rows
+                    q.Wired = string.Equals(q.Stage, "planned", StringComparison.OrdinalIgnoreCase) || (stampOk && npcOk);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"[ZONECONTROL] LoadQuestRegistry failed: {ex.Message}");
+            }
+            return result;
         }
 
         #endregion

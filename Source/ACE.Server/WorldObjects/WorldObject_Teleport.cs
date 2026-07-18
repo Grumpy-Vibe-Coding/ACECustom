@@ -118,6 +118,27 @@ namespace ACE.Server.WorldObjects
                     LandblockManager.RelocateObjectForPhysics(this, true);
                 }
             }
+
+            // Final authoritative variation reconcile (fixes v11-object leak after a same-cell /tv
+            // swap). set_request_pos only re-fetches CurCell when it is null, so a same-cell variation
+            // change can leave the physics Position.Variation stale at the ORIGIN; since
+            // GetEffectiveVariationForVisibility falls back to Position.Variation when Location.Variation
+            // is null/base, the player stays mis-classified and re-tracks origin-variation objects every
+            // tick, defeating the earlier sweeps. Pin the physics variation to the destination and do a
+            // last cleanup so no origin-variation object survives the transition.
+            if (player != null && prevLoc.Variation != newPosition.Variation)
+            {
+                if (PhysicsObj?.Position != null)
+                    PhysicsObj.Position.Variation = newPosition.Variation;
+                try
+                {
+                    HandleVariationChangeVisbilityCleanup(prevLoc.Variation, newPosition.Variation);
+                }
+                catch (Exception e)
+                {
+                    log.Warn(e);
+                }
+            }
         }
 
         /// <summary>
@@ -163,7 +184,9 @@ namespace ACE.Server.WorldObjects
             {
                 if (knownObj.PhysicsObj == null) continue;
                 if (knownObj.Location == null) continue;
-                if (knownObj.Location.Variation == destinationVariation) continue;
+                // Normalized compare (0 and null are both "base"); a raw == would wrongly drop an
+                // explicit-0 base object when destination is null, or vice versa.
+                if (VariationManager.SameVariationForVisibility(knownObj.Location.Variation, destinationVariation)) continue;
 
                 knownObj.PhysicsObj.ObjMaint?.RemoveObject(PhysicsObj);
                 PhysicsObj?.ObjMaint?.RemoveObject(knownObj.PhysicsObj);
