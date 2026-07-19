@@ -376,7 +376,13 @@ namespace ACE.Server.Entity
                     var res = AddWorldObject(fo, variationId);
                     if (!res)
                     {
-                        Console.WriteLine($"Failed to add world object {fo.Name}, {fo.Guid} to landblock {Id.Landblock}");
+                        // WARN, not console: a static lost here is invisible/unusable until the landblock
+                        // reloads, and the console does not survive restarts (Guttering Ward-Lantern
+                        // incident, 2026-07-18 20:21 — fingerprint was lost with the console).
+                        log.Warn($"[SpawnDiag] CreateWorldObjects failed to add 0x{fo.Guid}:{fo.Name} " +
+                                 $"[{fo.WeenieClassId} - {fo.WeenieType}] to landblock {Id.Landblock:X4} " +
+                                 $"lbVar={VariationId?.ToString() ?? "null"} param={variationId?.ToString() ?? "null"} " +
+                                 $"loc={fo.Location}");
                     }
                     fo.ActivateLinks(objects, shardObjects, parent);
 
@@ -1572,7 +1578,11 @@ namespace ACE.Server.Entity
                         }
                     }
                     else if (wo.ProjectileTarget == null && wo is not SpellProjectile)
-                        Console.WriteLine($"AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name} [{wo.WeenieClassId} - {wo.WeenieType}] at {wo.Location}");
+                        // WARN, not console (see CreateWorldObjects) — non-generator statics failing physics
+                        // placement are rare and each one is a quest object someone can't use.
+                        log.Warn($"[SpawnDiag] AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name} " +
+                                 $"[{wo.WeenieClassId} - {wo.WeenieType}] at {wo.Location} | " +
+                                 $"lb={Id.Landblock:X4} lbVar={this.VariationId?.ToString() ?? "null"} param={VariationId?.ToString() ?? "null"}");
 
                     return false;
                 }
