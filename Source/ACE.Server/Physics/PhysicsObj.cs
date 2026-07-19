@@ -1158,16 +1158,20 @@ namespace ACE.Server.Physics
 
             if (!CheckPositionInternal(newCell, pos, transition, setPos))
             {
-                // Option B (2026-07-19): a generator is an invisible spawn origin with no meaningful physics
-                // presence. If normal placement finds no valid floor at its authored spot (e.g. a Tou Tou water
-                // generator at ~sea level over open water -> NoValidPosition), force it into its resolved cell so
-                // it still spawns its brood instead of failing to place. Normal objects -- and the generator's
-                // own spawned children -- keep full collision/terrain validation.
-                if (WeenieObj?.WorldObject != null && WeenieObj.WorldObject.IsGenerator)
+                var collided = handle_all_collisions(transition.CollisionInfo, false, false);
+
+                // Shallow-water spawn tolerance (2026-07-19): this world's water is knee-deep, walkable "land",
+                // but the physics won't SPAWN an object onto a water-typed terrain cell -- ValidateWalkable
+                // rejects it, yielding NoValidPosition (confirmed via /fixinstz: the lakebed terrain is already
+                // at the objects' Z, they are not buried). Deep water is handled upstream (an EntirelyWater block
+                // returns Collided in LandCell.FindEnvCollisions), so a NON-colliding failure on a water cell is
+                // exactly the shallow-water case: force the object into its resolved cell so water-camp generators
+                // AND their spawned creatures populate. Solid collisions and dry no-floor failures (e.g. a spawn
+                // point in mid-air off a cliff) still fail normally.
+                if (!collided && newCell.WaterType != LandDefs.WaterType.NotWater)
                     return ForceIntoCell(newCell, pos);
 
-                return handle_all_collisions(transition.CollisionInfo, false, false) ?
-                    SetPositionError.Collided : SetPositionError.NoValidPosition;
+                return collided ? SetPositionError.Collided : SetPositionError.NoValidPosition;
             }
 
             if (transition.SpherePath.CurCell == null) return SetPositionError.NoCell;
