@@ -179,13 +179,14 @@ namespace ACE.Server.Managers
             if (landblockGroupPendingAdditions.IsEmpty)
                 return;
 
-            for (int i = landblockGroupPendingAdditions.Count - 1; i >= 0; i--)
+            // Snapshot keys and TryRemove-first: index-based ElementAt over a ConcurrentDictionary while
+            // physics worker threads TryAdd concurrently can skip an entry (delayed a tick) or process one
+            // TWICE (same landblock in two groups = double-ticked, and its group-removal at unload leaves
+            // a dead entry ticking forever). TryRemove guarantees exactly-once.
+            foreach (var pendingKey in landblockGroupPendingAdditions.Keys.ToList())
             {
-                var landlockToAdd = landblockGroupPendingAdditions.ElementAt(i).Value;
-                //if (landblockGroupPendingAdditions.ElementAt(i).Value.Id.ToString().StartsWith("019E"))
-                //{
-                //    Console.WriteLine("Adding landblock: " + landblockGroupPendingAdditions.ElementAt(i).Value.Id.ToString() + ", v:" + landblockGroupPendingAdditions.ElementAt(i).Value.VariationId + " to landblockGroups");
-                //}
+                if (!landblockGroupPendingAdditions.TryRemove(pendingKey, out var landlockToAdd))
+                    continue;
                 if (landlockToAdd.IsDungeon || landlockToAdd.VariationId.HasValue)
                 {
                     // Each dungeon exists in its own group
@@ -233,9 +234,6 @@ namespace ACE.Server.Managers
                         landblockGroups.Add(landblockGroup);
                     }
                 }
-
-                landblockGroupPendingAdditions.Remove(new VariantCacheId { Landblock = landlockToAdd.Id.Landblock, Variant = landlockToAdd.VariationId }, out _);                    
-                    
             }
 
             // Debugging todo: comment this out after enough testing

@@ -242,20 +242,88 @@ namespace ACE.Server.Entity
         {
             if (!reload)
                 PhysicsLandblock.PostInit();
-            
-            Task.Run(() =>
-            {
-                //Console.WriteLine($"Landblock.Init({Id}) task started, variation: {VariationId}, v: {variationId}");
-                CreateWorldObjects(variationId);
-                
-                SpawnDynamicShardObjects();
 
-                SpawnEncounters();
-
-                SetEnvironmentConditions();
-            });
+            StartInitSpawnTask(variationId);
 
             //LoadMeshes(objects);
+        }
+
+        // Void-landblock root cause (2026-07-18, F658 v11): this spawn work used to run in a bare
+        // Task.Run. An exception thrown before CreateWorldObjects could enqueue its spawn action
+        // (DB instance/shard queries, object factory) killed the task with ZERO trace — the landblock
+        // stayed registered, ticking and walkable (physics is built in the ctor) but permanently
+        // EMPTY until its scheduled unload. TaskScheduler.UnobservedTaskException was not hooked, so
+        // nothing could ever surface it. The catch below makes the death visible and the heartbeat
+        // watchdog (CheckInitSpawnWatchdog) retries it.
+        private Task initSpawnTask;
+        private int? initSpawnVariationId;
+        private int initSpawnAttempts;
+        private DateTime initSpawnStartedTime;
+        private bool initSpawnStillRunningLogged;
+
+        private void StartInitSpawnTask(int? variationId)
+        {
+            initSpawnVariationId = variationId;
+            initSpawnAttempts++;
+            initSpawnStartedTime = DateTime.UtcNow;
+            initSpawnStillRunningLogged = false;
+
+            initSpawnTask = Task.Run(() =>
+            {
+                try
+                {
+                    CreateWorldObjects(variationId);
+
+                    SpawnDynamicShardObjects();
+
+                    SpawnEncounters();
+
+                    SetEnvironmentConditions();
+                }
+                catch (Exception ex)
+                {
+                    log.Error($"[VoidHeal] Landblock {Id.Landblock:X4} (Var {VariationId?.ToString() ?? "null"}) init spawn task FAILED (attempt {initSpawnAttempts}) - block would be a void without retry: {ex}");
+                }
+            });
+        }
+
+        /// <summary>
+        /// Heartbeat watchdog for the init spawn task: if the task ended (faulted or otherwise) without
+        /// CreateWorldObjects completing, the landblock is a void — retry up to 3 times. A task still
+        /// running past the threshold is logged once (DB stall) but not retried until it ends.
+        /// </summary>
+        private static readonly TimeSpan initSpawnWatchdogThreshold = TimeSpan.FromSeconds(60);
+
+        private void CheckInitSpawnWatchdog(DateTime thisHeartBeat)
+        {
+            if (CreateWorldObjectsCompleted || initSpawnTask == null)
+                return;
+
+            if (initSpawnStartedTime + initSpawnWatchdogThreshold > thisHeartBeat)
+                return;
+
+            if (!initSpawnTask.IsCompleted)
+            {
+                if (!initSpawnStillRunningLogged)
+                {
+                    initSpawnStillRunningLogged = true;
+                    log.Warn($"[VoidHeal] Landblock {Id.Landblock:X4} (Var {VariationId?.ToString() ?? "null"}) init spawn task still running after {initSpawnWatchdogThreshold.TotalSeconds:N0}s (attempt {initSpawnAttempts})");
+                }
+                return;
+            }
+
+            if (initSpawnAttempts >= 3)
+            {
+                if (!initSpawnStillRunningLogged)
+                {
+                    initSpawnStillRunningLogged = true;
+                    log.Error($"[VoidHeal] Landblock {Id.Landblock:X4} (Var {VariationId?.ToString() ?? "null"}) init spawn task never completed after {initSpawnAttempts} attempts - GIVING UP, block is a VOID (faulted={initSpawnTask.IsFaulted})");
+                }
+                return;
+            }
+
+            log.Error($"[VoidHeal] Landblock {Id.Landblock:X4} (Var {VariationId?.ToString() ?? "null"}) init spawn task ended without completing spawns (faulted={initSpawnTask.IsFaulted}) - RETRYING (attempt {initSpawnAttempts + 1}/3)");
+            StartInitSpawnTask(initSpawnVariationId);
         }
 
         public void SetEnvironmentConditions()
@@ -350,6 +418,11 @@ namespace ACE.Server.Entity
 
             actionQueue.EnqueueAction(new ActionEventDelegate(ActionType.Landblock_CreateWorldObjects, () =>
             {
+                // idempotence: the [VoidHeal] watchdog can retry the init spawn task; if a previous
+                // attempt's action already populated the block, drop this duplicate payload.
+                if (CreateWorldObjectsCompleted)
+                    return;
+
                 // for mansion linking
                 var houses = new List<House>();
                 foreach (var fo in factoryObjects)
@@ -1079,6 +1152,8 @@ namespace ACE.Server.Entity
             if (lastHeartBeat + heartbeatInterval <= DateTime.UtcNow)
             {
                 var thisHeartBeat = DateTime.UtcNow;
+
+                CheckInitSpawnWatchdog(thisHeartBeat);
 
                 ProcessPendingWorldObjectAdditionsAndRemovals();
 
