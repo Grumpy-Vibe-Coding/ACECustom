@@ -2103,6 +2103,10 @@ namespace ACE.Server.Physics
 
         public bool entering_world;
 
+        // Last SetPosition result from enter_world; surfaced by [SpawnDiag] to name why a placement failed
+        // (e.g. NoValidPosition/collision over water vs a cell-resolution miss).
+        public SetPositionError LastEnterWorldError;
+
         public bool enter_world(Position pos)
         {
             entering_world = true;
@@ -2129,6 +2133,7 @@ namespace ACE.Server.Physics
                 setPos.Flags |= SetPositionFlags.Slide;
             //Console.WriteLine($"enter_world {this.Name} setPos v: {setPos.Pos.Variation}");
             var result = SetPosition(setPos);
+            LastEnterWorldError = result;
             if (result != SetPositionError.OK)
                 return false;
 
