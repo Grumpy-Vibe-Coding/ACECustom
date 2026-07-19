@@ -322,9 +322,33 @@ namespace ACE.Server.Managers
             }
         }
 
+        /// <summary>
+        /// Landblock ids holding at least one online player, snapshotted once at the start of each
+        /// multi-threaded tick batch. Per-landblock dormancy checks (Landblock.HasPhysicalPlayerOnOrAdjacent)
+        /// read this shared set instead of each rescanning every online player, turning what was an
+        /// O(landblocks x players) tick-path cost into a single O(players) build plus O(9) lookups.
+        /// Rebuilt before the parallel tick and only read during it, so no synchronization is needed.
+        /// </summary>
+        internal static HashSet<ushort> OccupiedLandblocks { get; private set; } = new();
+
+        private static void RefreshOccupiedLandblocks()
+        {
+            var set = new HashSet<ushort>();
+            foreach (var player in PlayerManager.GetAllOnline())
+            {
+                var loc = player.Location;
+                if (loc != null)
+                    set.Add((ushort)loc.LandblockId.Landblock);
+            }
+            OccupiedLandblocks = set;
+        }
+
         private static void TickMultiThreadedWork()
         {
             ProcessPendingLandblockGroupAdditions();
+
+            // Snapshot online-player landblocks once for this batch (read by Landblock dormancy checks below).
+            RefreshOccupiedLandblocks();
 
             if (ConfigManager.Config.Server.Threading.MultiThreadedLandblockGroupTicking)
             {

@@ -1946,22 +1946,33 @@ namespace ACE.Server.Entity
         /// True when an online player is physically standing on this landblock id or an adjacent one,
         /// regardless of which variation instance they are registered on. Keeps a landblock awake when
         /// variation-instance player bookkeeping drifts (this instance's `players` list can be empty even
-        /// with a player right here). Only called when a landblock is otherwise about to go dormant, so
-        /// the online-player scan is rare.
+        /// with a player right here). Only reached once a block has passed its dormant threshold.
         /// </summary>
+        /// <remarks>
+        /// Reads <see cref="LandblockManager.OccupiedLandblocks"/>, the online-player landblock set snapshotted
+        /// once per multi-threaded tick batch, so each call is O(9) rather than O(online players): with many
+        /// variation instances all re-checking every dormant interval, a raw GetAllOnline() scan here was
+        /// O(landblocks x players) on the tick path.
+        /// </remarks>
         private bool HasPhysicalPlayerOnOrAdjacent()
         {
+            var occupied = LandblockManager.OccupiedLandblocks;
+            if (occupied.Count == 0)
+                return false;
+
             int thisX = (Id.Landblock >> 8) & 0xFF;
             int thisY = Id.Landblock & 0xFF;
-            foreach (var player in PlayerManager.GetAllOnline())
+            for (int dx = -1; dx <= 1; dx++)
             {
-                var loc = player.Location;
-                if (loc == null)
-                    continue;
-                int px = (loc.LandblockId.Landblock >> 8) & 0xFF;
-                int py = loc.LandblockId.Landblock & 0xFF;
-                if (Math.Abs(px - thisX) <= 1 && Math.Abs(py - thisY) <= 1)
-                    return true;
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    int nx = thisX + dx;
+                    int ny = thisY + dy;
+                    if (nx < 0 || nx > 255 || ny < 0 || ny > 255)
+                        continue;
+                    if (occupied.Contains((ushort)((nx << 8) | ny)))
+                        return true;
+                }
             }
             return false;
         }

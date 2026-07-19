@@ -857,7 +857,7 @@ namespace ACE.Server.Command.Handlers
                                 return;
                         }
 
-                        ZoneControlManager.MutateArea(name, a => apply(a.Effects));
+                        ZoneControlManager.MutateArea(name, a => { a.Effects ??= new ZoneEffects(); apply(a.Effects); });
                         var updated = ZoneControlManager.GetArea(name);
                         Msg($"'{name}' effects: {DescribeDot(updated?.Effects ?? new ZoneEffects())}." +
                             $"{(area.Enabled ? "" : " Zone still DISABLED - /zonecontrol enable " + name)}");

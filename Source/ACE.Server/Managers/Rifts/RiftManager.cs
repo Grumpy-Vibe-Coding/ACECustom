@@ -260,6 +260,13 @@ namespace ACE.Server.Managers.Rifts
                 return $"Rift dungeon {dungeon.Name ?? dungeon.Landblock.ToString("X4")} has no entry position set.";
 
             var variation = Interlocked.Decrement(ref _nextVariation);
+
+            // Defensive: rift variations only ever go more negative and reset on restart. Wrapping past
+            // int.MinValue would flip positive and collide with real variations. In practice this needs
+            // ~2 billion runs per process lifetime, but log loudly well before the boundary so it's caught.
+            if (variation < int.MinValue + 10_000)
+                log.Error($"[RIFT] _nextVariation is nearing int.MinValue ({variation}); restart the server to reset rift variation allocation before it wraps.");
+
             var run = new RiftRun
             {
                 RunId = -variation,
