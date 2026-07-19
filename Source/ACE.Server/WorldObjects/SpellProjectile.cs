@@ -717,6 +717,12 @@ namespace ACE.Server.WorldObjects
                 var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
                 if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamageMult))
                     finalDamage *= (float)zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamageMult);
+
+                // Empower aura: mirror the flat 1.5x melee/missile bonus (Monster_Melee.GetBaseDamage /
+                // WorldObject.GetDamageMod) so an empowered caster's spells scale the same way its swings do.
+                // Applied before pet mitigation, like the melee empower, so pet summon-aug mitigation still reduces it.
+                if (sourceCreature.GetProperty(PropertyBool.IsEmpowered) == true)
+                    finalDamage *= 1.5f;
             }
 
             // show debug info (after fork mult so displayed damage matches actual dealt damage)
