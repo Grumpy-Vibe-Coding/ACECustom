@@ -577,16 +577,20 @@ namespace ACE.Server.WorldObjects
                 {
                     var drained = Math.Min(amount, (uint)Math.Max(0, Stamina.Current));
                     if (drained > 0)
+                    {
                         UpdateVitalDelta(Stamina, -(int)drained);
-                    SendMessage($"The zone drains {drained} points of your stamina.", ChatMessageType.Combat);
+                        SendMessage($"The zone drains {drained} points of your stamina.", ChatMessageType.Combat);
+                    }
                     return;
                 }
                 case DamageType.Mana:
                 {
                     var drained = Math.Min(amount, (uint)Math.Max(0, Mana.Current));
                     if (drained > 0)
+                    {
                         UpdateVitalDelta(Mana, -(int)drained);
-                    SendMessage($"The zone drains {drained} points of your mana.", ChatMessageType.Combat);
+                        SendMessage($"The zone drains {drained} points of your mana.", ChatMessageType.Combat);
+                    }
                     return;
                 }
                 default:

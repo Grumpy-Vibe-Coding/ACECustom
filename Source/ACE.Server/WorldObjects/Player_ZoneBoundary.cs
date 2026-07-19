@@ -90,6 +90,16 @@ namespace ACE.Server.WorldObjects
                         Session,
                         "!!! YOU ARE LEAVING THE ZONE! RETURN IMMEDIATELY! !!!"));
 
+                    // Lifestone protection spares the boundary drain too (mirrors TakeZoneEffectDamage):
+                    // the player still saw the warning + gets the guide wisp above, but takes no HP loss
+                    // and cannot be killed by the boundary while protected.
+                    if (UnderLifestoneProtection)
+                    {
+                        HandleLifestoneProtection();
+                        UpdateZoneGuideWisp(true, variation);
+                        return;
+                    }
+
                     // 3. Damage: Force update vital (Direct HP reduction)
                     var dmg = (int)(Health.MaxValue * 0.05f);
                     if (dmg < 10) dmg = 10;

@@ -11,6 +11,9 @@ namespace ACE.Server.WorldObjects
     {
         private double lastAuraCheckTime = 0;
 
+        /// <summary>Empower aura radius, in meters: an IsEmpowerSource boss empowers matching group members within this range.</summary>
+        private const float EmpowerAuraRadius = 20.0f;
+
         /// <summary>
         /// Stores the original (non-prefixed) name so we can restore it cleanly.
         /// </summary>
@@ -61,7 +64,7 @@ namespace ACE.Server.WorldObjects
                             continue;
 
                         var dist = Vector3.Distance(myGlobalPos, creature.Location.ToGlobal(false));
-                        if (dist <= 20.0f)
+                        if (dist <= EmpowerAuraRadius)
                         {
                             bossNearby = true;
                             break;
@@ -75,6 +78,12 @@ namespace ACE.Server.WorldObjects
             if (bossNearby && !currentlyEmpowered)
             {
                 SetProperty(PropertyBool.IsEmpowered, true);
+
+                // Empower is a transient combat buff, but the name change below writes PropertyString.Name
+                // into the biota's dirty set. Suppress shard persistence so the "Empowered " prefix (and the
+                // runtime IsEmpowered flag) can never be saved and outlive the nearby boss. CanBeEmpowered
+                // creatures are generated combat mobs, so they carry no state worth persisting anyway.
+                SuppressShardPersistence = true;
 
                 // Save the original name on first empower
                 _originalName = Name;

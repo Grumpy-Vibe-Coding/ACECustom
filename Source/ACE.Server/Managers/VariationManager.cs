@@ -52,7 +52,7 @@ namespace ACE.Server.Managers
             if (wo == null)
                 return null;
 
-            var direct = wo.Location?.Variation ?? wo.PhysicsObj?.Position.Variation;
+            var direct = wo.Location?.Variation ?? wo.PhysicsObj?.Position?.Variation;
             if (direct.HasValue)
                 return direct;
 
@@ -70,7 +70,7 @@ namespace ACE.Server.Managers
                 if (!visited.Add(next.Guid.Full))
                     break;
                 curr = next;
-                var v = curr.Location?.Variation ?? curr.PhysicsObj?.Position.Variation;
+                var v = curr.Location?.Variation ?? curr.PhysicsObj?.Position?.Variation;
                 if (v.HasValue)
                     return v;
             }
@@ -79,7 +79,7 @@ namespace ACE.Server.Managers
             if (wo.OwnerId.HasValue)
             {
                 var ownerPlayer = PlayerManager.GetOnlinePlayer(wo.OwnerId.Value);
-                var viaOwnerPlayer = ownerPlayer?.Location?.Variation ?? ownerPlayer?.PhysicsObj?.Position.Variation;
+                var viaOwnerPlayer = ownerPlayer?.Location?.Variation ?? ownerPlayer?.PhysicsObj?.Position?.Variation;
                 if (viaOwnerPlayer.HasValue)
                     return viaOwnerPlayer;
             }

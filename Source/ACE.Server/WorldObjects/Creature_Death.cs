@@ -1026,22 +1026,12 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// Zone Scaler: returns a CLONE of the death-treasure profile with loot tier/quantity/quality scaled per the
-        /// resolved zone profile (never mutates the shared cached profile). Returns <paramref name="src"/> unchanged
-        /// when there is no profile or it defines no loot stats.
+        /// Shallow field-copy of a TreasureDeath profile so per-kill scaling (zone / QB) can mutate a clone
+        /// without touching the shared cached row. Keep the field list in sync with TreasureDeath's columns.
         /// </summary>
-        private ACE.Database.Models.World.TreasureDeath BuildZoneScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile)
+        private static ACE.Database.Models.World.TreasureDeath CloneTreasureDeath(ACE.Database.Models.World.TreasureDeath src)
         {
-            if (src == null || profile == null)
-                return src;
-
-            var hasTier = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus);
-            var hasQty = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
-            var hasQuality = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQualityMult);
-            if (!hasTier && !hasQty && !hasQuality)
-                return src;
-
-            var t = new ACE.Database.Models.World.TreasureDeath
+            return new ACE.Database.Models.World.TreasureDeath
             {
                 Id = src.Id,
                 TreasureType = src.TreasureType,
@@ -1062,6 +1052,25 @@ namespace ACE.Server.WorldObjects
                 MundaneItemTypeSelectionChances = src.MundaneItemTypeSelectionChances,
                 LastModified = src.LastModified,
             };
+        }
+
+        /// <summary>
+        /// Zone Scaler: returns a CLONE of the death-treasure profile with loot tier/quantity/quality scaled per the
+        /// resolved zone profile (never mutates the shared cached profile). Returns <paramref name="src"/> unchanged
+        /// when there is no profile or it defines no loot stats.
+        /// </summary>
+        private ACE.Database.Models.World.TreasureDeath BuildZoneScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile)
+        {
+            if (src == null || profile == null)
+                return src;
+
+            var hasTier = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus);
+            var hasQty = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
+            var hasQuality = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQualityMult);
+            if (!hasTier && !hasQty && !hasQuality)
+                return src;
+
+            var t = CloneTreasureDeath(src);
 
             if (hasTier)
             {
@@ -1127,27 +1136,7 @@ namespace ACE.Server.WorldObjects
             if (perStep <= 0)
                 return src;
 
-            var t = new ACE.Database.Models.World.TreasureDeath
-            {
-                Id = src.Id,
-                TreasureType = src.TreasureType,
-                Tier = src.Tier,
-                LootQualityMod = src.LootQualityMod,
-                UnknownChances = src.UnknownChances,
-                ItemChance = src.ItemChance,
-                ItemMinAmount = src.ItemMinAmount,
-                ItemMaxAmount = src.ItemMaxAmount,
-                ItemTreasureTypeSelectionChances = src.ItemTreasureTypeSelectionChances,
-                MagicItemChance = src.MagicItemChance,
-                MagicItemMinAmount = src.MagicItemMinAmount,
-                MagicItemMaxAmount = src.MagicItemMaxAmount,
-                MagicItemTreasureTypeSelectionChances = src.MagicItemTreasureTypeSelectionChances,
-                MundaneItemChance = src.MundaneItemChance,
-                MundaneItemMinAmount = src.MundaneItemMinAmount,
-                MundaneItemMaxAmount = src.MundaneItemMaxAmount,
-                MundaneItemTypeSelectionChances = src.MundaneItemTypeSelectionChances,
-                LastModified = src.LastModified,
-            };
+            var t = CloneTreasureDeath(src);
 
             t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod + steps * perStep, 0.0, 1.0);
 
