@@ -207,7 +207,8 @@ namespace ACE.Server.WorldObjects
             var cell = LScape.get_landcell(Location.Cell, VariationId);
             if (cell == null)
             {
-                log.Warn($"[SpawnDiag] AddPhysicsObj: get_landcell returned NULL for 0x{Guid}:{Name} " +
+                if (ServerConfig.spawn_diag_verbose.Value)
+                    log.Warn($"[SpawnDiag] AddPhysicsObj: get_landcell returned NULL for 0x{Guid}:{Name} " +
                          $"[{WeenieClassId}] cell={Location.Cell:X8} v={VariationId?.ToString() ?? "null"} locV={Location.Variation?.ToString() ?? "null"}");
                 PhysicsObj.DestroyObject();
                 PhysicsObj = null;
@@ -229,7 +230,7 @@ namespace ACE.Server.WorldObjects
 
             if (!success || PhysicsObj.CurCell == null)
             {
-                if (!SuppressSpawnPlacementDiag)
+                if (ServerConfig.spawn_diag_verbose.Value && !SuppressSpawnPlacementDiag)
                     log.Warn($"[SpawnDiag] AddPhysicsObj: enter_world FAILED for 0x{Guid}:{Name} [{WeenieClassId}] " +
                          $"@ cell {cell.ID:X8} pos {Location.Pos} rot {Location.Rotation} v={VariationId?.ToString() ?? "null"} " +
                          $"locV={Location.Variation?.ToString() ?? "null"} cellLbVar={(cell.CurLandblock?.VariationId)?.ToString() ?? "null"} " +

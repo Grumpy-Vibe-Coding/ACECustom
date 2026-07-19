@@ -447,7 +447,7 @@ namespace ACE.Server.Entity
                     }
 
                     var res = AddWorldObject(fo, variationId);
-                    if (!res)
+                    if (!res && ServerConfig.spawn_diag_verbose.Value)
                     {
                         // WARN, not console: a static lost here is invisible/unusable until the landblock
                         // reloads, and the console does not survive restarts (Guttering Ward-Lantern
@@ -1656,7 +1656,7 @@ namespace ACE.Server.Entity
                                 log.Debug($"[GENERATOR] Rate-limiter: {suppressed} similar generator placement failures were suppressed in the last 5m.");
                         }
                     }
-                    else if (wo.ProjectileTarget == null && wo is not SpellProjectile)
+                    else if (wo.ProjectileTarget == null && wo is not SpellProjectile && ServerConfig.spawn_diag_verbose.Value)
                         // WARN, not console (see CreateWorldObjects) — non-generator statics failing physics
                         // placement are rare and each one is a quest object someone can't use.
                         log.Warn($"[SpawnDiag] AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name} " +
