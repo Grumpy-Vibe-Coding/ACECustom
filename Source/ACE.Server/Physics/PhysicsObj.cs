@@ -1250,6 +1250,16 @@ namespace ACE.Server.Physics
 
         private static float ScatterThreshold_Z = 10.0f;
 
+        // Outdoor scatter tries are clamped INSIDE the generator's own landblock with this margin from
+        // the block edge. The margin must exceed any scatter-spawned creature's sphere radius: the
+        // placement transition probes neighbor cells within sphere-reach of a boundary
+        // (check_add_cell_boundary), and a cell probe into an unloaded block CREATES that landblock
+        // server-side. With the old 0.5f clamp, out-of-block tries piled up ON the boundary and edge
+        // generators (Tou Tou water gens at x/y=24/168) chain-created the entire ocean at v11 in a
+        // ~14s/ring wavefront (2026-07-18 21:04-21:07 log) — that create/unload churn is what exposed
+        // the void-landblock init race. Owner call 2026-07-18: "clamp the scatter to its own landblock".
+        private const float ScatterEdgeMargin = 5.0f;
+
         public SetPositionError SetScatterPositionInternal(SetPosition setPos, Transition transition)
         {
             var result = SetPositionError.GeneralFailure;
@@ -1261,11 +1271,12 @@ namespace ACE.Server.Physics
                 newPos.Frame.Origin.X += (float)ThreadSafeRandom.Next(-1.0f, 1.0f) * setPos.RadX;
                 newPos.Frame.Origin.Y += (float)ThreadSafeRandom.Next(-1.0f, 1.0f) * setPos.RadY;
 
-                // customized
+                // customized: clamp scatter to the generator's own landblock, inset by ScatterEdgeMargin
+                // so boundary probes can never reach (and thereby create) a neighboring landblock
                 if ((newPos.ObjCellID & 0xFFFF) < 0x100)
                 {
-                    newPos.Frame.Origin.X = Math.Clamp(newPos.Frame.Origin.X, 0.5f, 191.5f);
-                    newPos.Frame.Origin.Y = Math.Clamp(newPos.Frame.Origin.Y, 0.5f, 191.5f);
+                    newPos.Frame.Origin.X = Math.Clamp(newPos.Frame.Origin.X, ScatterEdgeMargin, 192.0f - ScatterEdgeMargin);
+                    newPos.Frame.Origin.Y = Math.Clamp(newPos.Frame.Origin.Y, ScatterEdgeMargin, 192.0f - ScatterEdgeMargin);
                 }
 
                 // get cell for this position
