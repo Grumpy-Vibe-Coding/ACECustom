@@ -14,8 +14,8 @@ namespace ACE.Server.Factories
 
         private static int RollWieldDifficulty(int tier, TreasureWeaponType weaponType)
         {
-            // tiers above the last authored case (10) clamp to the highest authored values
-            tier = Math.Min(tier, 10);
+            // tiers above the last authored case (11) clamp to the highest authored values
+            tier = Math.Min(tier, 11);
 
             int wield = 0;
             int chance = ThreadSafeRandom.Next(1, 100);
@@ -99,6 +99,14 @@ namespace ACE.Server.Factories
                             else
                                 wield = 800;
                             break;
+                        case 11:
+                            if (chance < 60)
+                                wield = 1025;
+                            else if (chance < 90)
+                                wield = 1100;
+                            else
+                                wield = 1175;
+                            break;
                     }
                     break;
 
@@ -179,6 +187,15 @@ namespace ACE.Server.Factories
                             else
                                 wield = 800;
                             break;
+                        case 11:
+                            // stays >= 315 so tier 11 keeps selecting elemental missile weenies
+                            if (chance < 30)
+                                wield = 1025;
+                            else if (chance < 80)
+                                wield = 1100;
+                            else
+                                wield = 1175;
+                            break;
                     }
                     break;
 
@@ -254,6 +271,17 @@ namespace ACE.Server.Factories
                                 wield = 725;
                             else
                                 wield = 800;
+                            break;
+                        case 11:
+                            // keeps the 25% wield-0 branch so tier 11 still rolls plain casters
+                            if (chance < 25)
+                                wield = 0;
+                            else if (chance < 50)
+                                wield = 1025;
+                            else if (chance < 85)
+                                wield = 1100;
+                            else
+                                wield = 1175;
                             break;
                     }
                     break;

@@ -184,6 +184,25 @@ namespace ACE.Server.Factories.Tables
             1.00f,
         };
 
+        // Cumulative: entry i is the chance of rolling quality <= i+1. T10 is a flat ramp
+        // (10% chance of quality 1). T11 pushes the mass to the top of the 1-12 range --
+        // quality 1 drops to 2% and roughly two thirds of rolls land at 9 or better.
+        private static readonly List<float> T11_QualityChances = new List<float>()
+        {
+            0.02f,
+            0.04f,
+            0.06f,
+            0.08f,
+            0.12f,
+            0.18f,
+            0.26f,
+            0.36f,
+            0.50f,
+            0.66f,
+            0.83f,
+            1.00f,
+        };
+
         /// <summary>
         /// Returns the quality chance tables for a tier
         /// </summary>
@@ -210,8 +229,10 @@ namespace ACE.Server.Factories.Tables
                 case 9:
                     return T9_QualityChances;
                 case 10:
-                default:    // tiers above the last authored table clamp to the highest
                     return T10_QualityChances;
+                case 11:
+                default:    // tiers above the last authored table clamp to the highest
+                    return T11_QualityChances;
             }
         }
 
