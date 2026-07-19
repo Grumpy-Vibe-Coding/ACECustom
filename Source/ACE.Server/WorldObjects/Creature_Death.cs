@@ -916,6 +916,36 @@ namespace ACE.Server.WorldObjects
             // currency for this mob (null for players/exempt/non-endgame/no-match -> normal loot).
             var zoneLoot = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
 
+            // contain and non-wielded treasure create (create-list: quest drops etc.)
+            // Runs BEFORE the random/zone-set treasure below so quest and special items list FIRST
+            // in the corpse (owner loot-order decision 2026-07-20).
+            if (Biota.PropertiesCreateList != null)
+            {
+                var createList = Biota.PropertiesCreateList.Where(i => (i.DestinationType & DestinationType.Contain) != 0 ||
+                                (i.DestinationType & DestinationType.Treasure) != 0 && (i.DestinationType & DestinationType.Wield) == 0).ToList();
+
+                var selected = CreateListSelect(createList);
+
+                foreach (var item in selected)
+                {
+                    var wo = WorldObjectFactory.CreateNewWorldObject(item);
+
+                    if (wo != null)
+                    {
+                        if (tier > 0)
+                            PrestigeManager.ApplyLootScaling(wo, tier);
+
+                        // Zone Control loot: scale stackable always-drop materials (what drops stays the weenie's table)
+                        ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateCreateListItem(wo, zoneLoot);
+
+                        if (corpse != null)
+                            corpse.TryAddToInventory(wo);
+                        else
+                            droppedItems.Add(wo);
+                    }
+                }
+            }
+
             // create death treasure from loot generation factory
             if (DeathTreasure != null)
             {
@@ -927,16 +957,49 @@ namespace ACE.Server.WorldObjects
 
                 List<WorldObject> items = LootGenerationFactory.CreateRandomLootObjects(effectiveTreasure);
 
-                // Zone Control structured loot set: one blank weapon per family + gear allotment
-                // (items join the normal per-item mutation/corpse pipeline below)
-                if (zoneLoot != null && zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetEnabled, 0) != 0)
-                {
-                    var setArmor = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetArmor, 3));
-                    var setJewelry = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetJewelry, 2));
-                    var setCloaks = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSetCloaks, 1));
+                // Structured loot set: blank weapons + per-slot gear
+                // (items join the normal per-item mutation/corpse pipeline below).
+                //
+                // This is the DEFAULT for tier-11+ profiles and does not depend on Zone Control --
+                // those profiles carry zero item chances of their own, so without this they drop
+                // nothing. Every slot has its own count (default 1 at tier 11+, 0 below); a zone
+                // profile overrides individual slots via the loot_slot_* stats. There is no
+                // separate enable flag: a slot at 0 is off, and a zone can turn any slot on below
+                // tier 11 by giving it a count.
+                var slotCounts = LootGenerationFactory.ZoneLootSetCounts.TierDefault(effectiveTreasure.Tier);
 
-                    items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, setArmor, setJewelry, setCloaks));
+                if (zoneLoot != null)
+                {
+                    int Slot(string stat, int tierDefault) =>
+                        (int)Math.Round(zoneLoot.Get(stat, tierDefault));
+
+                    slotCounts.Weapons = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotWeapons, slotCounts.Weapons);
+                    slotCounts.Helm = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotHelm, slotCounts.Helm);
+                    slotCounts.Chest = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotChest, slotCounts.Chest);
+                    slotCounts.Shoulder = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotShoulder, slotCounts.Shoulder);
+                    slotCounts.Bracer = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotBracer, slotCounts.Bracer);
+                    slotCounts.Glove = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotGlove, slotCounts.Glove);
+                    slotCounts.Girth = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotGirth, slotCounts.Girth);
+                    slotCounts.UpperLeg = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotUpperLeg, slotCounts.UpperLeg);
+                    slotCounts.LowerLeg = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotLowerLeg, slotCounts.LowerLeg);
+                    slotCounts.Boot = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotBoot, slotCounts.Boot);
+                    slotCounts.Shield = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotShield, slotCounts.Shield);
+                    slotCounts.Amulet = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotAmulet, slotCounts.Amulet);
+                    slotCounts.Ring = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotRing, slotCounts.Ring);
+                    slotCounts.Bracelet = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotBracelet, slotCounts.Bracelet);
+                    slotCounts.Trinket = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotTrinket, slotCounts.Trinket);
+                    slotCounts.Cloak = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotCloak, slotCounts.Cloak);
                 }
+
+                if (slotCounts.Any)
+                    items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, slotCounts));
+
+                // Corpse display order (owner 2026-07-20): casters, missiles, UA, sword, other
+                // melee, then armor/shields/jewelry/cloaks. Stable sort keeps generation order
+                // within each group. Quest/create-list items are added BEFORE this loop (below was
+                // moved above) so they list first.
+                if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
+                    items = items.OrderBy(LootGenerationFactory.GetZoneLootDisplayOrder).ToList();
 
                 foreach (WorldObject wo in items)
                 {
@@ -946,6 +1009,21 @@ namespace ACE.Server.WorldObjects
                     // Zone Control loot: post-roll per-item mutations (weapon stats, AL, workmanship, coins,
                     // value, and the low-chance special-property rolls)
                     ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateLootItem(wo, zoneLoot, this, effectiveTreasure.Tier);
+
+                    // Tier 11+ loot is never character-level gated. Run LAST so it also clears level
+                    // requirements that came from the base weenie (cloaks ship with one) or from any
+                    // mutation above; skill-based gates are preserved.
+                    if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
+                    {
+                        LootGenerationFactory.StripLevelWieldRequirements(wo);
+
+                        // formatted Ratings block (rolled value + table min/max) in the description;
+                        // AppraiseInfo hides the raw ints so the client's own compact line goes away
+                        LootGenerationFactory.AppendRatingsAppraisalBlock(wo);
+
+                        // "T11 - [base name]" (material cleared -- the client would prefix it)
+                        LootGenerationFactory.ApplyT11NamePrefix(wo);
+                    }
 
                     if (corpse != null)
                         corpse.TryAddToInventory(wo);
@@ -989,34 +1067,6 @@ namespace ACE.Server.WorldObjects
                 }
                 else
                     droppedItems.Add(item);
-            }
-
-            // contain and non-wielded treasure create
-            if (Biota.PropertiesCreateList != null)
-            {
-                var createList = Biota.PropertiesCreateList.Where(i => (i.DestinationType & DestinationType.Contain) != 0 ||
-                                (i.DestinationType & DestinationType.Treasure) != 0 && (i.DestinationType & DestinationType.Wield) == 0).ToList();
-
-                var selected = CreateListSelect(createList);
-
-                foreach (var item in selected)
-                {
-                    var wo = WorldObjectFactory.CreateNewWorldObject(item);
-
-                    if (wo != null)
-                    {
-                        if (tier > 0)
-                            PrestigeManager.ApplyLootScaling(wo, tier);
-
-                        // Zone Control loot: scale stackable always-drop materials (what drops stays the weenie's table)
-                        ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateCreateListItem(wo, zoneLoot);
-
-                        if (corpse != null)
-                            corpse.TryAddToInventory(wo);
-                        else
-                            droppedItems.Add(wo);
-                    }
-                }
             }
 
             // Zone Scaler: inject the custom bonus-currency token (independent of the loot table).

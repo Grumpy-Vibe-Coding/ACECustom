@@ -1065,7 +1065,7 @@ namespace ACE.Server.Factories
 
             // ensure wield requirement is level 180?
             if (roll.ArmorType != TreasureArmorType.Society)
-                SetWieldLevelReq(wo, 180);
+                SetWieldLevelReq(wo, 180, profile.Tier);
 
             return true;
 
@@ -1118,7 +1118,7 @@ namespace ACE.Server.Factories
                 return false;
             }
             if (roll.ArmorType != TreasureArmorType.Society)
-                SetWieldLevelReq(wo, 550);
+                SetWieldLevelReq(wo, 550, profile.Tier);
 
             return true;
         }
@@ -1177,7 +1177,7 @@ namespace ACE.Server.Factories
             {
                 void TryAssignRating(Action<int> assign)
                 {
-                    var val = GearRatingChance.RollT10(wo, profile, roll);
+                    var val = GearRatingChance.RollForTier(wo, profile, roll);
                     if (val > 0) assign(val);
                 }
 
@@ -1200,29 +1200,29 @@ namespace ACE.Server.Factories
             // 🎯 Armor/Underclothes/Cloaks
             else if (isArmorType)
             {
-                var netherResist = GearRatingChance.RollT10(wo, profile, roll);
+                var netherResist = GearRatingChance.RollForTier(wo, profile, roll);
                 if (netherResist > 0)
                     wo.GearNetherResistRating = netherResist;
 
                 if (ThreadSafeRandom.Next(0, 1) == 0)
                 {
-                    var dmg = GearRatingChance.RollT10(wo, profile, roll);
+                    var dmg = GearRatingChance.RollForTier(wo, profile, roll);
                     if (dmg > 0) wo.GearDamage = dmg;
                 }
                 else
                 {
-                    var dmgResist = GearRatingChance.RollT10(wo, profile, roll);
+                    var dmgResist = GearRatingChance.RollForTier(wo, profile, roll);
                     if (dmgResist > 0) wo.GearDamageResist = dmgResist;
                 }
 
                 if (ThreadSafeRandom.Next(0, 1) == 0)
                 {
-                    var crit = GearRatingChance.RollT10(wo, profile, roll);
+                    var crit = GearRatingChance.RollForTier(wo, profile, roll);
                     if (crit > 0) wo.GearCritDamage = crit;
                 }
                 else
                 {
-                    var critResist = GearRatingChance.RollT10(wo, profile, roll);
+                    var critResist = GearRatingChance.RollForTier(wo, profile, roll);
                     if (critResist > 0) wo.GearCritDamageResist = critResist;
                 }
 
@@ -1231,7 +1231,7 @@ namespace ACE.Server.Factories
             // 💍 Jewelry
             else if (isJewelry)
             {
-                var rating = GearRatingChance.RollT10(wo, profile, roll);
+                var rating = GearRatingChance.RollForTier(wo, profile, roll);
                 if (rating > 0)
                 {
                     if (ThreadSafeRandom.Next(0, 1) == 0)
@@ -1258,8 +1258,13 @@ namespace ACE.Server.Factories
             return applied;
         }
 
-        private static void SetWieldLevelReq(WorldObject wo, int level)
+        private static void SetWieldLevelReq(WorldObject wo, int level, int tier)
         {
+            // Tier 11+ loot carries NO character-level requirement (owner decision 2026-07-20).
+            // The T11 mutation scripts stamp none either; skill-based gates (RawSkill) are kept.
+            if (tier >= LootGenerationFactory.ZoneLootSetMinTier)
+                return;
+
             if (wo.WieldRequirements == WieldRequirement.Invalid)
             {
                 wo.WieldRequirements = WieldRequirement.Level;

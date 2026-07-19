@@ -112,6 +112,24 @@ namespace ACE.Server.Network.Structure
                 }
             }
 
+            // T11 loot: the item's formatted Ratings block (rolled value + min/max, written at drop
+            // time by LootGenerationFactory.AppendRatingsAppraisalBlock) lives in LongDesc. Suppress
+            // the raw gear-rating ints from the appraisal profile so the client does not ALSO render
+            // its own compact "Ratings: Dam X, ..." line from them. Display-only: the WorldObject
+            // properties are untouched and combat reads those, not the appraisal profile.
+            if (wo.LongDesc != null && wo.LongDesc.Contains("Ratings:"))
+            {
+                PropertiesInt.Remove(PropertyInt.GearDamage);
+                PropertiesInt.Remove(PropertyInt.GearDamageResist);
+                PropertiesInt.Remove(PropertyInt.GearCrit);
+                PropertiesInt.Remove(PropertyInt.GearCritResist);
+                PropertiesInt.Remove(PropertyInt.GearCritDamage);
+                PropertiesInt.Remove(PropertyInt.GearCritDamageResist);
+                PropertiesInt.Remove(PropertyInt.GearHealingBoost);
+                PropertiesInt.Remove(PropertyInt.GearNetherResist);
+                PropertiesInt.Remove(PropertyInt.GearMaxHealth);
+            }
+
             // armor / clothing / shield
             if (wo is Clothing || wo.IsShield)
                 BuildArmor(wo);

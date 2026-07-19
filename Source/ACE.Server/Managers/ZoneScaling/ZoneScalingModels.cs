@@ -150,10 +150,25 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponBowstringChance = "weapon_bowstring_chance"; // bow drops restrung with a Finely Oiled Bowstring (full recipe)
 
         // C4. structured loot set + QB scaling (T11+ endgame loot; see ACE_Loot_Systems_DeepDive doc §12-13)
-        public const string LootSetEnabled = "loot_set_enabled";           // nonzero = every governed kill drops the structured BLANK gear set
-        public const string LootSetArmor = "loot_set_armor";               // armor pieces per kill (default 3)
-        public const string LootSetJewelry = "loot_set_jewelry";           // jewelry/trinket pieces per kill (default 2)
-        public const string LootSetCloaks = "loot_set_cloaks";             // cloaks per kill (default 1)
+        // PER-SLOT drop counts (owner 2026-07-20: no set enabler, each slot has its own count).
+        // Default = 1 each at tier 11+, 0 below; a zone stat overrides just that slot. Armor slots
+        // are coverage-aware: a multi-slot piece (coat) credits every slot it covers.
+        public const string LootSlotWeapons = "loot_slot_weapons";         // weapon drops PER FAMILY (9 families)
+        public const string LootSlotHelm = "loot_slot_helm";
+        public const string LootSlotChest = "loot_slot_chest";
+        public const string LootSlotShoulder = "loot_slot_shoulder";
+        public const string LootSlotBracer = "loot_slot_bracer";
+        public const string LootSlotGlove = "loot_slot_glove";
+        public const string LootSlotGirth = "loot_slot_girth";
+        public const string LootSlotUpperLeg = "loot_slot_upperleg";
+        public const string LootSlotLowerLeg = "loot_slot_lowerleg";
+        public const string LootSlotBoot = "loot_slot_boot";
+        public const string LootSlotShield = "loot_slot_shield";
+        public const string LootSlotAmulet = "loot_slot_amulet";
+        public const string LootSlotRing = "loot_slot_ring";
+        public const string LootSlotBracelet = "loot_slot_bracelet";
+        public const string LootSlotTrinket = "loot_slot_trinket";
+        public const string LootSlotCloak = "loot_slot_cloak";
         public const string QbStepSize = "qb_step_size";                   // killer QB per progression step (default 1000)
         public const string QbQualityPerStep = "qb_quality_per_step";      // LootQualityMod added per QB step (setting this ENABLES QB scaling; suggested 0.05)
         public const string QbMaxSteps = "qb_max_steps";                   // QB step cap (default 20)
@@ -184,7 +199,10 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponShieldCleaveChance, WeaponShieldCleaveMin, WeaponShieldCleaveMax,
             WeaponPhantomChance, WeaponRendPowerMin, WeaponRendPowerMax,
             WeaponHiltChance, WeaponBowstringChance,
-            LootSetEnabled, LootSetArmor, LootSetJewelry, LootSetCloaks,
+            LootSlotWeapons,
+            LootSlotHelm, LootSlotChest, LootSlotShoulder, LootSlotBracer, LootSlotGlove,
+            LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,
+            LootSlotShield, LootSlotAmulet, LootSlotRing, LootSlotBracelet, LootSlotTrinket, LootSlotCloak,
             QbStepSize, QbQualityPerStep, QbMaxSteps, QbQuantityPerStep,
         };
     }
