@@ -704,6 +704,10 @@ namespace ACE.Server.Entity
                 // shard (persisted markers become permanent ghosts that ignore later boundary changes).
                 marker.SuppressShardPersistence = true;
 
+                // Cosmetic best-effort: perimeter lanterns on a water-facing edge can land over open water
+                // where placement finds no floor (NoValidPosition). Skip those quietly instead of a [SpawnDiag] WARN.
+                marker.SuppressSpawnPlacementDiag = true;
+
                 // Use physics system to calculate proper position (like encounters do)
                 var pos = new Physics.Common.Position();
                 pos.ObjCellID = (uint)(Id.Landblock << 16) | 1;

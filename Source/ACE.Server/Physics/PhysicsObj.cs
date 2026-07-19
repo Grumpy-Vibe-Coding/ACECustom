@@ -1157,8 +1157,18 @@ namespace ACE.Server.Physics
             //transition.CellArray.DoNotLoadCells = true;
 
             if (!CheckPositionInternal(newCell, pos, transition, setPos))
+            {
+                // Option B (2026-07-19): a generator is an invisible spawn origin with no meaningful physics
+                // presence. If normal placement finds no valid floor at its authored spot (e.g. a Tou Tou water
+                // generator at ~sea level over open water -> NoValidPosition), force it into its resolved cell so
+                // it still spawns its brood instead of failing to place. Normal objects -- and the generator's
+                // own spawned children -- keep full collision/terrain validation.
+                if (WeenieObj?.WorldObject != null && WeenieObj.WorldObject.IsGenerator)
+                    return ForceIntoCell(newCell, pos);
+
                 return handle_all_collisions(transition.CollisionInfo, false, false) ?
                     SetPositionError.Collided : SetPositionError.NoValidPosition;
+            }
 
             if (transition.SpherePath.CurCell == null) return SetPositionError.NoCell;
 
