@@ -162,6 +162,8 @@ namespace ACE.Server.WorldObjects
         {
             NotifyLandblocks();
 
+            ValidateCurrentLandblockTick();
+
             ManaConsumersTick();
 
             HandleTargetVitals();
@@ -848,6 +850,35 @@ namespace ACE.Server.WorldObjects
             Location = new ACE.Entity.Position(blockcell, pos, rotate, variation);
 
             return landblockUpdate;
+        }
+
+        /// <summary>
+        /// Void-landblock self-heal (2026-07-18): a player's Location can cross into a landblock whose
+        /// (landblock, variation) instance never got created — observed walking into F658 v11 ~2 min
+        /// after its unload: server Location updated, no create fired, and the block stayed a void
+        /// (no statics/gens). With players present a void block never unloads, so on live it could
+        /// stay broken until restart. Whatever the upstream leak, the invariant is enforceable here:
+        /// CurrentLandblock must match Location's (landblock, variation). On mismatch, run the normal
+        /// relocation path — it creates and initializes the landblock if missing (same call
+        /// Monster_Navigation makes from tick context, so thread-deferral is already handled).
+        /// </summary>
+        private void ValidateCurrentLandblockTick()
+        {
+            if (Teleporting || Session == null || PhysicsObj == null || Location == null || IsInDeathProcess)
+                return;
+
+            var locLb = (ushort)(Location.Cell >> 16);
+            var curLb = CurrentLandblock;
+
+            if (curLb != null && curLb.Id.Landblock == locLb &&
+                VariationManager.SameVariationForVisibility(curLb.VariationId, Location.Variation))
+                return;
+
+            log.Warn($"[VoidHeal] {Name} (0x{Guid}) Location lb={locLb:X4} v={Location.Variation?.ToString() ?? "null"} " +
+                     $"but CurrentLandblock={(curLb == null ? "null" : $"{curLb.Id.Landblock:X4} v={curLb.VariationId?.ToString() ?? "null"}")} - " +
+                     $"forcing relocation (creates the landblock if missing).");
+
+            LandblockManager.RelocateObjectForPhysics(this, true);
         }
 
         private bool gagNoticeSent = false;

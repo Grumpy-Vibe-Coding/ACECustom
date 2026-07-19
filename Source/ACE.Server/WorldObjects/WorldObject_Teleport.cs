@@ -292,6 +292,16 @@ namespace ACE.Server.WorldObjects
 
                         player?.CheckMonsters();
                     }
+                    else if (player != null &&
+                             ACE.Server.Diagnostics.LogRateLimiter.ShouldEmit($"updatepos_nullcell:{Guid.Full}", TimeSpan.FromSeconds(10), out _))
+                    {
+                        // Void-walk diagnostic (2026-07-18): the physics move used to be skipped here
+                        // with NO trace while Location still advanced below — a player could end up
+                        // "in" a landblock that was never created (F658 v11 void). The heartbeat
+                        // [VoidHeal] guard relocates them; this records the leak's moment.
+                        log.Warn($"[VoidHeal] {Name}.UpdatePosition: get_landcell NULL for cell {newPosition.Cell:X8} " +
+                                 $"v={newPosition.Variation?.ToString() ?? "null"} - physics move skipped, Location will still advance.");
+                    }
                 }
                 else
                     PhysicsObj.Position.Frame.Orientation = newPosition.Rotation;
