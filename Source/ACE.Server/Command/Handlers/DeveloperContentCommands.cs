@@ -4512,6 +4512,57 @@ namespace ACE.Server.Command.Handlers.Processors
             CommandHandlerHelper.WriteOutputInfo(session, $"Next available weenie id in range {start}: {weenies}");
         }
 
+        [CommandHandler("findwcid", AccessLevel.Developer, CommandHandlerFlag.None, 1,
+            "Searches weenies by display name or classname (case-insensitive substring).",
+            "<partial name>  e.g. @findwcid galaeral")]
+        public static void HandleFindWcid(Session session, params string[] parameters)
+        {
+            var search = string.Join(" ", parameters).Trim();
+
+            if (search.Length < 3)
+            {
+                CommandHandlerHelper.WriteOutputInfo(session, "Search term must be at least 3 characters.");
+                return;
+            }
+
+            const int maxResults = 25;
+
+            using var ctx = new WorldDbContext();
+
+            // left-join the display name (weenie_properties_string type 1); match on either it or the classname
+            var matches = (from w in ctx.Weenie
+                           join s in ctx.WeeniePropertiesString.Where(s => s.Type == (ushort)PropertyString.Name)
+                               on w.ClassId equals s.ObjectId into names
+                           from n in names.DefaultIfEmpty()
+                           where EF.Functions.Like(w.ClassName, $"%{search}%") ||
+                                 (n != null && EF.Functions.Like(n.Value, $"%{search}%"))
+                           orderby w.ClassId
+                           select new { w.ClassId, w.ClassName, w.Type, DisplayName = n != null ? n.Value : null })
+                          .Take(maxResults + 1)
+                          .ToList();
+
+            if (matches.Count == 0)
+            {
+                CommandHandlerHelper.WriteOutputInfo(session, $"No weenies found matching '{search}'.");
+                return;
+            }
+
+            var lines = matches.Take(maxResults)
+                .Select(m => $"{m.ClassId,7} | {(WeenieType)m.Type,-14} | {m.ClassName}{(m.DisplayName != null ? $" | {m.DisplayName}" : "")}");
+
+            CommandHandlerHelper.WriteOutputInfo(session,
+                $"Weenies matching '{search}':\n   wcid | type           | classname | name\n" + string.Join("\n", lines) +
+                (matches.Count > maxResults ? $"\n...more than {maxResults} matches, narrow the search." : ""));
+        }
+
+        [CommandHandler("findnpc", AccessLevel.Developer, CommandHandlerFlag.None, 1,
+            "Alias for findwcid - searches weenies by display name or classname.",
+            "<partial name>")]
+        public static void HandleFindNpc(Session session, params string[] parameters)
+        {
+            HandleFindWcid(session, parameters);
+        }
+
         [CommandHandler("generate-classnames", AccessLevel.Developer, CommandHandlerFlag.None, "Generates WeenieClassName.cs from current world database")]
         public static void HandleGenerateClassNames(Session session, params string[] parameters)
         {
