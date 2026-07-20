@@ -916,36 +916,6 @@ namespace ACE.Server.WorldObjects
             // currency for this mob (null for players/exempt/non-endgame/no-match -> normal loot).
             var zoneLoot = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
 
-            // contain and non-wielded treasure create (create-list: quest drops etc.)
-            // Runs BEFORE the random/zone-set treasure below so quest and special items list FIRST
-            // in the corpse (owner loot-order decision 2026-07-20).
-            if (Biota.PropertiesCreateList != null)
-            {
-                var createList = Biota.PropertiesCreateList.Where(i => (i.DestinationType & DestinationType.Contain) != 0 ||
-                                (i.DestinationType & DestinationType.Treasure) != 0 && (i.DestinationType & DestinationType.Wield) == 0).ToList();
-
-                var selected = CreateListSelect(createList);
-
-                foreach (var item in selected)
-                {
-                    var wo = WorldObjectFactory.CreateNewWorldObject(item);
-
-                    if (wo != null)
-                    {
-                        if (tier > 0)
-                            PrestigeManager.ApplyLootScaling(wo, tier);
-
-                        // Zone Control loot: scale stackable always-drop materials (what drops stays the weenie's table)
-                        ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateCreateListItem(wo, zoneLoot);
-
-                        if (corpse != null)
-                            corpse.TryAddToInventory(wo);
-                        else
-                            droppedItems.Add(wo);
-                    }
-                }
-            }
-
             // create death treasure from loot generation factory
             if (DeathTreasure != null)
             {
@@ -995,11 +965,12 @@ namespace ACE.Server.WorldObjects
                     items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, slotCounts));
 
                 // Corpse display order (owner 2026-07-20): casters, missiles, UA, sword, other
-                // melee, then armor/shields/jewelry/cloaks. Stable sort keeps generation order
-                // within each group. Quest/create-list items are added BEFORE this loop (below was
-                // moved above) so they list first.
+                // melee, then armor/shields/jewelry/cloaks. The client's loot window shows items
+                // in REVERSE insertion order, so insert in exact reverse of the desired display
+                // (stable sort + Reverse keeps within-group generation order correct on screen).
+                // Quest/create-list items are added AFTER treasure (below) so they display first.
                 if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
-                    items = items.OrderBy(LootGenerationFactory.GetZoneLootDisplayOrder).ToList();
+                    items = items.OrderBy(LootGenerationFactory.GetZoneLootDisplayOrder).Reverse().ToList();
 
                 foreach (WorldObject wo in items)
                 {
@@ -1010,19 +981,26 @@ namespace ACE.Server.WorldObjects
                     // value, and the low-chance special-property rolls)
                     ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateLootItem(wo, zoneLoot, this, effectiveTreasure.Tier);
 
-                    // Tier 11+ loot is never character-level gated. Run LAST so it also clears level
-                    // requirements that came from the base weenie (cloaks ship with one) or from any
-                    // mutation above; skill-based gates are preserved.
+                    // Tier 11+ presentation sweep. Runs LAST so it also covers values that came
+                    // from the base weenie or any mutation above.
                     if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
                     {
-                        LootGenerationFactory.StripLevelWieldRequirements(wo);
+                        // ALL wield reqs removed (item-augmentation req to be added later)
+                        LootGenerationFactory.StripWieldRequirements(wo);
 
-                        // formatted Ratings block (rolled value + table min/max) in the description;
-                        // AppraiseInfo hides the raw ints so the client's own compact line goes away
-                        LootGenerationFactory.AppendRatingsAppraisalBlock(wo);
+                        // one uniform resist value across all eight elements (before the block
+                        // below reads it for the Protection Value line)
+                        LootGenerationFactory.EqualizeT11ArmorResists(wo);
+
+                        // formatted info block (ratings / armor / weapon stats + provenance)
+                        // REPLACES the description; AppraiseInfo suppresses the client's own panel
+                        LootGenerationFactory.AppendRatingsAppraisalBlock(wo, Name, Location?.Variation, zoneLoot?.ScopeKey);
 
                         // "T11 - [base name]" (material cleared -- the client would prefix it)
                         LootGenerationFactory.ApplyT11NamePrefix(wo);
+
+                        // name tinted by damage element (trial 2026-07-20, may revert)
+                        LootGenerationFactory.ApplyT11ElementTint(wo);
                     }
 
                     if (corpse != null)
@@ -1067,6 +1045,36 @@ namespace ACE.Server.WorldObjects
                 }
                 else
                     droppedItems.Add(item);
+            }
+
+            // contain and non-wielded treasure create (create-list: quest drops etc.)
+            // Runs LAST: the client's loot window displays in reverse insertion order, so the
+            // last-inserted quest/special items show FIRST (owner loot-order decision 2026-07-20).
+            if (Biota.PropertiesCreateList != null)
+            {
+                var createList = Biota.PropertiesCreateList.Where(i => (i.DestinationType & DestinationType.Contain) != 0 ||
+                                (i.DestinationType & DestinationType.Treasure) != 0 && (i.DestinationType & DestinationType.Wield) == 0).ToList();
+
+                var selected = CreateListSelect(createList);
+
+                foreach (var item in selected)
+                {
+                    var wo = WorldObjectFactory.CreateNewWorldObject(item);
+
+                    if (wo != null)
+                    {
+                        if (tier > 0)
+                            PrestigeManager.ApplyLootScaling(wo, tier);
+
+                        // Zone Control loot: scale stackable always-drop materials (what drops stays the weenie's table)
+                        ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateCreateListItem(wo, zoneLoot);
+
+                        if (corpse != null)
+                            corpse.TryAddToInventory(wo);
+                        else
+                            droppedItems.Add(wo);
+                    }
+                }
             }
 
             // Zone Scaler: inject the custom bonus-currency token (independent of the loot table).

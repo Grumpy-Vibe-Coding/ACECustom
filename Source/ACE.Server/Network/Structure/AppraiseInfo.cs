@@ -112,32 +112,35 @@ namespace ACE.Server.Network.Structure
                 }
             }
 
-            // T11 loot: the item's formatted Ratings block (rolled value + min/max, written at drop
-            // time by LootGenerationFactory.AppendRatingsAppraisalBlock) lives in LongDesc. Suppress
-            // the raw gear-rating ints from the appraisal profile so the client does not ALSO render
-            // its own compact "Ratings: Dam X, ..." line from them. Display-only: the WorldObject
-            // properties are untouched and combat reads those, not the appraisal profile.
-            if (wo.LongDesc != null && wo.LongDesc.Contains("Ratings:"))
-            {
-                PropertiesInt.Remove(PropertyInt.GearDamage);
-                PropertiesInt.Remove(PropertyInt.GearDamageResist);
-                PropertiesInt.Remove(PropertyInt.GearCrit);
-                PropertiesInt.Remove(PropertyInt.GearCritResist);
-                PropertiesInt.Remove(PropertyInt.GearCritDamage);
-                PropertiesInt.Remove(PropertyInt.GearCritDamageResist);
-                PropertiesInt.Remove(PropertyInt.GearHealingBoost);
-                PropertiesInt.Remove(PropertyInt.GearNetherResist);
-                PropertiesInt.Remove(PropertyInt.GearMaxHealth);
-            }
+            // T11 loot: the item's formatted info block (workmanship / protection / ratings,
+            // written at drop time by LootGenerationFactory.AppendRatingsAppraisalBlock) lives in
+            // LongDesc. Suppress the client-rendered equivalents from the appraisal profile so
+            // nothing displays twice: the compact "Ratings: Dam X" line (Gear* ints), the
+            // "Workmanship: Utterly flawless (8)" line (ItemWorkmanship), and the eight
+            // per-element "Slashing: Above Average (559)" lines (ArmorModVs* floats -- equalized
+            // to one value and shown as a single Protection Value line). Display-only: the
+            // WorldObject properties are untouched and combat reads those, not the profile.
+            // Detector = the sweep's name prefix, which every tier-11+ drop carries. These items
+            // take over the ENTIRE panel: the Armor/Weapon identify structures are skipped below,
+            // and every property bucket except LongDesc (+ trade-safety flags) is cleared at the
+            // end of BuildProfile -- the item's LongDesc info block IS the panel.
+            var isT11Drop = wo.Name != null && wo.Name.StartsWith("T11 - ");
 
             // armor / clothing / shield
-            if (wo is Clothing || wo.IsShield)
+            // T11 drops skip the ArmorProfile identify structure -- it is what the client renders
+            // as the eight per-element "Slashing: Average (N)" lines, which the info block folds
+            // into its single Protection Value line. The "Armor Level" line is PropertiesInt and
+            // stays. (The raw ArmorModVs* floats in PropertiesFloat are NOT the source of those
+            // lines; suppressing them does nothing.)
+            if ((wo is Clothing || wo.IsShield) && !isT11Drop)
                 BuildArmor(wo);
 
             if (wo is Creature creature)
                 BuildCreature(creature);
 
-            if (wo.Damage != null && !(wo is Clothing) || wo is MeleeWeapon || wo is Missile || wo is MissileLauncher || wo is Ammunition || wo is Caster)
+            // T11 drops also skip the WeaponProfile identify structure (damage/speed/bonus section)
+            // -- the info block composes those lines itself
+            if ((wo.Damage != null && !(wo is Clothing) || wo is MeleeWeapon || wo is Missile || wo is MissileLauncher || wo is Ammunition || wo is Caster) && !isT11Drop)
                 BuildWeapon(wo, examiner);
 
             // TODO: Resolve this issue a better way?
@@ -564,6 +567,93 @@ namespace ACE.Server.Network.Structure
                     PropertiesString[PropertyString.LongDesc] += $"\n\n{msg}";
                 else
                     PropertiesString[PropertyString.LongDesc] = msg;
+            }
+
+            // T11 full panel takeover (owner 2026-07-20): clear every property bucket so the
+            // client renders nothing of its own -- the LongDesc info block written at drop time
+            // is the whole panel. Kept: LongDesc itself, the spell book (future ZC cantrips/procs
+            // render as native spell entries), and Attuned/Bonded (trade-safety warnings).
+            // Display-only: the WorldObject's real properties are untouched.
+            if (isT11Drop)
+            {
+                // Live enchantment display: the info block was written at drop time with BASE
+                // values, so patch the Armor Level / Protection Value lines with the current
+                // buffed numbers on each examine (Impen/banes -- same math ArmorProfile used).
+                if (PropertiesString.TryGetValue(PropertyString.LongDesc, out var t11Desc) && !string.IsNullOrEmpty(t11Desc))
+                {
+                    var baseAL = wo.ArmorLevel ?? 0;
+
+                    if (baseAL > 0)
+                    {
+                        var alBuff = wo.EnchantmentManager.GetArmorMod();
+                        var baseMod = wo.GetProperty(PropertyFloat.ArmorModVsSlash);
+
+                        if (alBuff != 0)
+                        {
+                            t11Desc = System.Text.RegularExpressions.Regex.Replace(t11Desc,
+                                @"Armor Level: \d+",
+                                $"Armor Level: {baseAL + alBuff} (base {baseAL})");
+                        }
+
+                        if (baseMod.HasValue)
+                        {
+                            // banes are per-element (base resists are equalized, buffs are not):
+                            // show the HIGHEST element's live protection, with the multiplier
+                            // clamped to +/-2.0 exactly as the client's old ArmorProfile did --
+                            // this server's bane buffs are far larger than multiplier space
+                            var bestMod = 0.0;
+                            foreach (var dt in new[] { DamageType.Slash, DamageType.Pierce, DamageType.Bludgeon,
+                                                       DamageType.Fire, DamageType.Cold, DamageType.Acid,
+                                                       DamageType.Electric, DamageType.Nether })
+                            {
+                                var live = Math.Clamp(baseMod.Value + wo.EnchantmentManager.GetArmorModVsType(dt), -2.0, 2.0);
+                                if (live > bestMod)
+                                    bestMod = live;
+                            }
+
+                            var isBuffed = alBuff != 0 || Math.Abs(bestMod - baseMod.Value) > 0.001;
+
+                            if (isBuffed)
+                            {
+                                var liveVal = (int)Math.Round((baseAL + alBuff) * bestMod);
+
+                                t11Desc = System.Text.RegularExpressions.Regex.Replace(t11Desc,
+                                    @"Protection( Value)?: [A-Za-z ]+ \(\d+\)( \(buffed\))?",
+                                    $"Protection: {Factories.LootGenerationFactory.ProtectionLabel(bestMod)} ({liveVal}) (buffed)");
+                            }
+                        }
+
+                        PropertiesString[PropertyString.LongDesc] = t11Desc;
+                    }
+                }
+
+                var keepInts = new Dictionary<PropertyInt, int>();
+                if (PropertiesInt.TryGetValue(PropertyInt.Attuned, out var attuned))
+                    keepInts[PropertyInt.Attuned] = attuned;
+                if (PropertiesInt.TryGetValue(PropertyInt.Bonded, out var bonded))
+                    keepInts[PropertyInt.Bonded] = bonded;
+
+                // the client ALWAYS renders the Value / Burden lines ("???" / "Unknown" when the
+                // ints are missing rather than hiding them -- same reason Corpse keeps these two),
+                // so feed them natively instead of duplicating them in the block
+                if (PropertiesInt.TryGetValue(PropertyInt.Value, out var value))
+                    keepInts[PropertyInt.Value] = value;
+                if (PropertiesInt.TryGetValue(PropertyInt.EncumbranceVal, out var burden))
+                    keepInts[PropertyInt.EncumbranceVal] = burden;
+
+                PropertiesInt.Clear();
+                foreach (var kvp in keepInts)
+                    PropertiesInt[kvp.Key] = kvp.Value;
+
+                PropertiesInt64.Clear();
+                PropertiesBool.Clear();
+                PropertiesFloat.Clear();
+                PropertiesDID.Clear();
+                PropertiesIID.Clear();
+
+                var discardStrings = PropertiesString.Keys.Where(k => k != PropertyString.LongDesc).ToList();
+                foreach (var key in discardStrings)
+                    PropertiesString.Remove(key);
             }
 
             BuildFlags();

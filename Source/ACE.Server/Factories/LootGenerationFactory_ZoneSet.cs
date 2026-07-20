@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 
 using ACE.Common;
 using ACE.Database;
@@ -105,34 +106,79 @@ namespace ACE.Server.Factories
         }
 
         /// <summary>
-        /// Removes any character-LEVEL wield requirement from a tier-11+ drop (owner decision
-        /// 2026-07-20: T11 loot is never level-gated). SKILL requirements (RawSkill, e.g. a
-        /// weapon's own skill or a cloak/armor MeleeDefense gate) are intentionally left alone.
+        /// Removes ALL wield requirements from a tier-11+ drop (owner 2026-07-20: level reqs first,
+        /// then ALL reqs -- an item-augmentation wield requirement will replace them later).
         ///
-        /// This is a final sweep rather than a fix at each producer, because a level requirement
-        /// can arrive from three independent places: a mutation script, factory code (e.g.
-        /// MutateCloak's ItemMaxLevel -> WieldDifficulty 30/60/90/120/150), or the BASE WEENIE
-        /// itself -- cloaks in particular ship with WieldRequirements = Level already set, which
-        /// no mutation ever clears. Patching producers one at a time misses that third case.
+        /// This is a final sweep rather than a fix at each producer, because a requirement can
+        /// arrive from three independent places: a mutation script, factory code (e.g.
+        /// MutateCloak's ItemMaxLevel -> WieldDifficulty, SetWieldT10's MeleeDefense gate), or the
+        /// BASE WEENIE itself -- cloaks in particular ship with WieldRequirements = Level already
+        /// set, which no mutation ever clears. Patching producers one at a time misses that.
         /// </summary>
-        public static void StripLevelWieldRequirements(WorldObject wo)
+        public static void StripWieldRequirements(WorldObject wo)
         {
             if (wo == null)
                 return;
 
-            if (wo.WieldRequirements == ACE.Entity.Enum.WieldRequirement.Level)
+            if (wo.WieldRequirements != ACE.Entity.Enum.WieldRequirement.Invalid)
             {
                 wo.WieldRequirements = ACE.Entity.Enum.WieldRequirement.Invalid;
                 wo.WieldSkillType = null;
                 wo.WieldDifficulty = null;
             }
 
-            if (wo.WieldRequirements2 == ACE.Entity.Enum.WieldRequirement.Level)
+            if (wo.WieldRequirements2 != ACE.Entity.Enum.WieldRequirement.Invalid)
             {
                 wo.WieldRequirements2 = ACE.Entity.Enum.WieldRequirement.Invalid;
                 wo.WieldSkillType2 = null;
                 wo.WieldDifficulty2 = null;
             }
+        }
+
+        private static readonly ACE.Entity.Enum.Properties.PropertyFloat[] armorModVsProps =
+        {
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsSlash,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsPierce,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsBludgeon,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsFire,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsCold,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsAcid,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsElectric,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsNether,
+        };
+
+        /// <summary>
+        /// Equalizes a tier-11+ armor piece's eight resistance multipliers to their mean (owner
+        /// 2026-07-20: one uniform protection value instead of eight per-element lines). Budget-
+        /// neutral: the mean of the rolled mods, applied to every mod the piece actually has.
+        /// The description block then shows a single "Protection Value: All (N)" line and
+        /// AppraiseInfo suppresses the per-element floats from the appraisal profile.
+        /// </summary>
+        public static void EqualizeT11ArmorResists(WorldObject wo)
+        {
+            if (wo == null || (wo.ArmorLevel ?? 0) == 0)
+                return;
+
+            var present = new List<ACE.Entity.Enum.Properties.PropertyFloat>();
+            var sum = 0.0;
+
+            foreach (var prop in armorModVsProps)
+            {
+                var val = wo.GetProperty(prop);
+                if (val.HasValue)
+                {
+                    present.Add(prop);
+                    sum += val.Value;
+                }
+            }
+
+            if (present.Count == 0)
+                return;
+
+            var mean = sum / present.Count;
+
+            foreach (var prop in present)
+                wo.SetProperty(prop, mean);
         }
 
         private enum ZoneSetFamily
@@ -376,22 +422,89 @@ namespace ACE.Server.Factories
         }
 
         /// <summary>
-        /// Appends a formatted, persisted Ratings block to a tier-11+ drop's LongDesc:
+        /// Tints a tier-11+ weapon's name by its damage element (owner 2026-07-20, trial: "may
+        /// revert"). UiEffects drives the client's name-text tint; DamageType bits map 1:1 onto
+        /// UiEffects bits (Cold -> Frost, Electric -> Lightning, etc.). Weapons only; a weapon
+        /// with no damage type (e.g. a plain caster) keeps whatever it had.
+        /// </summary>
+        public static void ApplyT11ElementTint(WorldObject wo)
+        {
+            if (wo == null || !(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
+                return;
+
+            var dt = wo.W_DamageType;
+            var fx = default(ACE.Entity.Enum.UiEffects);
+
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Fire))     fx |= ACE.Entity.Enum.UiEffects.Fire;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Cold))     fx |= ACE.Entity.Enum.UiEffects.Frost;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Acid))     fx |= ACE.Entity.Enum.UiEffects.Acid;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Electric)) fx |= ACE.Entity.Enum.UiEffects.Lightning;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Nether))   fx |= ACE.Entity.Enum.UiEffects.Nether;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Slash))    fx |= ACE.Entity.Enum.UiEffects.Slashing;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Pierce))   fx |= ACE.Entity.Enum.UiEffects.Piercing;
+            if (dt.HasFlag(ACE.Entity.Enum.DamageType.Bludgeon)) fx |= ACE.Entity.Enum.UiEffects.Bludgeoning;
+
+            if (fx != 0)
+                wo.UiEffects = fx;
+        }
+
+        /// <summary>
+        /// The client's qualitative armor-protection labels, calibrated against observed client
+        /// output (0.40 -> Below Average; 0.84..1.18 -> Average; 1.30 -> Above Average).
+        /// </summary>
+        public static string ProtectionLabel(double mod)
+        {
+            if (mod < 0.2) return "Poor";
+            if (mod < 0.8) return "Below Average";
+            if (mod < 1.2) return "Average";
+            if (mod < 1.4) return "Above Average";
+            if (mod < 1.6) return "Superior";
+            if (mod < 1.8) return "Excellent";
+            return "Unparalleled";
+        }
+
+        /// <summary>
+        /// Splits a PascalCase enum name into words ("HeavyWeapons" -> "Heavy Weapons").
+        /// </summary>
+        private static string SpaceOutEnum(string name)
+        {
+            var sb = new System.Text.StringBuilder(name.Length + 4);
+            foreach (var c in name)
+            {
+                if (char.IsUpper(c) && sb.Length > 0)
+                    sb.Append(' ');
+                sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// REPLACES a tier-11+ drop's LongDesc with the COMPLETE item panel (owner 2026-07-20:
+        /// the client's own panel sections are fully suppressed for T11 drops -- AppraiseInfo
+        /// clears the property buckets and skips the Armor/Weapon identify structures -- so this
+        /// block IS the panel, in our order, ratings first). The spell book is left native so
+        /// future ZC cantrips/procs render as real spell entries.
         ///
         ///   Ratings:
-        ///   * Damage 20 (min 16, max 20)
-        ///   * Crit Damage 18 (min 16, max 20)
+        ///   * Damage 20 [16-20]
         ///
-        /// Each line shows the rolled value plus the min/max the tier-11 table could have rolled.
-        /// AppraiseInfo detects this block and suppresses the raw gear-rating ints in the appraisal
-        /// profile, so the client does not also render its own compact "Ratings: Dam X, ..." line.
+        ///   Armor Level: 439
+        ///   Protection Value: Above Average (431)
+        ///   Workmanship: (7)
+        ///   Covers: Head
+        ///   Value: 33,521
+        ///   Burden: 277
+        ///
         /// ASCII only (old client cannot render anything else).
         /// </summary>
-        public static void AppendRatingsAppraisalBlock(WorldObject wo)
+        public static void AppendRatingsAppraisalBlock(WorldObject wo, string droppedBy = null, int? variation = null, string zoneName = null)
         {
             if (wo == null)
                 return;
 
+            var sb = new System.Text.StringBuilder();
+
+            // ---- 1. ratings, at the very top (finally possible now that we own the panel)
             var ratings = new List<(string label, int value)>();
 
             void Collect(string label, int? value)
@@ -410,32 +523,98 @@ namespace ACE.Server.Factories
             Collect("Healing Boost", wo.GearHealingBoost);
             Collect("Max Health", wo.GearMaxHealth);
 
-            if (ratings.Count == 0)
-                return;
-
-            // category determines which tier-11 table produced the rolls (mirrors the category
-            // logic in GearRatingChance.RollT11 / TryMutateGearRatingT10)
-            var category =
-                wo is MeleeWeapon || wo is MissileLauncher || wo is Caster ? Tables.GearRatingChance.GearRatingCategory.Weapon :
-                (wo.ArmorLevel ?? 0) > 0 || wo.IsShield ? Tables.GearRatingChance.GearRatingCategory.Armor :
-                wo.ItemType == ACE.Entity.Enum.ItemType.Jewelry ? Tables.GearRatingChance.GearRatingCategory.Jewelry :
-                Tables.GearRatingChance.GearRatingCategory.Clothing;
-
-            var (min, max) = Tables.GearRatingChance.GetRangeT11(category);
-
-            var sb = new System.Text.StringBuilder("Ratings:");
-
-            foreach (var (label, value) in ratings)
+            if (ratings.Count > 0)
             {
-                // shield Max Health is a flat 100-200 roll, not a table roll (TryMutateGearRatingT10)
-                var (lo, hi) = label == "Max Health" && wo.IsShield ? (100, 200) : (min, max);
+                // category determines which tier-11 table produced the rolls (mirrors the
+                // category logic in GearRatingChance.RollT11 / TryMutateGearRatingT10)
+                var category =
+                    wo is MeleeWeapon || wo is MissileLauncher || wo is Caster ? Tables.GearRatingChance.GearRatingCategory.Weapon :
+                    (wo.ArmorLevel ?? 0) > 0 || wo.IsShield ? Tables.GearRatingChance.GearRatingCategory.Armor :
+                    wo.ItemType == ACE.Entity.Enum.ItemType.Jewelry ? Tables.GearRatingChance.GearRatingCategory.Jewelry :
+                    Tables.GearRatingChance.GearRatingCategory.Clothing;
 
-                sb.Append($"\n* {label} {value} (min {lo}, max {hi})");
+                var (min, max) = Tables.GearRatingChance.GetRangeT11(category);
+
+                sb.Append("Ratings:");
+
+                foreach (var (label, value) in ratings)
+                {
+                    // shield Max Health is a flat 100-200 roll, not a table roll
+                    var (lo, hi) = label == "Max Health" && wo.IsShield ? (100, 200) : (min, max);
+
+                    sb.Append($"\n* {label} {value} [{lo}-{hi}]");
+                }
+
+                sb.Append("\n\n");
             }
 
-            wo.LongDesc = string.IsNullOrWhiteSpace(wo.LongDesc)
-                ? sb.ToString()
-                : $"{wo.LongDesc}\n\n{sb}";
+            // ---- 2. armor stats
+            if ((wo.ArmorLevel ?? 0) > 0)
+            {
+                sb.Append($"Armor Level: {wo.ArmorLevel}\n");
+
+                var mod = wo.GetProperty(ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsSlash);
+                if (mod.HasValue)
+                    sb.Append($"Protection: {ProtectionLabel(mod.Value)} ({(int)System.Math.Round(wo.ArmorLevel.Value * mod.Value)})\n");
+            }
+
+            // ---- 3. weapon stats (replaces the suppressed WeaponProfile section)
+            if (wo is MeleeWeapon || wo is MissileLauncher || wo is Caster)
+            {
+                if (wo.WeaponSkill != ACE.Entity.Enum.Skill.None)
+                    sb.Append($"Skill: {SpaceOutEnum(wo.WeaponSkill.ToString())}\n");
+
+                if ((wo.Damage ?? 0) > 0)
+                {
+                    var variance = wo.DamageVariance ?? 0.0;
+                    var maxDmg = wo.Damage.Value;
+                    var minDmg = (int)System.Math.Round(maxDmg * (1.0 - variance));
+                    sb.Append($"Damage: {minDmg} - {maxDmg}\n");
+                }
+
+                if ((wo.ElementalDamageBonus ?? 0) > 0)
+                    sb.Append($"Elemental Damage Bonus: +{wo.ElementalDamageBonus}\n");
+
+                if ((wo.DamageMod ?? 0) > 1.0)
+                    sb.Append($"Damage Modifier: x{wo.DamageMod:0.00}\n");
+
+                if ((wo.ElementalDamageMod ?? 0) > 1.0)
+                    sb.Append($"Elemental Damage: +{(int)System.Math.Round((wo.ElementalDamageMod.Value - 1.0) * 100)}%\n");
+
+                if ((wo.ManaConversionMod ?? 0) > 0)
+                    sb.Append($"Mana Conversion: +{(int)System.Math.Round(wo.ManaConversionMod.Value * 100)}%\n");
+
+                if ((wo.WeaponTime ?? 0) > 0)
+                    sb.Append($"Speed: {wo.WeaponTime}\n");
+
+                if ((wo.WeaponOffense ?? 0) > 1.0)
+                    sb.Append($"Attack Bonus: +{(int)System.Math.Round((wo.WeaponOffense.Value - 1.0) * 100)}%\n");
+
+                if ((wo.WeaponDefense ?? 0) > 1.0)
+                    sb.Append($"Melee Defense Bonus: +{(int)System.Math.Round((wo.WeaponDefense.Value - 1.0) * 100)}%\n");
+            }
+
+            // ---- 4. general info
+            // Value / Burden / "Covers" are NOT composed here: the client renders those three
+            // lines unconditionally (Value/EncumbranceVal ints are kept in the appraisal profile;
+            // Covers comes from the object description) -- adding them again would duplicate.
+            // Workmanship is intentionally NOT shown on T11 drops (owner 2026-07-20); the
+            // ItemWorkmanship property itself stays, so tinkering onto the gear still works.
+            if ((wo.ItemMaxLevel ?? 0) > 0)
+                sb.Append($"Item Levels: {wo.ItemMaxLevel}\n");
+
+            // ---- 5. provenance, at the very bottom: what dropped it, at which variant, and the
+            // Zone Control zone when one governed the kill (omitted otherwise)
+            if (!string.IsNullOrWhiteSpace(droppedBy))
+            {
+                sb.Append($"\nDropped by: {droppedBy}\n");
+                sb.Append($"Variant: {(variation.HasValue && variation.Value != 0 ? variation.Value.ToString() : "base")}");
+
+                if (!string.IsNullOrWhiteSpace(zoneName))
+                    sb.Append($"\nZone: {zoneName}");
+            }
+
+            wo.LongDesc = sb.ToString().TrimEnd('\n');
         }
 
         private static void AddZoneSetJewelryPiece(List<WorldObject> items, TreasureDeath profile, WeenieClassName[] pool, string slotName)
