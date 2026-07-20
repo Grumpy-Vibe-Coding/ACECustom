@@ -985,8 +985,9 @@ namespace ACE.Server.WorldObjects
                     // from the base weenie or any mutation above.
                     if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
                     {
-                        // ALL wield reqs removed (item-augmentation req to be added later)
+                        // ALL inherited wield reqs removed, replaced by the T11 item-aug gate
                         LootGenerationFactory.StripWieldRequirements(wo);
+                        LootGenerationFactory.ApplyT11WieldRequirement(wo);
 
                         // one uniform resist value across all eight elements (before the block
                         // below reads it for the Protection Value line)

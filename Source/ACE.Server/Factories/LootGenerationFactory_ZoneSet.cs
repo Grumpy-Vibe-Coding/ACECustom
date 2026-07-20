@@ -115,6 +115,25 @@ namespace ACE.Server.Factories
         /// BASE WEENIE itself -- cloaks in particular ship with WieldRequirements = Level already
         /// set, which no mutation ever clears. Patching producers one at a time misses that.
         /// </summary>
+        /// <summary>Item augmentations required to wield any tier-11+ drop (owner 2026-07-20).</summary>
+        public const int ZoneLootSetWieldItemAugs = 2000;
+
+        /// <summary>
+        /// The tier-11+ wield gate: 2000 item augmentations (LumAugItemCount), replacing every
+        /// requirement StripWieldRequirements removed. Validated server-side by the
+        /// WieldRequirement.Int64Stat case; displayed by the item's info block (the client
+        /// cannot render this requirement type, and T11 panels are server-composed anyway).
+        /// </summary>
+        public static void ApplyT11WieldRequirement(WorldObject wo)
+        {
+            if (wo == null)
+                return;
+
+            wo.WieldRequirements = ACE.Entity.Enum.WieldRequirement.Int64Stat;
+            wo.WieldSkillType = (int)PropertyInt64.LumAugItemCount;
+            wo.WieldDifficulty = ZoneLootSetWieldItemAugs;
+        }
+
         public static void StripWieldRequirements(WorldObject wo)
         {
             if (wo == null)
@@ -602,6 +621,11 @@ namespace ACE.Server.Factories
             // ItemWorkmanship property itself stays, so tinkering onto the gear still works.
             if ((wo.ItemMaxLevel ?? 0) > 0)
                 sb.Append($"Item Levels: {wo.ItemMaxLevel}\n");
+
+            // the item-aug wield gate (client cannot render Int64Stat requirements)
+            if (wo.WieldRequirements == ACE.Entity.Enum.WieldRequirement.Int64Stat &&
+                wo.WieldSkillType == (int)PropertyInt64.LumAugItemCount)
+                sb.Append($"Wield requires: {wo.WieldDifficulty ?? 0:N0} Item Augmentations\n");
 
             // ---- 5. provenance, at the very bottom: what dropped it, at which variant, and the
             // Zone Control zone when one governed the kill (omitted otherwise)
