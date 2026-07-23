@@ -242,6 +242,16 @@ namespace ACE.Server.Entity
         {
             if (!reload)
                 PhysicsLandblock.PostInit();
+            else
+            {
+                // A deliberate reload (/reload-landblock) reuses THIS Landblock object. The
+                // CreateWorldObjectsCompleted guard below exists to swallow duplicate watchdog
+                // RETRIES of the same load - but on a reload it swallowed the fresh spawn payload
+                // too, leaving the block EMPTY (found 2026-07-21 testing terrain-override camp
+                // swaps). Clear it so the rebuilt payload lands; restart the watchdog counters.
+                CreateWorldObjectsCompleted = false;
+                initSpawnAttempts = 0;
+            }
 
             StartInitSpawnTask(variationId);
 
@@ -411,6 +421,14 @@ namespace ACE.Server.Entity
             {
                 objects = DatabaseManager.World.GetCachedInstancesByLandblock(Id.Landblock, variationId);
                 shardObjects = DatabaseManager.Shard.BaseDatabase.GetStaticObjectsByLandblock(Id.Landblock, variationId);
+
+                // Zone Control terrain-override redirection (owner 2026-07-21): a zone that overrides
+                // this block's terrain at this variation swaps its standalone camp GENERATORS for ones
+                // drawn from the zone's blocks whose REAL terrain matches the override ("mark it
+                // obsidian, get the obsidian camps"). Rows are cloned (cache untouched), positions and
+                // guids stay, linked/quest instances are never swapped. No-op without an override.
+                objects = Managers.ZoneControl.ZoneControlManager.RedirectInstancesForTerrainOverride(
+                    Id.Landblock, variationId, objects);
             }
 
             var factoryObjects = WorldObjectFactory.CreateNewWorldObjects(objects, shardObjects, null, variationId);
@@ -826,6 +844,13 @@ namespace ACE.Server.Entity
 
             // get the encounter spawns for this landblock
             var encounters = DatabaseManager.World.GetCachedEncountersByLandblock(Id.Landblock);
+
+            // Zone Control terrain-override redirection (owner 2026-07-21): a zone that overrides this
+            // block's terrain at this variation swaps in encounter generators from the zone's blocks
+            // whose REAL terrain matches the override ("mark it obsidian, get the obsidian camps").
+            // No-op when no override applies; independent of the zone's Enabled flag.
+            encounters = Managers.ZoneControl.ZoneControlManager.RedirectEncountersForTerrainOverride(
+                Id.Landblock, VariationId, encounters);
 
             foreach (var encounter in encounters)
             {

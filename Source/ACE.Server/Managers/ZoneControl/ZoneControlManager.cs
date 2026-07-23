@@ -60,25 +60,40 @@ namespace ACE.Server.Managers.ZoneControl
             public EvaluatedProfile Default;                 // precomputed default stat set
             public Dictionary<uint, EvaluatedProfile> Wcid;  // precomputed per-WCID overrides
             public ZoneEffects Effects;                      // immutable copy (readers never touch the live zone)
+            public ZoneAppearance AppearanceDefault;         // cosmetic default (separate from stats)
+            public Dictionary<uint, ZoneAppearance> AppearanceByWcid; // per-WCID cosmetic overlays
         }
 
         private sealed class Snapshot
         {
             public readonly HashSet<ushort> EnabledLandblocks;
             public readonly Dictionary<ushort, List<ZoneRef>> ByLandblock;   // ENABLED zones only
-            // Player-boundary allowlists: variation -> union of landblocks of all ENABLED+BOUNDED zones at that
-            // variation. A variation with no entry has no Zone Control boundary (free roam / legacy fallback).
+            // Player-boundary allowlists: variation -> union of landblocks of all BOUNDED zones at that
+            // variation, ENABLED OR NOT (the boundary is independent of the zone's stat controls).
+            // A variation with no entry has no Zone Control boundary (free roam / legacy fallback).
             public readonly Dictionary<int, HashSet<ushort>> BoundedLandblocksByVariation;
+            // Terrain-override spawn redirection (owner 2026-07-21): variation -> lb -> override tag, and
+            // variation -> tag -> member landblocks whose BASE (DAT) terrain is that tag (encounter donors).
+            // Built for zones carrying overrides, ENABLED OR NOT (a mechanic of the zone's territory, like
+            // the boundary). Consumed by Landblock.SpawnEncounters via RedirectEncountersForTerrainOverride.
+            public readonly Dictionary<int, Dictionary<ushort, string>> TerrainOverridesByVariation;
+            public readonly Dictionary<int, Dictionary<string, List<ushort>>> TerrainDonorsByVariation;
             public Snapshot(HashSet<ushort> enabled, Dictionary<ushort, List<ZoneRef>> byLb,
-                Dictionary<int, HashSet<ushort>> boundedByVar)
+                Dictionary<int, HashSet<ushort>> boundedByVar,
+                Dictionary<int, Dictionary<ushort, string>> terrOvByVar,
+                Dictionary<int, Dictionary<string, List<ushort>>> terrDonorsByVar)
             {
                 EnabledLandblocks = enabled;
                 ByLandblock = byLb;
                 BoundedLandblocksByVariation = boundedByVar;
+                TerrainOverridesByVariation = terrOvByVar;
+                TerrainDonorsByVariation = terrDonorsByVar;
             }
             public static readonly Snapshot Empty =
                 new Snapshot(new HashSet<ushort>(), new Dictionary<ushort, List<ZoneRef>>(),
-                    new Dictionary<int, HashSet<ushort>>());
+                    new Dictionary<int, HashSet<ushort>>(),
+                    new Dictionary<int, Dictionary<ushort, string>>(),
+                    new Dictionary<int, Dictionary<string, List<ushort>>>());
         }
 
         private static volatile Snapshot _snapshot = Snapshot.Empty;
@@ -135,10 +150,75 @@ namespace ACE.Server.Managers.ZoneControl
                 a.TerrainOverrides ??= new Dictionary<ushort, string>();
                 a.Profile ??= new ZoneScalingProfile();
                 a.Effects ??= new ZoneEffects();
+                a.AppearanceDefault ??= new ZoneAppearance();
+                a.AppearanceByWcid ??= new Dictionary<uint, ZoneAppearance>();
+                MigrateAppearanceProps(a);
                 _areas[a.Name] = a;
             }
 
             RebuildIndexes();
+        }
+
+        /// <summary>One-time carry-over: Phase 1 stamped appearance through the generic prop pipe (PaletteTemplate
+        /// int 3, Shade float 12, DefaultScale float 39, Translucency float 76, CreatureVariant int 9038). Move any
+        /// such props out of the stat/prop buckets into the dedicated appearance layer so cosmetic edits no longer
+        /// ride the per-WCID stat bucket. Idempotent: after the move there are no appearance-id props left to find.</summary>
+        private static void MigrateAppearanceProps(ControlledArea a)
+        {
+            MigrateAppearancePropsFromVariant(a.Profile.Variant(ZoneVariant.Minion), a.AppearanceDefault);
+
+            List<uint> emptiedStatBuckets = null;
+            foreach (var kv in a.Profile.WcidOverrides)
+            {
+                if (kv.Value == null) continue;
+                if (!a.AppearanceByWcid.TryGetValue(kv.Key, out var ap) || ap == null)
+                    a.AppearanceByWcid[kv.Key] = ap = new ZoneAppearance();
+
+                var moved = MigrateAppearancePropsFromVariant(kv.Value, ap);
+
+                // If pulling the appearance props emptied this per-WCID STAT bucket entirely, drop it so the mob
+                // resolves to the zone default again — a lingering empty bucket would otherwise keep detaching it
+                // from scaling (the very coupling this split removes, for data authored under Phase 1).
+                if (moved && VariantIsEmpty(kv.Value))
+                    (emptiedStatBuckets ??= new List<uint>()).Add(kv.Key);
+
+                if (ap.IsEmpty)
+                    a.AppearanceByWcid.Remove(kv.Key); // never created an appearance override we didn't need
+            }
+            if (emptiedStatBuckets != null)
+                foreach (var w in emptiedStatBuckets)
+                    a.Profile.WcidOverrides.Remove(w);
+        }
+
+        private static bool MigrateAppearancePropsFromVariant(ZoneScaling.ZoneVariantProfile vp, ZoneAppearance ap)
+        {
+            var moved = false;
+            if (vp?.PropInts != null)
+            {
+                if (vp.PropInts.TryGetValue(3, out var pal)) { ap.PaletteTemplate ??= (int)pal; vp.PropInts.Remove(3); moved = true; }
+                if (vp.PropInts.TryGetValue(9038, out var shiny)) { ap.Shiny ??= shiny != 0; vp.PropInts.Remove(9038); moved = true; }
+            }
+            if (vp?.PropFloats != null)
+            {
+                if (vp.PropFloats.TryGetValue(12, out var shade)) { ap.Shade ??= shade; vp.PropFloats.Remove(12); moved = true; }
+                if (vp.PropFloats.TryGetValue(39, out var scale)) { ap.Scale ??= scale; vp.PropFloats.Remove(39); moved = true; }
+                if (vp.PropFloats.TryGetValue(76, out var trans)) { ap.Translucency ??= trans; vp.PropFloats.Remove(76); moved = true; }
+            }
+            return moved;
+        }
+
+        /// <summary>True when a stat/prop variant bucket carries nothing at all — used to prune a per-WCID bucket
+        /// that held only appearance props before migration moved them to the appearance layer.</summary>
+        private static bool VariantIsEmpty(ZoneScaling.ZoneVariantProfile vp)
+        {
+            return (vp.Stats == null || vp.Stats.Count == 0)
+                && (vp.BodyParts == null || vp.BodyParts.Count == 0)
+                && (vp.PropInts == null || vp.PropInts.Count == 0)
+                && (vp.PropInt64s == null || vp.PropInt64s.Count == 0)
+                && (vp.PropFloats == null || vp.PropFloats.Count == 0)
+                && (vp.PropBools == null || vp.PropBools.Count == 0)
+                && (vp.CustomCantrips == null || vp.CustomCantrips.Count == 0)
+                && (vp.CurrencyDrops == null || vp.CurrencyDrops.Count == 0);
         }
 
         private static void Save()
@@ -171,8 +251,44 @@ namespace ACE.Server.Managers.ZoneControl
             var enabledLbs = new HashSet<ushort>();
             var byLb = new Dictionary<ushort, List<ZoneRef>>();
             var boundedByVar = new Dictionary<int, HashSet<ushort>>();
+            var terrOvByVar = new Dictionary<int, Dictionary<ushort, string>>();
+            var terrDonorsByVar = new Dictionary<int, Dictionary<string, List<ushort>>>();
             foreach (var area in _areas.Values)
             {
+                // Boundary allowlist: union the landblocks of every BOUNDED zone per variation —
+                // INDEPENDENT of Enabled (owner 2026-07-21): the wall stays up while the zone's stat
+                // controls are off. Enabled governs stats/mechanics/loot; Bounded governs the boundary.
+                // Runtime zones (rifts) are deliberately excluded — they never bound players.
+                if (area.Bounded)
+                {
+                    if (!boundedByVar.TryGetValue(area.Variation, out var set))
+                        boundedByVar[area.Variation] = set = new HashSet<ushort>();
+                    set.UnionWith(area.Landblocks);
+                }
+
+                // Terrain-override spawn redirection (owner 2026-07-21, independent of Enabled): record
+                // this zone's overrides and, for zones that HAVE overrides, classify every member block's
+                // BASE terrain once (DatManager caches the reads) as the donor index — "mark a block
+                // obsidian and it draws its encounter camps from the zone's real obsidian blocks".
+                if (area.TerrainOverrides is { Count: > 0 })
+                {
+                    if (!terrOvByVar.TryGetValue(area.Variation, out var ovMap))
+                        terrOvByVar[area.Variation] = ovMap = new Dictionary<ushort, string>();
+                    foreach (var kv in area.TerrainOverrides)
+                        ovMap[kv.Key] = kv.Value;
+
+                    if (!terrDonorsByVar.TryGetValue(area.Variation, out var donorMap))
+                        terrDonorsByVar[area.Variation] = donorMap = new Dictionary<string, List<ushort>>();
+                    foreach (var lb in area.Landblocks)
+                    {
+                        var baseTag = ClassifyLandblockTerrain(lb);
+                        if (string.IsNullOrEmpty(baseTag)) continue;
+                        if (!donorMap.TryGetValue(baseTag, out var list))
+                            donorMap[baseTag] = list = new List<ushort>();
+                        if (!list.Contains(lb)) list.Add(lb);
+                    }
+                }
+
                 if (!area.Enabled)
                     continue;
 
@@ -183,15 +299,6 @@ namespace ACE.Server.Managers.ZoneControl
                     if (!byLb.TryGetValue(lb, out var list))
                         byLb[lb] = list = new List<ZoneRef>();
                     list.Add(zr);
-                }
-
-                // Boundary allowlist: union the landblocks of every enabled+bounded zone per variation.
-                // Runtime zones (rifts) are deliberately excluded — they never bound players.
-                if (area.Bounded)
-                {
-                    if (!boundedByVar.TryGetValue(area.Variation, out var set))
-                        boundedByVar[area.Variation] = set = new HashSet<ushort>();
-                    set.UnionWith(area.Landblocks);
                 }
             }
 
@@ -212,7 +319,7 @@ namespace ACE.Server.Managers.ZoneControl
             }
 
             var previous = _snapshot;
-            _snapshot = new Snapshot(enabledLbs, byLb, boundedByVar); // volatile publish
+            _snapshot = new Snapshot(enabledLbs, byLb, boundedByVar, terrOvByVar, terrDonorsByVar); // volatile publish
 
             // Boundary perimeter upkeep: markers spawn at landblock load, so when a mutation changes any
             // variation's bounded union, already-loaded landblocks at that variation must re-derive their
@@ -270,6 +377,12 @@ namespace ACE.Server.Managers.ZoneControl
             foreach (var kv in area.Profile.WcidOverrides)
                 wcid[kv.Key] = EvaluateVariant(area.Name, kv.Value);
 
+            var apWcid = new Dictionary<uint, ZoneAppearance>();
+            if (area.AppearanceByWcid != null)
+                foreach (var kv in area.AppearanceByWcid)
+                    if (kv.Value != null && !kv.Value.IsEmpty)
+                        apWcid[kv.Key] = kv.Value.Clone();
+
             return new ZoneRef
             {
                 Name = area.Name,
@@ -278,6 +391,8 @@ namespace ACE.Server.Managers.ZoneControl
                 Default = EvaluateVariant(area.Name, area.Profile.Variant(ZoneVariant.Minion)),
                 Wcid = wcid,
                 Effects = CopyEffects(area.Effects),
+                AppearanceDefault = area.AppearanceDefault?.Clone() ?? new ZoneAppearance(),
+                AppearanceByWcid = apWcid,
             };
         }
 
@@ -405,6 +520,38 @@ namespace ACE.Server.Managers.ZoneControl
             return best.Wcid.TryGetValue(creature.WeenieClassId, out var wp) ? wp : best.Default;
         }
 
+        /// <summary>Resolves a creature's COSMETIC appearance from the governing zone: the zone default overlaid by
+        /// this monster's per-WCID entry (per-WCID non-null fields win). Returns null when no enabled zone governs
+        /// the creature at its variation, or the zone defines no appearance. INDEPENDENT of the stat resolution —
+        /// a per-WCID appearance never creates a stat bucket, so it can't detach the mob from zone stat scaling.</summary>
+        public static ZoneAppearance ResolveAppearanceForCreature(Creature creature)
+        {
+            if (creature == null || creature is Player)
+                return null;
+
+            if (creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true)
+                return null;
+
+            var snap = _snapshot;
+            var landblock = creature.Location?.LandblockId.Landblock ?? 0;
+            if (!snap.EnabledLandblocks.Contains(landblock) || !snap.ByLandblock.TryGetValue(landblock, out var list))
+                return null;
+
+            var effVar = GetEffectiveVariation(creature);
+
+            ZoneRef best = null;
+            foreach (var zr in list)
+            {
+                if (zr.Variation != effVar) continue;
+                if (best == null || zr.LandblockCount < best.LandblockCount) best = zr;
+            }
+            if (best == null) return null;
+
+            best.AppearanceByWcid.TryGetValue(creature.WeenieClassId, out var wcidAp);
+            var merged = ZoneAppearance.Merge(best.AppearanceDefault, wcidAp);
+            return merged != null && !merged.IsEmpty ? merged : null;
+        }
+
         /// <summary>
         /// Resolves the winning zone's player EFFECTS for a player standing somewhere. Mirrors
         /// <see cref="ResolveForCreature"/>'s landblock + variation gating, but: (a) it's FOR players, and
@@ -444,10 +591,11 @@ namespace ACE.Server.Managers.ZoneControl
             return best?.Effects;
         }
 
-        /// <summary>True when at least one enabled BOUNDED zone exists at this variation. Lock-free; safe on
-        /// hot per-player paths. When true, <see cref="IsLandblockAllowed"/> is Zone Control's boundary
-        /// authority for the variation (enforced by the player tick's CheckZoneBoundary — standalone,
-        /// independent of any other boundary system).</summary>
+        /// <summary>True when at least one BOUNDED zone exists at this variation — enabled or not (the
+        /// boundary is independent of the zone's stat controls). Lock-free; safe on hot per-player paths.
+        /// When true, <see cref="IsLandblockAllowed"/> is Zone Control's boundary authority for the
+        /// variation (enforced by the player tick's CheckZoneBoundary — standalone, independent of any
+        /// other boundary system).</summary>
         public static bool HasBoundedZonesAt(int? variation)
         {
             if (!variation.HasValue)
@@ -456,8 +604,8 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         /// <summary>Player-boundary allowlist check: a landblock is allowed at a variation when no bounded zone
-        /// exists there (free roam), or it belongs to any enabled bounded zone at that variation (union).
-        /// Lock-free snapshot read.</summary>
+        /// exists there (free roam), or it belongs to any bounded zone at that variation (union; enabled
+        /// or not). Lock-free snapshot read.</summary>
         public static bool IsLandblockAllowed(int? variation, ushort landblock)
         {
             if (!variation.HasValue)
@@ -467,15 +615,179 @@ namespace ACE.Server.Managers.ZoneControl
             return allowed.Contains(landblock);
         }
 
-        /// <summary>Names of enabled bounded zones at a variation (for command echoes / the plugin's
-        /// shared-travel-space line). Locked display path — human-paced callers only.</summary>
+        /// <summary>
+        /// Terrain-override encounter redirection (owner 2026-07-21). When a zone overrides this
+        /// landblock's terrain at this variation, the block's encounter spawns are drawn from the
+        /// zone's DONOR blocks — members whose real DAT terrain matches the override tag — so marking
+        /// a grass block "obsidian" makes it spawn the zone's obsidian camps. The block's own row
+        /// POSITIONS are kept (known-good spots); only the generator WCIDs are substituted. A block
+        /// with no rows of its own imports a random donor block's full layout. Returns the original
+        /// list untouched when no override applies or no donor exists. Lock-free snapshot read +
+        /// cached DB reads — safe from the landblock init task. Independent of Enabled.
+        /// </summary>
+        public static List<Database.Models.World.Encounter> RedirectEncountersForTerrainOverride(
+            ushort landblock, int? variationId, List<Database.Models.World.Encounter> own)
+        {
+            if (!variationId.HasValue)
+                return own;
+
+            var snap = _snapshot;
+            if (!snap.TerrainOverridesByVariation.TryGetValue(variationId.Value, out var ovMap) ||
+                !ovMap.TryGetValue(landblock, out var tag))
+                return own;
+
+            if (!snap.TerrainDonorsByVariation.TryGetValue(variationId.Value, out var donorMap) ||
+                !donorMap.TryGetValue(tag, out var donorLbs) || donorLbs.Count == 0)
+                return own;
+
+            // donor pool: every encounter row on the zone's true-<tag> blocks (weighted naturally by
+            // how often a generator appears there); the target block never donates to itself
+            var pool = new List<Database.Models.World.Encounter>();
+            foreach (var dlb in donorLbs)
+            {
+                if (dlb == landblock) continue;
+                var rows = DatabaseManager.World.GetCachedEncountersByLandblock(dlb);
+                if (rows != null) pool.AddRange(rows);
+            }
+            if (pool.Count == 0)
+                return own;
+
+            var result = new List<Database.Models.World.Encounter>();
+            if (own is { Count: > 0 })
+            {
+                // keep this block's own spawn spots, swap what spawns there
+                foreach (var e in own)
+                    result.Add(new Database.Models.World.Encounter
+                    {
+                        Landblock = e.Landblock,
+                        CellX = e.CellX,
+                        CellY = e.CellY,
+                        WeenieClassId = pool[Common.ThreadSafeRandom.Next(0, pool.Count - 1)].WeenieClassId,
+                    });
+            }
+            else
+            {
+                // no encounters of its own: import a random donor block's full layout
+                var donor = donorLbs[Common.ThreadSafeRandom.Next(0, donorLbs.Count - 1)];
+                var rows = DatabaseManager.World.GetCachedEncountersByLandblock(donor);
+                if (rows == null || rows.Count == 0)
+                    return own;
+                foreach (var e in rows)
+                    result.Add(new Database.Models.World.Encounter
+                    {
+                        Landblock = landblock,
+                        CellX = e.CellX,
+                        CellY = e.CellY,
+                        WeenieClassId = e.WeenieClassId,
+                    });
+            }
+
+            log.Debug($"[ZoneControl] terrain override '{tag}' redirected {result.Count} encounter(s) on 0x{landblock:X4} v{variationId} ({donorLbs.Count} donor block(s))");
+            return result;
+        }
+
+        /// <summary>True when the weenie carries a generator table (a camp/spawn generator).</summary>
+        private static bool IsGeneratorWeenie(uint wcid)
+        {
+            var weenie = DatabaseManager.World.GetCachedWeenie(wcid);
+            return weenie?.PropertiesGenerator is { Count: > 0 };
+        }
+
+        /// <summary>
+        /// Terrain-override redirection for PLACED generator instances — the live path on this server
+        /// (encounter_spawn_base_layer_only=true keeps world encounters off explicit variations, so
+        /// variant-zone camps come from per-variation landblock_instance generators). When a zone
+        /// overrides this landblock's terrain at this variation, every STANDALONE generator instance
+        /// on the block (no links, not a link child — quest chains and NPCs are never touched) keeps
+        /// its position and instance guid but has its generator weenie substituted with a random pick
+        /// from the zone's donor blocks (members whose real DAT terrain matches the override tag).
+        /// Cached rows are cloned, never mutated. Returns the original list untouched when no override
+        /// applies or no donor pool exists. Lock-free; safe from the landblock init path.
+        /// </summary>
+        public static List<Database.Models.World.LandblockInstance> RedirectInstancesForTerrainOverride(
+            ushort landblock, int? variationId, List<Database.Models.World.LandblockInstance> own)
+        {
+            if (own == null || own.Count == 0 || !variationId.HasValue)
+                return own;
+
+            var snap = _snapshot;
+            if (!snap.TerrainOverridesByVariation.TryGetValue(variationId.Value, out var ovMap) ||
+                !ovMap.TryGetValue(landblock, out var tag))
+                return own;
+
+            if (!snap.TerrainDonorsByVariation.TryGetValue(variationId.Value, out var donorMap) ||
+                !donorMap.TryGetValue(tag, out var donorLbs) || donorLbs.Count == 0)
+                return own;
+
+            // donor pool: standalone generator instances on the zone's true-<tag> blocks at this same
+            // variation (duplicates kept - a generator common on donor blocks should be common here)
+            var pool = new List<uint>();
+            foreach (var dlb in donorLbs)
+            {
+                if (dlb == landblock) continue;
+                var rows = DatabaseManager.World.GetCachedInstancesByLandblock(dlb, variationId);
+                if (rows == null) continue;
+                foreach (var r in rows)
+                    if (!r.IsLinkChild && r.LandblockInstanceLink.Count == 0 && IsGeneratorWeenie(r.WeenieClassId))
+                        pool.Add(r.WeenieClassId);
+            }
+            if (pool.Count == 0)
+                return own;
+
+            // Prefer generators NAMED for the tag ("T11 Tou Tou Obsidian Generator" for obsidian):
+            // real blocks are rarely terrain-pure - F75C carries Land gens on its grassy fringes, so
+            // an unfiltered donor pool leaked ~half off-theme camps (owner report 2026-07-21). Falls
+            // back to the full donor pool when nothing is named for the tag (e.g. the generic "Land"
+            // generators covering grass/dirt/rock).
+            var themed = new List<uint>();
+            foreach (var wcid in pool)
+            {
+                var name = DatabaseManager.World.GetCachedWeenie(wcid)?.GetName();
+                if (name != null && name.IndexOf(tag, StringComparison.OrdinalIgnoreCase) >= 0)
+                    themed.Add(wcid);
+            }
+            var themedPool = themed.Count > 0;
+            if (themedPool)
+                pool = themed;
+
+            var result = new List<Database.Models.World.LandblockInstance>(own.Count);
+            var swapped = 0;
+            foreach (var r in own)
+            {
+                if (r.IsLinkChild || r.LandblockInstanceLink.Count > 0 || !IsGeneratorWeenie(r.WeenieClassId))
+                {
+                    result.Add(r);
+                    continue;
+                }
+
+                result.Add(new Database.Models.World.LandblockInstance
+                {
+                    Guid = r.Guid,
+                    Landblock = r.Landblock,
+                    WeenieClassId = pool[Common.ThreadSafeRandom.Next(0, pool.Count - 1)],
+                    ObjCellId = r.ObjCellId,
+                    OriginX = r.OriginX, OriginY = r.OriginY, OriginZ = r.OriginZ,
+                    AnglesW = r.AnglesW, AnglesX = r.AnglesX, AnglesY = r.AnglesY, AnglesZ = r.AnglesZ,
+                    VariationId = r.VariationId,
+                });
+                swapped++;
+            }
+
+            if (swapped > 0)
+                log.Info($"[ZoneControl] terrain override '{tag}': swapped {swapped} generator instance(s) on 0x{landblock:X4} v{variationId} " +
+                         $"({(themedPool ? "themed" : "unfiltered")} pool {pool.Count} from {donorLbs.Count} donor block(s))");
+            return result;
+        }
+
+        /// <summary>Names of bounded zones at a variation, enabled or not (for command echoes / the
+        /// plugin's shared-travel-space line). Locked display path — human-paced callers only.</summary>
         public static List<string> BoundedZoneNamesAt(int variation)
         {
             EnsureInitialized();
             lock (_lock)
             {
                 return _areas.Values
-                    .Where(a => a.Enabled && a.Bounded && a.Variation == variation)
+                    .Where(a => a.Bounded && a.Variation == variation)
                     .Select(a => a.Name)
                     .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                     .ToList();

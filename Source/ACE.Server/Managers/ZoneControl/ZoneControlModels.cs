@@ -44,6 +44,25 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>Zone-wide rules applied to PLAYERS standing in the zone (independent of monster stats).</summary>
         public ZoneEffects Effects { get; set; } = new();
+
+        /// <summary>COSMETIC appearance overrides, kept SEPARATE from Profile so they never touch a monster's
+        /// stats/abilities. <see cref="AppearanceDefault"/> applies to every governed monster; the
+        /// <see cref="AppearanceByWcid"/> entries LAYER on top of it per monster type (non-null fields win).
+        /// Missing on deserialize of older stores = empty (backward compatible). See ZoneAppearance.</summary>
+        public ZoneAppearance AppearanceDefault { get; set; } = new();
+        public Dictionary<uint, ZoneAppearance> AppearanceByWcid { get; set; } = new();
+
+        /// <summary>The cosmetic bucket to edit: the per-WCID overlay (auto-created when <paramref name="create"/>)
+        /// or the zone default when <paramref name="wcid"/> is null. Mirrors Profile.VariantForWcid.</summary>
+        public ZoneAppearance AppearanceFor(uint? wcid, bool create = false)
+        {
+            if (!wcid.HasValue) return AppearanceDefault ??= new ZoneAppearance();
+            AppearanceByWcid ??= new Dictionary<uint, ZoneAppearance>();
+            if (AppearanceByWcid.TryGetValue(wcid.Value, out var ap) && ap != null) return ap;
+            if (!create) return null;
+            AppearanceByWcid[wcid.Value] = ap = new ZoneAppearance();
+            return ap;
+        }
     }
 
     /// <summary>

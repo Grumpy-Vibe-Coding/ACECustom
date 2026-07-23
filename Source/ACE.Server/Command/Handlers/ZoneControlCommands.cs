@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 
 using ACE.Common.Performance;
+using ACE.Database.Models.World;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Entity.Models;
@@ -13,6 +14,8 @@ using ACE.Server.Managers;
 using ACE.Server.Managers.ZoneControl;
 using ACE.Server.Managers.ZoneScaling;
 using ACE.Server.Network;
+
+using Microsoft.EntityFrameworkCore;
 
 namespace ACE.Server.Command.Handlers
 {
@@ -80,6 +83,7 @@ namespace ACE.Server.Command.Handlers
             + "set <name> <stat> <value> [--wcid <id>] | clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>] | "
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
+            + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | "
             + "cantrip <name> <add|remove|list> [spellId] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
@@ -104,6 +108,9 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol clearpart <name> <part> [armor|damage|variance|dmgtype] [--wcid <id>]   (no field = clear the whole part)");
                 Msg("  /zonecontrol prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>]   (stamped on monsters at respawn)");
                 Msg("  /zonecontrol clearprop <name> <int|int64|float|bool> <idOrName> [--wcid <id>]");
+                Msg("  /zonecontrol appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>]   (cosmetic; separate from stats; DataId fields take hex 0x.. ; reload landblock to see)");
+                Msg("  /zonecontrol clearappearance <name> [field] [--wcid <id>]   (no field = clear all)");
+                Msg("  /zonecontrol copylook <name> <donorWcid> [--wcid <id>]   (make the target look like another monster - copies its model + palette)");
                 Msg("  /zonecontrol cantrip <name> <add|remove|list> [spellId] [--wcid <id>]   (custom cantrip pool for the extra-loot-cantrip roll)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
@@ -685,6 +692,221 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "appearance":
+                    {
+                        // Cosmetic appearance layer, kept SEPARATE from stats. Field-based; the default set and
+                        // per-WCID (--wcid) overlays layer (per-WCID non-null wins). Never creates a stat bucket.
+                        if (args.Count < 4) { Msg("Usage: appearance <name> <palette|shade|scale|translucency|shiny> <value> [--wcid <id>]"); return; }
+                        var name = args[1];
+                        if (ZoneControlManager.GetArea(name) == null) { Msg($"No zone '{name}' (create it first)."); return; }
+                        var field = args[2].ToLowerInvariant();
+                        string valueEcho;
+                        Action<ZoneAppearance> applyAp;
+                        switch (field)
+                        {
+                            case "palette":
+                            case "palettetemplate":
+                                if (!int.TryParse(args[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pal)) { Msg("palette must be an integer id."); return; }
+                                applyAp = ap => ap.PaletteTemplate = pal;
+                                valueEcho = pal.ToString(CultureInfo.InvariantCulture);
+                                break;
+                            case "shade":
+                                if (!TryDouble(args[3], out var sh)) { Msg("shade must be a number 0..1."); return; }
+                                applyAp = ap => ap.Shade = sh;
+                                valueEcho = sh.ToString("0.####", CultureInfo.InvariantCulture);
+                                break;
+                            case "scale":
+                                if (!TryDouble(args[3], out var sc)) { Msg("scale must be a number."); return; }
+                                applyAp = ap => ap.Scale = sc;
+                                valueEcho = sc.ToString("0.####", CultureInfo.InvariantCulture);
+                                break;
+                            case "translucency":
+                            case "trans":
+                                if (!TryDouble(args[3], out var tr)) { Msg("translucency must be a number 0..1."); return; }
+                                applyAp = ap => ap.Translucency = tr;
+                                valueEcho = tr.ToString("0.####", CultureInfo.InvariantCulture);
+                                break;
+                            case "shiny":
+                                var on = args[3].Equals("true", StringComparison.OrdinalIgnoreCase) || args[3] == "1" || args[3].Equals("on", StringComparison.OrdinalIgnoreCase);
+                                applyAp = ap => ap.Shiny = on;
+                                valueEcho = on ? "on" : "off";
+                                break;
+                            case "setup":
+                            case "setuptableid":
+                                if (!TryParseDid(args[3], out var didSetup)) { Msg("setup must be a DataId (hex like 0x02001234 or decimal)."); return; }
+                                applyAp = ap => ap.SetupTableId = didSetup;
+                                valueEcho = "0x" + didSetup.ToString("X8");
+                                break;
+                            case "clothing":
+                            case "clothingbase":
+                                if (!TryParseDid(args[3], out var didClo)) { Msg("clothing must be a DataId (0x10......)."); return; }
+                                applyAp = ap => ap.ClothingBase = didClo;
+                                valueEcho = "0x" + didClo.ToString("X8");
+                                break;
+                            case "palettebase":
+                            case "palbase":
+                                if (!TryParseDid(args[3], out var didPb)) { Msg("palettebase must be a DataId (0x04......)."); return; }
+                                applyAp = ap => ap.PaletteBase = didPb;
+                                valueEcho = "0x" + didPb.ToString("X8");
+                                break;
+                            case "motion":
+                            case "motiontable":
+                                if (!TryParseDid(args[3], out var didMt)) { Msg("motion must be a DataId (0x09......)."); return; }
+                                applyAp = ap => ap.MotionTable = didMt;
+                                valueEcho = "0x" + didMt.ToString("X8");
+                                break;
+                            case "sound":
+                            case "soundtable":
+                                if (!TryParseDid(args[3], out var didSt)) { Msg("sound must be a DataId (0x20......)."); return; }
+                                applyAp = ap => ap.SoundTable = didSt;
+                                valueEcho = "0x" + didSt.ToString("X8");
+                                break;
+                            case "icon":
+                                if (!TryParseDid(args[3], out var didIcon)) { Msg("icon must be a DataId (0x06......)."); return; }
+                                applyAp = ap => ap.Icon = didIcon;
+                                valueEcho = "0x" + didIcon.ToString("X8");
+                                break;
+                            default:
+                                Msg("field must be palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon"); return;
+                        }
+
+                        ZoneControlManager.MutateArea(name, a => applyAp(a.AppearanceFor(wcid, create: true)));
+                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} appearance {field} = {valueEcho}. Applies on (re)spawn (reload the landblock).");
+                        return;
+                    }
+
+                    case "clearappearance":
+                    {
+                        if (args.Count < 2) { Msg("Usage: clearappearance <name> [field] [--wcid <id>]  (no field = clear ALL, incl. model/clothing/palette)"); return; }
+                        var name = args[1];
+                        if (ZoneControlManager.GetArea(name) == null) { Msg($"No zone '{name}'."); return; }
+                        var field = args.Count >= 3 ? args[2].ToLowerInvariant() : null;
+                        var cleared = false;
+                        ZoneControlManager.MutateArea(name, a =>
+                        {
+                            var ap = a.AppearanceFor(wcid, create: false);
+                            if (ap == null) return;
+                            if (field == null)
+                            {
+                                cleared = !ap.IsEmpty;
+                                ap.Clear();   // ALL fields incl. the DataId swaps (Setup/Clothing/PaletteBase/Motion/Sound/Icon)
+                            }
+                            else
+                            {
+                                switch (field)
+                                {
+                                    case "palette": case "palettetemplate": cleared = ap.PaletteTemplate.HasValue; ap.PaletteTemplate = null; break;
+                                    case "shade": cleared = ap.Shade.HasValue; ap.Shade = null; break;
+                                    case "scale": cleared = ap.Scale.HasValue; ap.Scale = null; break;
+                                    case "translucency": case "trans": cleared = ap.Translucency.HasValue; ap.Translucency = null; break;
+                                    case "shiny": cleared = ap.Shiny.HasValue; ap.Shiny = null; break;
+                                    case "setup": case "setuptableid": cleared = ap.SetupTableId.HasValue; ap.SetupTableId = null; break;
+                                    case "clothing": case "clothingbase": cleared = ap.ClothingBase.HasValue; ap.ClothingBase = null; break;
+                                    case "palettebase": case "palbase": cleared = ap.PaletteBase.HasValue; ap.PaletteBase = null; break;
+                                    case "motion": case "motiontable": cleared = ap.MotionTable.HasValue; ap.MotionTable = null; break;
+                                    case "sound": case "soundtable": cleared = ap.SoundTable.HasValue; ap.SoundTable = null; break;
+                                    case "icon": cleared = ap.Icon.HasValue; ap.Icon = null; break;
+                                    default: Msg("field must be palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon"); return;
+                                }
+                            }
+                            if (wcid.HasValue && ap.IsEmpty) a.AppearanceByWcid.Remove(wcid.Value);
+                        });
+                        Msg(cleared ? $"'{name}' appearance {(field ?? "all")} cleared (reverts on respawn)." : "That appearance wasn't set.");
+                        return;
+                    }
+
+                    case "copylook":
+                    {
+                        // "Make the target look like <donorWcid>": read the donor weenie's model + palette data and
+                        // stamp it into this zone's appearance layer (default set, or a single --wcid overlay).
+                        if (args.Count < 3) { Msg("Usage: copylook <name> <donorWcid> [--wcid <id>]"); return; }
+                        var name = args[1];
+                        if (ZoneControlManager.GetArea(name) == null) { Msg($"No zone '{name}' (create it first)."); return; }
+                        if (!uint.TryParse(args[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var donorWcid)) { Msg("donorWcid must be a number."); return; }
+                        var donor = ACE.Database.DatabaseManager.World.GetCachedWeenie(donorWcid);
+                        if (donor == null) { Msg($"No weenie {donorWcid} in the world db."); return; }
+
+                        var setup = donor.GetProperty(PropertyDataId.Setup);
+                        var motion = donor.GetProperty(PropertyDataId.MotionTable);
+                        var sound = donor.GetProperty(PropertyDataId.SoundTable);
+                        var palBase = donor.GetProperty(PropertyDataId.PaletteBase);
+                        var clothing = donor.GetProperty(PropertyDataId.ClothingBase);
+                        var icon = donor.GetProperty(PropertyDataId.Icon);
+                        var palTemplate = donor.GetProperty(PropertyInt.PaletteTemplate);
+                        var shade = donor.GetProperty(PropertyFloat.Shade);
+                        var scale = donor.GetProperty(PropertyFloat.DefaultScale);
+
+                        ZoneControlManager.MutateArea(name, a =>
+                        {
+                            var ap = a.AppearanceFor(wcid, create: true);
+                            if (setup.HasValue) ap.SetupTableId = setup;
+                            if (motion.HasValue) ap.MotionTable = motion;
+                            if (sound.HasValue) ap.SoundTable = sound;
+                            if (palBase.HasValue) ap.PaletteBase = palBase;
+                            if (clothing.HasValue) ap.ClothingBase = clothing;
+                            if (icon.HasValue) ap.Icon = icon;
+                            if (palTemplate.HasValue) ap.PaletteTemplate = palTemplate;
+                            if (shade.HasValue) ap.Shade = shade;
+                            if (scale.HasValue) ap.Scale = scale;
+                        });
+                        var donorName = donor.GetProperty(PropertyString.Name) ?? donorWcid.ToString();
+                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} appearance copied from {donorName} ({donorWcid}). Reload the landblock to see it.");
+                        return;
+                    }
+
+                    case "findmob":
+                    {
+                        // Name/wcid search over creature weenies for the plugin's Copy-look mob picker.
+                        // Replies [[ZCFIND]]q=<query>|<wcid>~<name>|... (creatures only, capped).
+                        if (args.Count < 2) { Msg("Usage: findmob <text or wcid>"); return; }
+                        var q = string.Join(" ", args.Skip(1)).Trim();
+                        var sb = new StringBuilder("[[ZCFIND]]q=").Append(CleanWire(q));
+                        var seen = new HashSet<uint>();
+
+                        if (uint.TryParse(q, NumberStyles.Integer, CultureInfo.InvariantCulture, out var qWcid))
+                        {
+                            var byId = ACE.Database.DatabaseManager.World.GetCachedWeenie(qWcid);
+                            if (byId != null && byId.WeenieType == WeenieType.Creature && seen.Add(qWcid))
+                                sb.Append('|').Append(qWcid).Append('~').Append(CleanWire(byId.GetProperty(PropertyString.Name)));
+                        }
+
+                        if (q.Length > 0)
+                        {
+                            try
+                            {
+                                using var context = new WorldDbContext();
+                                var rows = context.Weenie
+                                    .Where(w => w.Type == (int)WeenieType.Creature)
+                                    .Join(context.WeeniePropertiesString.Where(s => s.Type == (ushort)PropertyString.Name && s.Value.Contains(q)),
+                                          w => w.ClassId, s => s.ObjectId, (w, s) => new { w.ClassId, s.Value })
+                                    .Take(30).AsNoTracking().ToList();
+                                foreach (var row in rows)
+                                {
+                                    if (!seen.Add(row.ClassId)) continue;
+                                    sb.Append('|').Append(row.ClassId).Append('~').Append(CleanWire(row.Value));
+                                }
+                            }
+                            catch (Exception) { /* search failed - reply with whatever already matched */ }
+                        }
+                        Msg(sb.ToString());
+                        return;
+                    }
+
+                    case "selinfo":
+                    {
+                        // Report the admin's in-game SELECTED object for the plugin's "Copy selected" confirm popup:
+                        // [[ZCSEL]]found=<0|1>|wcid=<n>|creature=<0|1>|name=<name>. Lets the plugin verify it's a real
+                        // creature (not an item) before copying its look.
+                        var sel = session.Player?.SelectedTarget;
+                        var sbSel = new StringBuilder("[[ZCSEL]]found=").Append(sel != null ? 1 : 0);
+                        if (sel != null)
+                            sbSel.Append("|wcid=").Append(sel.WeenieClassId)
+                                 .Append("|creature=").Append(sel is ACE.Server.WorldObjects.Creature ? 1 : 0)
+                                 .Append("|name=").Append(CleanWire(sel.Name));
+                        Msg(sbSel.ToString());
+                        return;
+                    }
+
                     case "boundary":
                     {
                         if (args.Count < 3) { Msg("Usage: boundary <name> <on|off|show>"); return; }
@@ -696,7 +918,7 @@ namespace ACE.Server.Command.Handlers
                         if (op == "show")
                         {
                             Msg($"'{name}' v{area.Variation}: {(area.Bounded ? "BOUNDED" : "free roam")} " +
-                                $"({area.Landblocks.Count} landblock(s), {(area.Enabled ? "ENABLED" : "disabled — boundary inactive until enabled")}).");
+                                $"({area.Landblocks.Count} landblock(s), {(area.Enabled ? "ENABLED" : "disabled — stats off; the boundary enforces regardless")}).");
                             if (area.Bounded)
                             {
                                 var sharing = ZoneControlManager.BoundedZoneNamesAt(area.Variation).Where(n => !n.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -720,7 +942,7 @@ namespace ACE.Server.Command.Handlers
                         ZoneControlManager.SetBounded(name, bounded);
                         Msg(bounded
                             ? $"'{name}' is now BOUNDED: players at v{area.Variation} may only roam bounded-zone landblocks there. " +
-                              $"{(area.Enabled ? "Active now." : "Zone is DISABLED — boundary activates on /zonecontrol enable " + name + ".")}"
+                              "Active now - the boundary enforces whether the zone is enabled or not."
                             : $"'{name}' boundary removed (free roam unless another bounded zone covers v{area.Variation}).");
                         return;
                     }
@@ -946,6 +1168,41 @@ namespace ACE.Server.Command.Handlers
                     sb.Append("|prop_f_").Append(kv.Key).Append('=').Append(kv.Value.ToString(CultureInfo.InvariantCulture));
                 foreach (var kv in vp.PropBools.OrderBy(k => k.Key))
                     sb.Append("|prop_b_").Append(kv.Key).Append('=').Append(kv.Value ? 1 : 0);
+            }
+
+            // Appearance overrides (cosmetic layer, separate from props/stats): ap_<field>=<value>. Sparse — the
+            // selected bucket's OWN fields (the zone default with no --wcid, else that WCID's overlay), so the
+            // plugin's Set/Clear act on exactly what it shows.
+            var apVp = area == null ? null : (wcid.HasValue
+                ? (area.AppearanceByWcid != null && area.AppearanceByWcid.TryGetValue(wcid.Value, out var apw) ? apw : null)
+                : area.AppearanceDefault);
+            if (apVp != null)
+            {
+                if (apVp.PaletteTemplate.HasValue) sb.Append("|ap_palette=").Append(apVp.PaletteTemplate.Value.ToString(CultureInfo.InvariantCulture));
+                if (apVp.Shade.HasValue) sb.Append("|ap_shade=").Append(apVp.Shade.Value.ToString(CultureInfo.InvariantCulture));
+                if (apVp.Scale.HasValue) sb.Append("|ap_scale=").Append(apVp.Scale.Value.ToString(CultureInfo.InvariantCulture));
+                if (apVp.Translucency.HasValue) sb.Append("|ap_trans=").Append(apVp.Translucency.Value.ToString(CultureInfo.InvariantCulture));
+                if (apVp.Shiny.HasValue) sb.Append("|ap_shiny=").Append(apVp.Shiny.Value ? 1 : 0);
+                if (apVp.SetupTableId.HasValue) sb.Append("|ap_setup=").Append(apVp.SetupTableId.Value.ToString("X8"));
+                if (apVp.MotionTable.HasValue) sb.Append("|ap_motion=").Append(apVp.MotionTable.Value.ToString("X8"));
+                if (apVp.SoundTable.HasValue) sb.Append("|ap_sound=").Append(apVp.SoundTable.Value.ToString("X8"));
+                if (apVp.PaletteBase.HasValue) sb.Append("|ap_palbase=").Append(apVp.PaletteBase.Value.ToString("X8"));
+                if (apVp.ClothingBase.HasValue) sb.Append("|ap_clothing=").Append(apVp.ClothingBase.Value.ToString("X8"));
+                if (apVp.Icon.HasValue) sb.Append("|ap_icon=").Append(apVp.Icon.Value.ToString("X8"));
+            }
+
+            // Capability hint: does the TARGET mob have a usable ClothingBase (so PaletteTemplate/Shade can recolor
+            // it)? Only meaningful for a specific --wcid; omitted for "all monsters" (capability varies per mob).
+            if (wcid.HasValue)
+            {
+                bool hasClothing;
+                if (apVp?.ClothingBase.HasValue == true)
+                    hasClothing = true;                                   // an override supplies one
+                else if (apVp?.SetupTableId.HasValue == true)
+                    hasClothing = false;                                  // model swapped -> base clothing won't match
+                else
+                    hasClothing = ACE.Database.DatabaseManager.World.GetCachedWeenie(wcid.Value)?.GetProperty(PropertyDataId.ClothingBase) != null;
+                sb.Append("|cap_clothing=").Append(hasClothing ? 1 : 0);
             }
 
             // Custom cantrip pool (for the plugin's Loot cards).
@@ -1176,6 +1433,18 @@ namespace ACE.Server.Command.Handlers
 
         private static bool TryDouble(string s, out double value)
             => double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out value);
+
+        /// <summary>Strip the wire's separator chars from a value so it can't break payload parsing.</summary>
+        private static string CleanWire(string s) => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
+
+        /// <summary>Parse a DataId: "0x02001234" (hex) or a plain decimal uint. Used by the appearance DataId levers.</summary>
+        private static bool TryParseDid(string s, out uint value)
+        {
+            s = (s ?? "").Trim();
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                return uint.TryParse(s.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
+            return uint.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        }
 
         /// <summary>Human-readable one-liner for a zone's DoT config (command echoes + show).</summary>
         private static string DescribeDot(ZoneEffects e)

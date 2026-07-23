@@ -15,7 +15,8 @@ namespace ACE.Server.WorldObjects
 {
     /// <summary>
     /// Zone Control BOUNDARY enforcement — a fully standalone system owned by Zone Control.
-    /// When any enabled BOUNDED zone exists at the player's variation, the union of bounded-zone
+    /// When any BOUNDED zone exists at the player's variation — enabled or not (owner 2026-07-21:
+    /// the boundary is independent of the zone's stat controls) — the union of bounded-zone
     /// landblocks there is the allowlist (<see cref="ZoneControlManager.IsLandblockAllowed"/>).
     /// Stepping outside it: center-screen warning + void FX + 5%-max-HP drain per 2s + a "Guide"
     /// wisp leading back to safety. Near an outside edge: proximity warning + wisp.

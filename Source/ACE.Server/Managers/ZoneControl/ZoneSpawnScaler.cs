@@ -26,6 +26,10 @@ namespace ACE.Server.Managers.ZoneControl
             if (creature == null)
                 return;
 
+            // Cosmetic appearance is resolved and stamped SEPARATELY from stats (its own zone lookup), so a
+            // per-WCID appearance override never creates a stat bucket and can't detach the mob from scaling.
+            ApplyAppearance(creature);
+
             var profile = ZoneControlManager.ResolveForCreature(creature);
             if (profile == null)
                 return;
@@ -107,5 +111,66 @@ namespace ACE.Server.Managers.ZoneControl
                     if (!ZonePropGuard.IsBlockedBool(kv.Key))
                         creature.SetProperty((PropertyBool)kv.Key, kv.Value);
         }
+
+        /// <summary>Stamp the governing zone's COSMETIC appearance onto a freshly-spawned monster, resolved from
+        /// the dedicated appearance layer (zone default overlaid by per-WCID). Per-instance property writes at
+        /// (re)spawn (revert on respawn), independent of the stat profile. Phase 1 levers: PaletteTemplate/Shade
+        /// (recolor), DefaultScale (size), Translucency (ghost), CreatureVariant (shiny texture swap).</summary>
+        private static void ApplyAppearance(Creature creature)
+        {
+            var ap = ZoneControlManager.ResolveAppearanceForCreature(creature);
+            if (ap == null)
+                return;
+
+            // ── Model / data swaps (DataId; guarded by class byte so a wrong id can't garble the client) ──
+            // A Setup swap replaces the body: clear the base weenie's own overlay + saved ObjDesc FIRST so its
+            // appearance doesn't bleed onto the new model (mirrors PetDevice.SummonCreature's capture apply),
+            // then set the new setup plus its matching motion/sound tables.
+            if (ap.SetupTableId.HasValue && IsDataId(ap.SetupTableId.Value, 0x02))
+            {
+                creature.RemoveProperty(PropertyDataId.ClothingBase);
+                creature.RemoveProperty(PropertyDataId.PaletteBase);
+                creature.RemoveProperty(PropertyInt.PaletteTemplate);
+                creature.RemoveProperty(PropertyFloat.Shade);
+                creature.Biota.PropertiesAnimPart?.Clear();
+                creature.Biota.PropertiesPalette?.Clear();
+                creature.Biota.PropertiesTextureMap?.Clear();
+
+                creature.SetupTableId = ap.SetupTableId.Value;
+            }
+
+            if (ap.MotionTable.HasValue && IsDataId(ap.MotionTable.Value, 0x09))
+                creature.MotionTableId = ap.MotionTable.Value;
+            if (ap.SoundTable.HasValue && IsDataId(ap.SoundTable.Value, 0x20))
+                creature.SoundTableId = ap.SoundTable.Value;
+
+            // ── Overlay / recolor (applied AFTER any model-swap clear so the intended overrides win) ──
+            if (ap.PaletteBase.HasValue && IsDataId(ap.PaletteBase.Value, 0x04))
+                creature.PaletteBaseId = ap.PaletteBase.Value;
+            if (ap.ClothingBase.HasValue && IsDataId(ap.ClothingBase.Value, 0x10))
+                creature.ClothingBase = ap.ClothingBase.Value;
+            if (ap.Icon.HasValue && IsDataId(ap.Icon.Value, 0x06))
+                creature.IconId = ap.Icon.Value;
+
+            if (ap.PaletteTemplate.HasValue)
+                creature.SetProperty(PropertyInt.PaletteTemplate, ap.PaletteTemplate.Value);
+            if (ap.Shade.HasValue)
+                creature.SetProperty(PropertyFloat.Shade, ap.Shade.Value);
+            if (ap.Scale.HasValue)
+                creature.SetProperty(PropertyFloat.DefaultScale, ap.Scale.Value);
+            if (ap.Translucency.HasValue)
+                creature.SetProperty(PropertyFloat.Translucency, ap.Translucency.Value);
+            if (ap.Shiny.HasValue)
+            {
+                if (ap.Shiny.Value)
+                    creature.SetProperty(PropertyInt.CreatureVariant, 1);
+                else
+                    creature.RemoveProperty(PropertyInt.CreatureVariant);
+            }
+        }
+
+        /// <summary>True if the DataId's class byte (top 8 bits) matches — a cheap guard against a wildly wrong id
+        /// (e.g. a "Setup" that isn't 0x02) that could break the client render. 0 is never valid.</summary>
+        private static bool IsDataId(uint id, byte classByte) => id != 0 && (id >> 24) == classByte;
     }
 }

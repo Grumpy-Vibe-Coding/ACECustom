@@ -121,8 +121,8 @@ namespace ACE.Server.Factories
         /// <summary>
         /// The tier-11+ wield gate: 2000 item augmentations (LumAugItemCount), replacing every
         /// requirement StripWieldRequirements removed. Validated server-side by the
-        /// WieldRequirement.Int64Stat case; displayed by the item's info block (the client
-        /// cannot render this requirement type, and T11 panels are server-composed anyway).
+        /// WieldRequirement.Int64Stat case. The client cannot render this requirement type, so
+        /// the stock panel shows no wield line -- a future LongDesc append will display it.
         /// </summary>
         public static void ApplyT11WieldRequirement(WorldObject wo)
         {
@@ -168,10 +168,10 @@ namespace ACE.Server.Factories
 
         /// <summary>
         /// Equalizes a tier-11+ armor piece's eight resistance multipliers to their mean (owner
-        /// 2026-07-20: one uniform protection value instead of eight per-element lines). Budget-
+        /// 2026-07-20: one uniform protection value instead of eight per-element spreads). Budget-
         /// neutral: the mean of the rolled mods, applied to every mod the piece actually has.
-        /// The description block then shows a single "Protection Value: All (N)" line and
-        /// AppraiseInfo suppresses the per-element floats from the appraisal profile.
+        /// The stock client panel now renders its eight per-element lines with one identical
+        /// value each (panel takeover reverted 2026-07-21).
         /// </summary>
         public static void EqualizeT11ArmorResists(WorldObject wo)
         {
@@ -498,22 +498,12 @@ namespace ACE.Server.Factories
         }
 
         /// <summary>
-        /// REPLACES a tier-11+ drop's LongDesc with the COMPLETE item panel (owner 2026-07-20:
-        /// the client's own panel sections are fully suppressed for T11 drops -- AppraiseInfo
-        /// clears the property buckets and skips the Armor/Weapon identify structures -- so this
-        /// block IS the panel, in our order, ratings first). The spell book is left native so
-        /// future ZC cantrips/procs render as real spell entries.
-        ///
-        ///   Ratings:
-        ///   * Damage 20 [16-20]
-        ///
-        ///   Armor Level: 439
-        ///   Protection Value: Above Average (431)
-        ///   Workmanship: (7)
-        ///   Covers: Head
-        ///   Value: 33,521
-        ///   Burden: 277
-        ///
+        /// CURRENTLY UNCALLED -- the full panel takeover was reverted (owner 2026-07-21): the
+        /// client renders its stock examine panel and AppraiseInfo no longer suppresses anything.
+        /// Kept as the skeleton for the planned replacement, which APPENDS a small block to the
+        /// bottom of the default panel (LongDesc renders last) instead of replacing it -- the
+        /// ratings-range, wield-requirement and provenance pieces here are the reuse candidates;
+        /// the armor/weapon stat lines duplicate what the stock panel already shows and go away.
         /// ASCII only (old client cannot render anything else).
         /// </summary>
         public static void AppendRatingsAppraisalBlock(WorldObject wo, string droppedBy = null, int? variation = null, string zoneName = null)

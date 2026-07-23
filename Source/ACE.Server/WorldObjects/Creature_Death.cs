@@ -989,13 +989,13 @@ namespace ACE.Server.WorldObjects
                         LootGenerationFactory.StripWieldRequirements(wo);
                         LootGenerationFactory.ApplyT11WieldRequirement(wo);
 
-                        // one uniform resist value across all eight elements (before the block
-                        // below reads it for the Protection Value line)
+                        // one uniform resist value across all eight elements
                         LootGenerationFactory.EqualizeT11ArmorResists(wo);
 
-                        // formatted info block (ratings / armor / weapon stats + provenance)
-                        // REPLACES the description; AppraiseInfo suppresses the client's own panel
-                        LootGenerationFactory.AppendRatingsAppraisalBlock(wo, Name, Location?.Variation, zoneLoot?.ScopeKey);
+                        // NOTE (owner 2026-07-21): the server-composed info block / full panel
+                        // takeover was REVERTED -- the client renders its stock examine panel.
+                        // A future pass will APPEND extra lines to the bottom (LongDesc renders
+                        // last) without touching the default layout.
 
                         // "T11 - [base name]" (material cleared -- the client would prefix it)
                         LootGenerationFactory.ApplyT11NamePrefix(wo);
