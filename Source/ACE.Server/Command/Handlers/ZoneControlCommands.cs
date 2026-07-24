@@ -1100,6 +1100,10 @@ namespace ACE.Server.Command.Handlers
         /// <summary>Builds the "[[ZC]]scope=..|found=..|enabled=..|variation=..|&lt;stat&gt;=defined,value|..|
         /// live_&lt;stat&gt;=..|here_lb=..|here_var=..|here_zone=.." payload the plugin's grid parses. Shared by
         /// "get" and the sync push tick. Values are flat.</summary>
+        // Reference "Test Dummy" weenie used to fill the effective-look table when no specific mob is targeted
+        // (so the plugin shows a real reference look instead of a column of N/A). 99999099 = "Target Dummy".
+        private const uint ZoneControlDummyWcid = 99999099;
+
         private static string BuildZonePayload(string name, uint? wcid, Session session)
         {
             var area = ZoneControlManager.GetArea(name);
@@ -1189,6 +1193,50 @@ namespace ACE.Server.Command.Handlers
                 if (apVp.PaletteBase.HasValue) sb.Append("|ap_palbase=").Append(apVp.PaletteBase.Value.ToString("X8"));
                 if (apVp.ClothingBase.HasValue) sb.Append("|ap_clothing=").Append(apVp.ClothingBase.Value.ToString("X8"));
                 if (apVp.Icon.HasValue) sb.Append("|ap_icon=").Append(apVp.Icon.Value.ToString("X8"));
+            }
+
+            // Effective look: the target's ACTUAL resolved value + source for every lever, so the plugin shows what
+            // it looks like even with nothing overridden. WITH a specific mob: self = this WCID's override, zone =
+            // the zone default, stock = the mob's own weenie. With NO target: self = the zone default (the bucket
+            // being edited) and a reference "Test Dummy" weenie stands in for stock (tagged 'dummy'), so the table
+            // is never a wall of N/A. eff_<field>=<value>~<self|zone|stock|dummy>.
+            if (area != null)
+            {
+                bool hasMob = wcid.HasValue;
+                uint refWcid = wcid ?? ZoneControlDummyWcid;
+                var apDef = area.AppearanceDefault;
+                var apW = (hasMob && area.AppearanceByWcid != null && area.AppearanceByWcid.TryGetValue(wcid.Value, out var apw2)) ? apw2 : null;
+                var selfAp = hasMob ? apW : apDef;
+                var zoneAp = hasMob ? apDef : null;
+                var wpn = ACE.Database.DatabaseManager.World.GetCachedWeenie(refWcid);
+                string stockSrc = hasMob ? "stock" : "dummy";
+
+                void Eff(string key, string self, string zone, string stock)
+                {
+                    string val, src;
+                    if (self != null) { val = self; src = "self"; }
+                    else if (zone != null) { val = zone; src = "zone"; }
+                    else if (stock != null) { val = stock; src = stockSrc; }
+                    else return;
+                    sb.Append("|eff_").Append(key).Append('=').Append(val).Append('~').Append(src);
+                }
+                string I(int? v) => v?.ToString(CultureInfo.InvariantCulture);
+                string F(double? v) => v?.ToString(CultureInfo.InvariantCulture);
+                string D(uint? v) => v?.ToString("X8");
+                string B(bool? v) => v.HasValue ? (v.Value ? "1" : "0") : null;
+                string Bi(int? v) => v.HasValue ? (v.Value != 0 ? "1" : "0") : null;
+
+                Eff("palette",  I(selfAp?.PaletteTemplate), I(zoneAp?.PaletteTemplate), I(wpn?.GetProperty(PropertyInt.PaletteTemplate)));
+                Eff("shade",    F(selfAp?.Shade),           F(zoneAp?.Shade),           F(wpn?.GetProperty(PropertyFloat.Shade)));
+                Eff("scale",    F(selfAp?.Scale),           F(zoneAp?.Scale),           F(wpn?.GetProperty(PropertyFloat.DefaultScale)) ?? "1");
+                Eff("trans",    F(selfAp?.Translucency),    F(zoneAp?.Translucency),    F(wpn?.GetProperty(PropertyFloat.Translucency)) ?? "0");
+                Eff("shiny",    B(selfAp?.Shiny),           B(zoneAp?.Shiny),           Bi(wpn?.GetProperty(PropertyInt.CreatureVariant)) ?? "0");
+                Eff("setup",    D(selfAp?.SetupTableId),    D(zoneAp?.SetupTableId),    D(wpn?.GetProperty(PropertyDataId.Setup)));
+                Eff("clothing", D(selfAp?.ClothingBase),    D(zoneAp?.ClothingBase),    D(wpn?.GetProperty(PropertyDataId.ClothingBase)));
+                Eff("palbase",  D(selfAp?.PaletteBase),     D(zoneAp?.PaletteBase),     D(wpn?.GetProperty(PropertyDataId.PaletteBase)));
+                Eff("motion",   D(selfAp?.MotionTable),     D(zoneAp?.MotionTable),     D(wpn?.GetProperty(PropertyDataId.MotionTable)));
+                Eff("sound",    D(selfAp?.SoundTable),      D(zoneAp?.SoundTable),      D(wpn?.GetProperty(PropertyDataId.SoundTable)));
+                Eff("icon",     D(selfAp?.Icon),            D(zoneAp?.Icon),            D(wpn?.GetProperty(PropertyDataId.Icon)));
             }
 
             // Capability hint: does the TARGET mob have a usable ClothingBase (so PaletteTemplate/Shade can recolor
