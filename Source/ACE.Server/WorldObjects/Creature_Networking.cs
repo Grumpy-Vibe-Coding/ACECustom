@@ -246,6 +246,24 @@ namespace ACE.Server.WorldObjects
                 objDesc.TextureChanges.AddRange(CreatureVariantHelper.GetTextureChanges(this, coverage));
             }
 
+            // Zone per-part / baked custom part overrides must win even when the creature has equipped items
+            // (eo.Count>0). That case skips the biota-parts early-return near the top, and the ObjDesc is re-sent
+            // whenever a creature equips - which clobbers a part swap that only survived the no-equipment path.
+            // Overlay the biota anim-part + texture overrides here, replacing any change at the same index so ours
+            // wins. No-op for creatures with no biota overrides (Clone returns null); Tusgian-style mobs with parts
+            // and no equipment already returned above, so they're untouched.
+            var _zcAnimOverrides = Biota.PropertiesAnimPart.Clone(BiotaDatabaseLock);
+            if (_zcAnimOverrides != null)
+                foreach (var p in _zcAnimOverrides)
+                {
+                    objDesc.AnimPartChanges.RemoveAll(c => c.Index == p.Index);
+                    objDesc.AnimPartChanges.Add(p);
+                }
+            var _zcTexOverrides = Biota.PropertiesTextureMap.Clone(BiotaDatabaseLock);
+            if (_zcTexOverrides != null)
+                foreach (var t in _zcTexOverrides)
+                    objDesc.AddTextureChange(t);
+
             return objDesc;
         }
 

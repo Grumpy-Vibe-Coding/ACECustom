@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text;
 
 using ACE.Common.Performance;
+using ACE.DatLoader;
+using ACE.DatLoader.FileTypes;
 using ACE.Database.Models.World;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
@@ -110,7 +112,9 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol clearprop <name> <int|int64|float|bool> <idOrName> [--wcid <id>]");
                 Msg("  /zonecontrol appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>]   (cosmetic; separate from stats; DataId fields take hex 0x.. ; reload landblock to see)");
                 Msg("  /zonecontrol clearappearance <name> [field] [--wcid <id>]   (no field = clear all)");
-                Msg("  /zonecontrol copylook <name> <donorWcid> [--wcid <id>]   (make the target look like another monster - copies its model + palette)");
+                Msg("  /zonecontrol copylook <name> <donorWcid> [--wcid <id>]   (make the target look like another monster - copies its model + palette + parts)");
+                Msg("  /zonecontrol listparts <wcid | 0xSetupId>   (dump a mob's body-part layout: index -> model piece; head = index 16)");
+                Msg("  /zonecontrol appearance <name> animpart <index> <gfxObjHex> [--wcid <id>]   (swap ONE body part, e.g. animpart 16 = head; clear with clearappearance <name> animpart <index>)");
                 Msg("  /zonecontrol cantrip <name> <add|remove|list> [spellId] [--wcid <id>]   (custom cantrip pool for the extra-loot-cantrip roll)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
@@ -700,6 +704,28 @@ namespace ACE.Server.Command.Handlers
                         var name = args[1];
                         if (ZoneControlManager.GetArea(name) == null) { Msg($"No zone '{name}' (create it first)."); return; }
                         var field = args[2].ToLowerInvariant();
+
+                        // Per-part model override: "appearance <name> animpart <index> <gfxObjHex> [--wcid]" -
+                        // layers ONE body-part swap over the base model (e.g. index 16 = head on humanoid setups).
+                        // Different arg shape (index + id) than the single-value levers, so handled up here. Each
+                        // index is stored once (re-setting the same index replaces it); it accumulates with copylook'd
+                        // parts. Clear with "clearappearance <name> animpart <index>".
+                        if (field == "animpart" || field == "part")
+                        {
+                            if (args.Count < 5) { Msg("Usage: appearance <name> animpart <index 0-255> <gfxObjHex 0x01......> [--wcid <id>]"); return; }
+                            if (!byte.TryParse(args[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pIdx)) { Msg("index must be 0-255."); return; }
+                            if (!TryParseDid(args[4], out var gfx) || (gfx >> 24) != 0x01) { Msg("gfxObj must be a 0x01...... DataId (a model piece, e.g. from listparts)."); return; }
+                            ZoneControlManager.MutateArea(name, a =>
+                            {
+                                var ap = a.AppearanceFor(wcid, create: true);
+                                ap.AnimParts ??= new List<AnimPartEntry>();
+                                ap.AnimParts.RemoveAll(p => p.Index == pIdx);
+                                ap.AnimParts.Add(new AnimPartEntry { Index = pIdx, GfxObj = gfx });
+                            });
+                            Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} body part [{pIdx}] = 0x{gfx:X8}. Reload the landblock to see it.");
+                            return;
+                        }
+
                         string valueEcho;
                         Action<ZoneAppearance> applyAp;
                         switch (field)
@@ -806,7 +832,20 @@ namespace ACE.Server.Command.Handlers
                                     case "motion": case "motiontable": cleared = ap.MotionTable.HasValue; ap.MotionTable = null; break;
                                     case "sound": case "soundtable": cleared = ap.SoundTable.HasValue; ap.SoundTable = null; break;
                                     case "icon": cleared = ap.Icon.HasValue; ap.Icon = null; break;
-                                    default: Msg("field must be palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon"); return;
+                                    case "parts": case "bodyparts": cleared = ap.PartCount > 0; ap.AnimParts = null; ap.TextureMaps = null; break;
+                                    case "animpart":
+                                        // "clearappearance <name> animpart <index>" removes ONE part override;
+                                        // "clearappearance <name> animpart" (no index) removes all part overrides.
+                                        if (args.Count >= 4 && byte.TryParse(args[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ci))
+                                        {
+                                            int before = ap.AnimParts?.Count ?? 0;
+                                            ap.AnimParts?.RemoveAll(p => p.Index == ci);
+                                            if (ap.AnimParts != null && ap.AnimParts.Count == 0) ap.AnimParts = null;
+                                            cleared = (ap.AnimParts?.Count ?? 0) != before;
+                                        }
+                                        else { cleared = (ap.AnimParts?.Count ?? 0) > 0; ap.AnimParts = null; }
+                                        break;
+                                    default: Msg("field must be palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon | parts | animpart <index>"); return;
                                 }
                             }
                             if (wcid.HasValue && ap.IsEmpty) a.AppearanceByWcid.Remove(wcid.Value);
@@ -835,6 +874,11 @@ namespace ACE.Server.Command.Handlers
                         var palTemplate = donor.GetProperty(PropertyInt.PaletteTemplate);
                         var shade = donor.GetProperty(PropertyFloat.Shade);
                         var scale = donor.GetProperty(PropertyFloat.DefaultScale);
+                        // Per-part body swaps (e.g. Tusgian's 21 anim + 27 texture rows): copy the whole set so the
+                        // target reproduces the donor's custom body. Only set when the donor actually has parts, so
+                        // copying a plain mob never blanks the target's own parts.
+                        var donorAnim = donor.PropertiesAnimPart;
+                        var donorTex = donor.PropertiesTextureMap;
 
                         ZoneControlManager.MutateArea(name, a =>
                         {
@@ -848,9 +892,131 @@ namespace ACE.Server.Command.Handlers
                             if (palTemplate.HasValue) ap.PaletteTemplate = palTemplate;
                             if (shade.HasValue) ap.Shade = shade;
                             if (scale.HasValue) ap.Scale = scale;
+                            ap.AnimParts = (donorAnim != null && donorAnim.Count > 0)
+                                ? donorAnim.Select(p => new AnimPartEntry { Index = p.Index, GfxObj = p.AnimationId }).ToList() : null;
+                            ap.TextureMaps = (donorTex != null && donorTex.Count > 0)
+                                ? donorTex.Select(t => new TextureMapEntry { Index = t.PartIndex, OldTex = t.OldTexture, NewTex = t.NewTexture }).ToList() : null;
                         });
                         var donorName = donor.GetProperty(PropertyString.Name) ?? donorWcid.ToString();
-                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} appearance copied from {donorName} ({donorWcid}). Reload the landblock to see it.");
+                        var partN = (donorAnim?.Count ?? 0) + (donorTex?.Count ?? 0);
+                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} appearance copied from {donorName} ({donorWcid}){(partN > 0 ? $", incl. {partN} body-part swaps" : "")}. Reload the landblock to see it.");
+                        return;
+                    }
+
+                    case "listparts":
+                    {
+                        // Inspect a mob's (or a raw Setup's) body-part layout: part index -> GfxObj model piece,
+                        // plus any anim_part overrides baked on the weenie. Writes a full dump to zc_partsdump.txt
+                        // (next to the server dll) + a chat summary. Step 1 of the per-part editor: reveals which
+                        // index is the head (humanoid setups use index 16) and whether parts are isolable.
+                        if (args.Count < 2) { Msg("Usage: listparts <wcid | 0xSetupId>"); return; }
+                        uint setupId;
+                        string label;
+                        IList<PropertiesAnimPart> ovrList = null;
+                        if (args[1].StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+                            uint.TryParse(args[1].Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var sid) && (sid >> 24) == 0x02)
+                        {
+                            setupId = sid; label = $"setup 0x{sid:X8}";
+                        }
+                        else if (uint.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var w))
+                        {
+                            var wpn = ACE.Database.DatabaseManager.World.GetCachedWeenie(w);
+                            if (wpn == null) { Msg($"No weenie {w}."); return; }
+                            setupId = wpn.GetProperty(PropertyDataId.Setup) ?? 0;
+                            ovrList = wpn.PropertiesAnimPart;
+                            label = $"{wpn.GetProperty(PropertyString.Name) ?? w.ToString()} (wcid {w})";
+                        }
+                        else { Msg("Give a wcid (number) or a 0x02...... Setup id."); return; }
+                        if ((setupId >> 24) != 0x02) { Msg("That target has no valid Setup (0x02......)."); return; }
+
+                        SetupModel setup;
+                        try { setup = DatManager.PortalDat.ReadFromDat<SetupModel>(setupId); }
+                        catch (Exception ex) { Msg($"Could not read Setup 0x{setupId:X8}: {ex.Message}"); return; }
+
+                        var ovr = new Dictionary<int, uint>();
+                        if (ovrList != null) foreach (var o in ovrList) ovr[o.Index] = o.AnimationId;
+
+                        // Per-part placement positions (first usable placement frame) so we can spot the head =
+                        // the highest (max-Z) real part, instead of assuming index 16 (which varies per setup).
+                        var pos = (setup.PlacementFrames.Count > 0)
+                            ? setup.PlacementFrames.Values
+                                .FirstOrDefault(p => p.AnimFrame?.Frames != null && p.AnimFrame.Frames.Count >= setup.Parts.Count)
+                                ?.AnimFrame.Frames.Select(f => f.Origin).ToList()
+                            : null;
+                        int headIdx = -1; float maxZ = float.NegativeInfinity;
+                        if (pos != null)
+                            for (int i = 0; i < setup.Parts.Count; i++)
+                                if (setup.Parts[i] != 0x010001EC && pos[i].Z > maxZ) { maxZ = pos[i].Z; headIdx = i; }
+
+                        var sbp = new StringBuilder();
+                        sbp.Append("=== listparts ").Append(label).Append(" | setup 0x").Append(setupId.ToString("X8"))
+                           .Append(" | ").Append(setup.Parts.Count).Append(" parts | ").Append(ovr.Count).Append(" overrides")
+                           .Append(" | highest/likely-head = idx ").Append(headIdx).Append(" ===\n");
+                        for (int i = 0; i < setup.Parts.Count; i++)
+                        {
+                            sbp.Append("  [").Append(i.ToString().PadLeft(2)).Append("] 0x").Append(setup.Parts[i].ToString("X8"));
+                            if (ovr.TryGetValue(i, out var g)) sbp.Append("  OVR->0x").Append(g.ToString("X8"));
+                            if (pos != null) sbp.Append("  pos(x").Append(pos[i].X.ToString("0.00")).Append(" y").Append(pos[i].Y.ToString("0.00")).Append(" z").Append(pos[i].Z.ToString("0.00")).Append(")");
+                            if (setup.Parts[i] == 0x010001EC) sbp.Append("  [null]");
+                            if (i == headIdx) sbp.Append("   <== HIGHEST (likely HEAD)");
+                            sbp.Append('\n');
+                        }
+                        foreach (var kv in ovr)
+                            if (kv.Key >= setup.Parts.Count)
+                                sbp.Append("  [").Append(kv.Key.ToString().PadLeft(2)).Append("] (added by override) -> 0x").Append(kv.Value.ToString("X8")).Append('\n');
+
+                        try
+                        {
+                            var path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "zc_partsdump.txt");
+                            System.IO.File.AppendAllText(path, sbp.ToString() + "\n");
+                        }
+                        catch { }
+
+                        Msg($"{label}: setup 0x{setupId:X8}, {setup.Parts.Count} parts, {ovr.Count} overrides. " +
+                            (headIdx >= 0 ? $"Highest/likely-head = idx {headIdx} (0x{setup.Parts[headIdx]:X8})." : "(no placement data - can't locate head.)") +
+                            " Full dump -> zc_partsdump.txt");
+                        return;
+                    }
+
+                    case "partsof":
+                    {
+                        // Plugin-facing: reply a mob's body-part layout for the per-part editor's slot list +
+                        // "copy from mob" picker. [[ZCPARTS]]w=<wcid>|n=<name>|s=<setupHex>|h=<headIdx>|<i>=<gfxHex>|...
+                        // "partsof <wcid>" (typed) = left/editing side; "partsof sel" = the in-game SELECTED mob,
+                        // tagged role=src for the right/steal-from side.
+                        if (args.Count < 2) { Msg("Usage: partsof <wcid | sel>"); return; }
+                        uint pw; uint pSetup; string pName; string roleTag = "";
+                        if (args[1].Equals("sel", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var selp = session.Player?.SelectedTarget;
+                            if (selp == null) { Msg("Nothing selected in-game (left-click a mob first)."); return; }
+                            pw = selp.WeenieClassId;
+                            pSetup = selp.GetProperty(PropertyDataId.Setup) ?? 0;
+                            pName = selp.Name ?? pw.ToString();
+                            // "partsof sel tgt" = the mob we're EDITING (left, zone-checked plugin-side); else = source (right).
+                            roleTag = (args.Count >= 3 && args[2].Equals("tgt", StringComparison.OrdinalIgnoreCase)) ? "role=tgt|" : "role=src|";
+                        }
+                        else
+                        {
+                            if (!uint.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out pw)) { Msg("wcid must be a number or 'sel'."); return; }
+                            var pwn = ACE.Database.DatabaseManager.World.GetCachedWeenie(pw);
+                            if (pwn == null) { Msg($"No weenie {pw}."); return; }
+                            pSetup = pwn.GetProperty(PropertyDataId.Setup) ?? 0;
+                            pName = pwn.GetProperty(PropertyString.Name) ?? pw.ToString();
+                        }
+                        if ((pSetup >> 24) != 0x02) { Msg("That mob has no Setup (0x02......)."); return; }
+                        SetupModel pModel;
+                        try { pModel = DatManager.PortalDat.ReadFromDat<SetupModel>(pSetup); }
+                        catch (Exception ex) { Msg($"Could not read Setup 0x{pSetup:X8}: {ex.Message}"); return; }
+                        var pHead = SetupHeadIndex(pModel);
+                        var pLabels = SetupPartLabels(pModel, pHead);
+                        var psb = new StringBuilder("[[ZCPARTS]]").Append(roleTag).Append("w=").Append(pw)
+                            .Append("|n=").Append(CleanWire(pName))
+                            .Append("|s=").Append(pSetup.ToString("X8"))
+                            .Append("|h=").Append(pHead);
+                        for (int i = 0; i < pModel.Parts.Count; i++)
+                            psb.Append('|').Append(i).Append('=').Append(pModel.Parts[i].ToString("X8")).Append('~').Append(pLabels[i]);
+                        Msg(psb.ToString());
                         return;
                     }
 
@@ -1193,6 +1359,16 @@ namespace ACE.Server.Command.Handlers
                 if (apVp.PaletteBase.HasValue) sb.Append("|ap_palbase=").Append(apVp.PaletteBase.Value.ToString("X8"));
                 if (apVp.ClothingBase.HasValue) sb.Append("|ap_clothing=").Append(apVp.ClothingBase.Value.ToString("X8"));
                 if (apVp.Icon.HasValue) sb.Append("|ap_icon=").Append(apVp.Icon.Value.ToString("X8"));
+                if (apVp.PartCount > 0) sb.Append("|ap_parts=").Append(apVp.PartCount.ToString(CultureInfo.InvariantCulture));
+                if (apVp.AnimParts != null && apVp.AnimParts.Count > 0)
+                {
+                    sb.Append("|ap_partlist=");
+                    for (int i = 0; i < apVp.AnimParts.Count; i++)
+                    {
+                        if (i > 0) sb.Append(',');
+                        sb.Append(apVp.AnimParts[i].Index).Append(':').Append(apVp.AnimParts[i].GfxObj.ToString("X8"));
+                    }
+                }
             }
 
             // Effective look: the target's ACTUAL resolved value + source for every lever, so the plugin shows what
@@ -1237,6 +1413,13 @@ namespace ACE.Server.Command.Handlers
                 Eff("motion",   D(selfAp?.MotionTable),     D(zoneAp?.MotionTable),     D(wpn?.GetProperty(PropertyDataId.MotionTable)));
                 Eff("sound",    D(selfAp?.SoundTable),      D(zoneAp?.SoundTable),      D(wpn?.GetProperty(PropertyDataId.SoundTable)));
                 Eff("icon",     D(selfAp?.Icon),            D(zoneAp?.Icon),            D(wpn?.GetProperty(PropertyDataId.Icon)));
+
+                // Body parts: count of per-part overrides (anim + texture). self/zone come from the appearance
+                // layer; stock = the reference weenie's own baked parts (Tusgian-style mobs). Always emit a stock
+                // count (even 0) so the row always shows.
+                string PC(ZoneAppearance a) => a != null && a.PartCount > 0 ? a.PartCount.ToString(CultureInfo.InvariantCulture) : null;
+                int stockParts = (wpn?.PropertiesAnimPart?.Count ?? 0) + (wpn?.PropertiesTextureMap?.Count ?? 0);
+                Eff("parts", PC(selfAp), PC(zoneAp), stockParts.ToString(CultureInfo.InvariantCulture));
             }
 
             // Capability hint: does the TARGET mob have a usable ClothingBase (so PaletteTemplate/Shade can recolor
@@ -1484,6 +1667,50 @@ namespace ACE.Server.Command.Handlers
 
         /// <summary>Strip the wire's separator chars from a value so it can't break payload parsing.</summary>
         private static string CleanWire(string s) => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
+
+        /// <summary>The head part index of a Setup = the highest (max-Z) non-null part, using the first placement
+        /// frame that has one entry per part. Part index->bone mapping varies per setup, so the head is NOT a fixed
+        /// index (e.g. 16 on the void-lord but 14 on the Mosswart). Returns -1 if no placement data.</summary>
+        private static int SetupHeadIndex(SetupModel setup)
+        {
+            var pf = setup.PlacementFrames.Values
+                .FirstOrDefault(p => p.AnimFrame?.Frames != null && p.AnimFrame.Frames.Count >= setup.Parts.Count);
+            if (pf == null) return -1;
+            int headIdx = -1; float maxZ = float.NegativeInfinity;
+            for (int i = 0; i < setup.Parts.Count; i++)
+                if (setup.Parts[i] != 0x010001EC && pf.AnimFrame.Frames[i].Origin.Z > maxZ) { maxZ = pf.AnimFrame.Frames[i].Origin.Z; headIdx = i; }
+            return headIdx;
+        }
+
+        /// <summary>Rough anatomical label per Setup part from placement position (part index->bone varies per setup,
+        /// so labels are GEOMETRIC, not authoritative): the max-Z real part = "head", others = [L|R ] upper/mid/
+        /// lower/foot by height + X sign, null parts (0x010001EC) = "empty".</summary>
+        private static string[] SetupPartLabels(SetupModel setup, int headIdx)
+        {
+            var labels = new string[setup.Parts.Count];
+            var pf = setup.PlacementFrames.Values
+                .FirstOrDefault(p => p.AnimFrame?.Frames != null && p.AnimFrame.Frames.Count >= setup.Parts.Count);
+            float zmin = float.MaxValue, zmax = float.MinValue;
+            if (pf != null)
+                for (int i = 0; i < setup.Parts.Count; i++)
+                {
+                    var z = pf.AnimFrame.Frames[i].Origin.Z;
+                    if (z < zmin) zmin = z;
+                    if (z > zmax) zmax = z;
+                }
+            for (int i = 0; i < setup.Parts.Count; i++)
+            {
+                if (i == headIdx) { labels[i] = "head"; continue; }
+                if (setup.Parts[i] == 0x010001EC) { labels[i] = "empty"; continue; }
+                if (pf == null) { labels[i] = "part " + i; continue; }
+                var o = pf.AnimFrame.Frames[i].Origin;
+                float zn = zmax > zmin ? (o.Z - zmin) / (zmax - zmin) : 0.5f;
+                string band = zn >= 0.78f ? "upper" : zn >= 0.5f ? "mid" : zn >= 0.22f ? "lower" : "foot";
+                string side = o.X < -0.06f ? "L " : o.X > 0.06f ? "R " : "";
+                labels[i] = side + band;
+            }
+            return labels;
+        }
 
         /// <summary>Parse a DataId: "0x02001234" (hex) or a plain decimal uint. Used by the appearance DataId levers.</summary>
         private static bool TryParseDid(string s, out uint value)

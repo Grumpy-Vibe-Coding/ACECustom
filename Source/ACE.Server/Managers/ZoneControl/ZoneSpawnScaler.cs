@@ -1,6 +1,8 @@
 using System;
+using System.Linq;
 
 using ACE.Entity.Enum.Properties;
+using ACE.Entity.Models;
 using ACE.Server.Managers.ZoneScaling;
 using ACE.Server.WorldObjects;
 
@@ -167,6 +169,18 @@ namespace ACE.Server.Managers.ZoneControl
                 else
                     creature.RemoveProperty(PropertyInt.CreatureVariant);
             }
+
+            // ── Per-part body swaps (copied from a donor via copylook). Applied LAST so they survive the
+            // Setup-swap clear above; a non-null override REPLACES the creature's parts wholesale. Creatures
+            // with no equipped items render these biota rows directly (Creature.CalculateObjDesc). Spawn-time,
+            // pre-EnterWorld, single-threaded for this creature -> wholesale list assignment is safe (mirrors
+            // the unlocked biota Clear above). Reverts on respawn since the weenie is never touched.
+            if (ap.AnimParts != null)
+                creature.Biota.PropertiesAnimPart = ap.AnimParts
+                    .Select(p => new PropertiesAnimPart { Index = p.Index, AnimationId = p.GfxObj }).ToList();
+            if (ap.TextureMaps != null)
+                creature.Biota.PropertiesTextureMap = ap.TextureMaps
+                    .Select(t => new PropertiesTextureMap { PartIndex = t.Index, OldTexture = t.OldTex, NewTexture = t.NewTex }).ToList();
         }
 
         /// <summary>True if the DataId's class byte (top 8 bits) matches — a cheap guard against a wildly wrong id
