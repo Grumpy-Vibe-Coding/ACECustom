@@ -1690,14 +1690,18 @@ namespace ACE.Server.Command.Handlers
             var labels = new string[setup.Parts.Count];
             var pf = setup.PlacementFrames.Values
                 .FirstOrDefault(p => p.AnimFrame?.Frames != null && p.AnimFrame.Frames.Count >= setup.Parts.Count);
-            float zmin = float.MaxValue, zmax = float.MinValue;
+            float zmin = float.MaxValue, zmax = float.MinValue, ymin = float.MaxValue, ymax = float.MinValue;
             if (pf != null)
                 for (int i = 0; i < setup.Parts.Count; i++)
                 {
-                    var z = pf.AnimFrame.Frames[i].Origin.Z;
-                    if (z < zmin) zmin = z;
-                    if (z > zmax) zmax = z;
+                    var o = pf.AnimFrame.Frames[i].Origin;
+                    if (o.Z < zmin) zmin = o.Z; if (o.Z > zmax) zmax = o.Z;
+                    if (o.Y < ymin) ymin = o.Y; if (o.Y > ymax) ymax = o.Y;
                 }
+            // Only add a front/back axis when the body has real front-back spread relative to its height - i.e.
+            // long/flat creatures (armoredillo). A tall humanoid (height >> depth) stays without it, so its labels
+            // don't gain noise. +Y = forward (the facing direction); may read inverted on oddly-authored models.
+            bool useDepth = pf != null && (ymax - ymin) > 0.6f * (zmax - zmin);
             for (int i = 0; i < setup.Parts.Count; i++)
             {
                 if (i == headIdx) { labels[i] = "head"; continue; }
@@ -1707,7 +1711,13 @@ namespace ACE.Server.Command.Handlers
                 float zn = zmax > zmin ? (o.Z - zmin) / (zmax - zmin) : 0.5f;
                 string band = zn >= 0.78f ? "upper" : zn >= 0.5f ? "mid" : zn >= 0.22f ? "lower" : "foot";
                 string side = o.X < -0.06f ? "L " : o.X > 0.06f ? "R " : "";
-                labels[i] = side + band;
+                string depth = "";
+                if (useDepth)
+                {
+                    float yn = ymax > ymin ? (o.Y - ymin) / (ymax - ymin) : 0.5f;
+                    depth = yn >= 0.70f ? " fwd" : yn <= 0.30f ? " back" : "";
+                }
+                labels[i] = side + band + depth;
             }
             return labels;
         }
