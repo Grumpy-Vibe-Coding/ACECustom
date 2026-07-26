@@ -39,6 +39,18 @@ namespace ACE.Server.WorldObjects
 
             _lastZoneBoundaryCheck = Time.GetUnixTime();
 
+            // Dungeons are exempt (owner 2026-07-26): the dungeon IS the boundary. Indoor cells
+            // use dungeon-local coordinates (map-edge math is meaningless there) and have no
+            // walkable path onto neighboring landblocks. Stand down and clear any lingering wisp.
+            if (Location.Indoors)
+            {
+                _zoneOutOfBoundsEntryTime = 0;
+                _lastZoneForbiddenPunishTime = 0;
+                if (_zoneGuideWisp != null)
+                    CleanupZoneBoundaryEffects();
+                return;
+            }
+
             var variation = Location.Variation;
             var currentLBVal = (ushort)(Location.Cell >> 16);
 
@@ -150,6 +162,11 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         private bool IsZoneBoundaryDangerState(int? variation)
         {
+            // Dungeon exemption (owner 2026-07-26) - also guards the wisp-spawn lambda's re-check
+            // when a player slips indoors between enqueue and execution.
+            if (Location.Indoors)
+                return false;
+
             var lbId = new ACE.Entity.LandblockId(Location.Cell);
             var pos = Location.Pos;
 

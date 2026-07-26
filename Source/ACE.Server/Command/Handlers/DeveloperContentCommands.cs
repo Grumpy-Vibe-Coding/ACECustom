@@ -2077,9 +2077,25 @@ namespace ACE.Server.Command.Handlers.Processors
             return null;
         }
 
-        [CommandHandler("removeinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, "Removes the last appraised object from the current landblock instances")]
+        [CommandHandler("removeinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, "Removes the last appraised object from the current landblock instances. Optional: /removeinst <wcid> removes the NEAREST instance of that weenie in your current landblock at your variation (Zone Control plugin button support).")]
         public static void HandleRemoveInst(Session session, params string[] parameters)
         {
+            if (parameters.Length > 0)
+            {
+                var wcidStr = parameters[0];
+                if (wcidStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    wcidStr = wcidStr.Substring(2);
+
+                if (uint.TryParse(wcidStr, out var wcid) ||
+                    uint.TryParse(wcidStr, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out wcid))
+                {
+                    RemoveInstanceByWcid(session, wcid);
+                    return;
+                }
+
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse wcid {parameters[0]} - usage: /removeinst [wcid]", ChatMessageType.Broadcast));
+                return;
+            }
             RemoveInstance(session);
         }
 
@@ -2090,6 +2106,38 @@ namespace ACE.Server.Command.Handlers.Processors
             if (wo == null)
                 return; // GetLastAppraisedObject already reported the reason to the player
 
+            RemoveInstanceWorldObject(session, wo, confirmed, () => RemoveInstance(session, true));
+        }
+
+        /// <summary>
+        /// /removeinst <wcid>: removes the nearest live instance of the weenie in the player's current
+        /// landblock (the landblock is already variation-specific). Generator children resolve to their
+        /// generator's static row exactly like the appraisal path.
+        /// </summary>
+        public static void RemoveInstanceByWcid(Session session, uint wcid, bool confirmed = false)
+        {
+            var player = session.Player;
+            var landblock = player?.CurrentLandblock;
+
+            if (landblock == null)
+                return;
+
+            var wo = landblock.GetAllWorldObjectsForDiagnostics()
+                .Where(o => o.WeenieClassId == wcid && o.Location != null && !(o is Player))
+                .OrderBy(o => o.Location.SquaredDistanceTo(player.Location))
+                .FirstOrDefault();
+
+            if (wo == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"No live instance of wcid {wcid} found in this landblock at your variation.", ChatMessageType.Broadcast));
+                return;
+            }
+
+            RemoveInstanceWorldObject(session, wo, confirmed, () => RemoveInstanceByWcid(session, wcid, true));
+        }
+
+        private static void RemoveInstanceWorldObject(Session session, WorldObject wo, bool confirmed, Action reconfirm)
+        {
             if (wo.Location == null)
             {
                 // Previously a SILENT return, which read as "removeinst does nothing" -- almost always because the
@@ -2151,7 +2199,7 @@ namespace ACE.Server.Command.Handlers.Processors
 
                 // require confirmation for parent objects
                 var msg = $"Are you sure you want to delete this parent object, and {numChilds} child object{(numChilds != 1 ? "s" : "")}?";
-                void onResponse(bool response, bool _) { if (response) { RemoveInstance(session, true); } };
+                void onResponse(bool response, bool _) { if (response) { reconfirm(); } };
                 if (!session.Player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(session.Player.Guid, onResponse), msg))
                     session.Player.SendWeenieError(WeenieError.ConfirmationInProgress);
                 return;

@@ -228,8 +228,16 @@ namespace ACE.Server.Entity
 
             lastActiveTime = DateTime.UtcNow;
 
+            // Void detection (2026-07-26): the watchdog below needs to know how long this instance has
+            // existed, NOT how long a spawn task has been running - a landblock whose Init never ran has
+            // no task to measure. See CheckInitSpawnWatchdog.
+            constructedTime = DateTime.UtcNow;
+
             var cellLandblock = DBObj.GetCellLandblock(Id.Raw | 0xFFFF);
             PhysicsLandblock = new Physics.Common.Landblock(cellLandblock, variation);
+
+            if (ServerConfig.landblock_lifecycle_diag_verbose.Value)
+                log.Warn($"[LbLife] CONSTRUCT {Id.Landblock:X4} v={variation?.ToString() ?? "null"} raw={Id.Raw:X8}");
         }
 
 
@@ -240,6 +248,11 @@ namespace ACE.Server.Entity
         /// <param name="reload"></param>
         public void Init(int? variationId, bool reload = false)
         {
+            initCalled = true;
+
+            if (ServerConfig.landblock_lifecycle_diag_verbose.Value)
+                log.Warn($"[LbLife] INIT {Id.Landblock:X4} v={variationId?.ToString() ?? "null"} reload={reload}");
+
             if (!reload)
                 PhysicsLandblock.PostInit();
             else
@@ -270,6 +283,15 @@ namespace ACE.Server.Entity
         private int initSpawnAttempts;
         private DateTime initSpawnStartedTime;
         private bool initSpawnStillRunningLogged;
+
+        // 2026-07-26 (F559 v11): the above only guards a task that STARTED. A landblock constructed but
+        // never Init()'d has initSpawnTask == null, so the watchdog returned on its first line every
+        // heartbeat and the block stayed a walkable void for the whole session - exactly the state found
+        // on F559 v11 (base variation ticking, not one v11 guid ever created). These two track the
+        // never-began case so the watchdog can heal it.
+        private readonly DateTime constructedTime;
+        private bool initCalled;
+        private bool neverInitLogged;
 
         private void StartInitSpawnTask(int? variationId)
         {
@@ -306,8 +328,29 @@ namespace ACE.Server.Entity
 
         private void CheckInitSpawnWatchdog(DateTime thisHeartBeat)
         {
-            if (CreateWorldObjectsCompleted || initSpawnTask == null)
+            if (CreateWorldObjectsCompleted)
                 return;
+
+            // NEVER-BEGAN void (2026-07-26): no spawn task was ever started on this instance. The old
+            // guard bailed here on `initSpawnTask == null` and could never see this, which is how F559
+            // v11 stayed empty for an entire session while the player stood on it. Anything registered
+            // this long with nothing created is a void by definition - start the spawn work.
+            if (initSpawnTask == null)
+            {
+                if (constructedTime + initSpawnWatchdogThreshold > thisHeartBeat)
+                    return;
+
+                if (!neverInitLogged)
+                {
+                    neverInitLogged = true;
+                    log.Error($"[VoidHeal] Landblock {Id.Landblock:X4} (Var {VariationId?.ToString() ?? "null"}) has been registered for " +
+                              $"{(thisHeartBeat - constructedTime).TotalSeconds:N0}s with NO init spawn task (Init called={initCalled}) - " +
+                              $"walkable VOID, starting spawn now.");
+                }
+
+                StartInitSpawnTask(VariationId);
+                return;
+            }
 
             if (initSpawnStartedTime + initSpawnWatchdogThreshold > thisHeartBeat)
                 return;
@@ -482,6 +525,10 @@ namespace ACE.Server.Entity
                 }
 
                 CreateWorldObjectsCompleted = true;
+
+                if (ServerConfig.landblock_lifecycle_diag_verbose.Value)
+                    log.Warn($"[LbLife] SPAWN-COMPLETE {Id.Landblock:X4} v={VariationId?.ToString() ?? "null"} " +
+                             $"attempt={initSpawnAttempts} objects={worldObjects.Count}");
 
                 // Spawn boundary markers after normal objects (two independent systems, each self-gating)
                 SpawnPrestigeBoundaryMarkers();

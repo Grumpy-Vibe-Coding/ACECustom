@@ -529,15 +529,33 @@ namespace ACE.Server.Managers
             {
                 // load up this landblock                    
                 landblock = new Landblock(landblockId, variation);
-                if(!AddUpdateLandblock(cacheKey, landblock))
+
+                // Both adds below used to `return landblock` on failure - handing back an instance whose
+                // physics was built in the ctor (so it is walkable) but whose Init() had NOT run, i.e. a
+                // permanent void. Losing an add almost always means another thread won the race, so the
+                // right answer is the WINNER's already-initialized landblock, not our orphan.
+                if (!AddUpdateLandblock(cacheKey, landblock))
                 {
-                    log.Error($"LandblockManager: failed to add {landblock.Id.Raw:X8}, v:{variation} to active landblocks!");
+                    log.Error($"LandblockManager: failed to add {landblock.Id.Raw:X8}, v:{variation} to active landblocks! Falling back to the cached instance.");
+                    var existing = GetLandblock(cacheKey);
+                    if (existing != null)
+                        return existing;
+
+                    // No winner to fall back on - initialize ours rather than return a void.
+                    log.Error($"LandblockManager: no cached instance for {landblock.Id.Raw:X8}, v:{variation} after a failed add - initializing the new one to avoid a void landblock.");
+                    landblock.Init(variation);
                     return landblock;
                 }
 
                 if (!loadedLandblocks.TryAdd(cacheKey, landblock))
                 {
-                    log.Error($"LandblockManager: failed to add {landblock.Id.Raw:X8}, v:{variation} to active landblocks!");
+                    log.Error($"LandblockManager: failed to add {landblock.Id.Raw:X8}, v:{variation} to active landblocks! Falling back to the cached instance.");
+                    var existing = GetLandblock(cacheKey);
+                    if (existing != null && !ReferenceEquals(existing, landblock))
+                        return existing;
+
+                    log.Error($"LandblockManager: no distinct cached instance for {landblock.Id.Raw:X8}, v:{variation} after a failed add - initializing to avoid a void landblock.");
+                    landblock.Init(variation);
                     return landblock;
                 }
 

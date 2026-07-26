@@ -345,6 +345,14 @@ namespace ACE.Server.Entity
                 else
                     success = Spawn_Default(obj);
 
+                // The one that answers "who spawned this mob" - every object, tagged with its generator.
+                if (Generator.GenDiag)
+                    log.Warn($"[GenDiag] SPAWN {obj.Name} [{obj.WeenieClassId}] 0x{obj.Guid} " +
+                             $"by 0x{Generator.Guid}:{Generator.Name} [{Generator.WeenieClassId}] " +
+                             $"success={success} where={RegenLocationType} " +
+                             $"gen.CurrentCreate={Generator.CurrentCreate} gen.MaxCreate={Generator.MaxCreate} " +
+                             $"loc={obj.Location}");
+
                 // if first spawn fails, don't continually attempt to retry
                 if (success || FirstSpawn)
                     spawned.Add(obj);

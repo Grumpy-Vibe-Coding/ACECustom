@@ -130,7 +130,18 @@ namespace ACE.Server.WorldObjects
             // its bounded-zone unions (Player_ZoneBoundary.cs). Each gates itself and no-ops when not applicable.
             if (PhysicsObj?.CurCell != null)
             {
-                SyncLocationWithPhysics();
+                // SyncLocationWithPhysics advances Location to the physics position AND reports whether
+                // that crossed into a different landblock. Discarding that flag (as this call used to)
+                // left Location in the NEW block while CurrentLandblock still pointed at the OLD one
+                // until the movedObjects queue relocated the player after the tick. During that window
+                // Landblock.GetObject resolves through the stale CurrentLandblock, so nearby creatures
+                // are untargetable and objects can be missed - and the [VoidHeal] guard below fires a
+                // WARN every time, which reads like a broken landblock but is only this ordering gap
+                // (chased for an evening on 2026-07-26 before the cause was found here).
+                // Relocating from heartbeat context is the same call ValidateCurrentLandblockTick makes.
+                if (SyncLocationWithPhysics())
+                    LandblockManager.RelocateObjectForPhysics(this, true);
+
                 CheckPrestigeBoundary();
                 CheckZoneBoundary();
             }
