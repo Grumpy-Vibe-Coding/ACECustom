@@ -58,10 +58,25 @@ namespace ACE.Server.Managers.ZoneControl
                 creature.Health.Current = (uint)Math.Clamp((uint)Math.Round(healthPct * maxAfter), 0u, maxAfter);
             }
 
+            // Incoming crit protection: REPLACE the base rating props on the live spawn (engine reads
+            // them generically - Creature_Rating). The OUTGOING pair (crit_rating/crit_damage_rating)
+            // is NOT a prop stamp: those are read live at the combat choke points as absolute
+            // replacements (crit chance in percent / final crit multiplier) - WorldObject_Weapon.
+            ApplyRatingProp(creature, profile, ZoneStat.CritResistRating, PropertyInt.CritResistRating);
+            ApplyRatingProp(creature, profile, ZoneStat.CritDamageResistRating, PropertyInt.CritDamageResistRating);
+
             // Generic prop overrides applied to this instance at (re)spawn. Int/Float/Bool/Int64 biota
             // collections are per-instance clones (WeenieConverter), so this never touches the shared
             // weenie; despawn/respawn naturally reverts. Guarded by ZonePropGuard.
             ApplyProps(creature, profile);
+        }
+
+        /// <summary>Set a rating int prop absolutely on the live spawn when the zone authors its stat.</summary>
+        private static void ApplyRatingProp(Creature creature, EvaluatedProfile profile, string statKey, PropertyInt prop)
+        {
+            if (!profile.Has(statKey))
+                return;
+            creature.SetProperty(prop, (int)Math.Round(profile.Get(statKey)));
         }
 
         /// <summary>Set an attribute's StartingValue absolutely (mobs carry 0 XP/ranks, so this IS the Base).</summary>

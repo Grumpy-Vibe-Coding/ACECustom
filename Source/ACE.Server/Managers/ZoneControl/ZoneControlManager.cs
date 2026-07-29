@@ -218,7 +218,8 @@ namespace ACE.Server.Managers.ZoneControl
                 && (vp.PropFloats == null || vp.PropFloats.Count == 0)
                 && (vp.PropBools == null || vp.PropBools.Count == 0)
                 && (vp.CustomCantrips == null || vp.CustomCantrips.Count == 0)
-                && (vp.CurrencyDrops == null || vp.CurrencyDrops.Count == 0);
+                && (vp.CurrencyDrops == null || vp.CurrencyDrops.Count == 0)
+                && (vp.SpellRules == null || vp.SpellRules.Count == 0);
         }
 
         private static void Save()
@@ -408,6 +409,7 @@ namespace ACE.Server.Managers.ZoneControl
             Dictionary<int, bool> propBools = null;
             List<int> customCantrips = null;
             List<ZoneCurrencyDrop> currencyDrops = null;
+            List<ZoneSpellRule> spellRules = null;
 
             if (variantProfile != null)
             {
@@ -435,9 +437,17 @@ namespace ACE.Server.Managers.ZoneControl
                         if (d != null && d.Wcid != 0)
                             currencyDrops.Add(d.Clone());
                 }
+
+                if (variantProfile.SpellRules is { Count: > 0 })
+                {
+                    spellRules = new List<ZoneSpellRule>(variantProfile.SpellRules.Count);
+                    foreach (var r in variantProfile.SpellRules)
+                        if (r != null && r.SpellId != 0)
+                            spellRules.Add(r.Clone());
+                }
             }
 
-            return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops);
+            return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops, spellRules);
         }
 
         private static ZoneEffects CopyEffects(ZoneEffects e)
@@ -518,6 +528,40 @@ namespace ACE.Server.Managers.ZoneControl
                 return null;
 
             return best.Wcid.TryGetValue(creature.WeenieClassId, out var wp) ? wp : best.Default;
+        }
+
+        /// <summary>
+        /// Resolves the winning zone's DEFAULT stat profile for a creature, ignoring any per-WCID
+        /// override bucket. Used by the v11 relief curves: the relief_* anchors are zone-level
+        /// player-progression policy, and a per-WCID stat override REPLACES the whole default profile —
+        /// resolving the curves here keeps them applying to override mobs (bosses) without every
+        /// override having to carry the nine anchor stats.
+        /// </summary>
+        public static EvaluatedProfile ResolveZoneDefaultForCreature(Creature creature)
+        {
+            if (creature == null || creature is Player)
+                return null;
+
+            if (creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true)
+                return null;
+
+            var snap = _snapshot;
+            var landblock = creature.Location?.LandblockId.Landblock ?? 0;
+            if (!snap.EnabledLandblocks.Contains(landblock) || !snap.ByLandblock.TryGetValue(landblock, out var list))
+                return null;
+
+            var effVar = GetEffectiveVariation(creature);
+
+            ZoneRef best = null;
+            foreach (var zr in list)
+            {
+                if (zr.Variation != effVar)
+                    continue;
+                if (best == null || zr.LandblockCount < best.LandblockCount)
+                    best = zr;
+            }
+
+            return best?.Default;
         }
 
         /// <summary>Resolves a creature's COSMETIC appearance from the governing zone: the zone default overlaid by
@@ -1070,6 +1114,31 @@ namespace ACE.Server.Managers.ZoneControl
             return GetLandblockMobs(area.Landblocks, area.Variation);
         }
 
+        /// <summary>Which of a zone's WCIDs carry a per-monster override, for the plugin's roster badges.
+        /// Bit 1 = stat/prop override (a non-empty WcidOverrides bucket - the full standalone stat set),
+        /// bit 2 = appearance override. A WCID absent from the map runs on the zone defaults.</summary>
+        public static Dictionary<uint, int> GetAreaMobOverrideFlags(string name)
+        {
+            EnsureInitialized();
+            var flags = new Dictionary<uint, int>();
+            lock (_lock)
+            {
+                var area = FindArea(name);
+                if (area == null)
+                    return flags;
+
+                foreach (var kv in area.Profile.WcidOverrides)
+                    if (kv.Value != null && !VariantIsEmpty(kv.Value))
+                        flags[kv.Key] = 1;
+
+                if (area.AppearanceByWcid != null)
+                    foreach (var kv in area.AppearanceByWcid)
+                        if (kv.Value != null && !kv.Value.IsEmpty)
+                            flags[kv.Key] = flags.TryGetValue(kv.Key, out var f) ? f | 2 : 2;
+            }
+            return flags;
+        }
+
         /// <summary>Force a reload from the shard store (e.g. after out-of-band edits).</summary>
         public static void Reload()
         {
@@ -1276,7 +1345,8 @@ namespace ACE.Server.Managers.ZoneControl
             {
                 if (!seen.ContainsKey(wcid))
                     seen[wcid] = (weenie.GetName() ?? ("wcid " + wcid), IsMonsterWeenie(weenie), GetCreatureTypeName(weenie));
-                return;
+                // no return: creature-generators (Kingpin-style boss anchors) host their trash ring
+                // in their own generator profiles - walk them too or ring mobs never list
             }
 
             if (weenie.PropertiesGenerator != null)

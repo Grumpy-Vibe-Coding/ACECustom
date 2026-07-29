@@ -201,14 +201,45 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "simstats":
+                    {
+                        // One-shot effective offense values for the Curves-tab player simulator: what
+                        // combat actually uses for this wcid (its override bucket if one exists - a
+                        // bucket REPLACES the zone default wholesale - else the zone default).
+                        if (args.Count < 2) { Msg("Usage: simstats <name> --wcid <id>"); return; }
+                        var name = args[1];
+                        var area = ZoneControlManager.GetArea(name);
+                        var hasOverride = wcid.HasValue && area != null && area.Profile.WcidOverrides.ContainsKey(wcid.Value);
+                        var vp = area == null ? null
+                            : (wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion));
+                        var sb = new StringBuilder("[[ZCSIM]]scope=").Append(name)
+                            .Append("|wcid=").Append(wcid?.ToString() ?? "")
+                            .Append("|found=").Append(area != null ? 1 : 0)
+                            .Append("|override=").Append(hasOverride ? 1 : 0);
+                        foreach (var stat in new[] { ZoneStat.PercentHpBase, ZoneStat.SpellDamage, ZoneStat.SpellVariance, ZoneStat.CritDamageRating })
+                        {
+                            int defined = 0;
+                            double value = 0;
+                            if (vp != null && vp.TryGet(stat, out var curve)) { defined = 1; value = curve.Base; }
+                            sb.Append('|').Append(stat).Append('=').Append(defined).Append(',').Append(value.ToString(CultureInfo.InvariantCulture));
+                        }
+                        Msg(sb.ToString());
+                        return;
+                    }
+
                     case "mobs":
                     {
                         if (args.Count < 2) { Msg("Usage: mobs <name>"); return; }
                         var name = args[1];
                         var mobs = ZoneControlManager.GetAreaMobs(name);
+                        // Override flags ride AFTER the name so an older plugin (which reads exactly three
+                        // fields and takes parts[2] as the name) keeps working against this reply.
+                        var ovFlags = ZoneControlManager.GetAreaMobOverrideFlags(name);
                         var sb = new StringBuilder("[[ZCM]]scope=").Append(name);
                         foreach (var m in mobs)
-                            sb.Append('|').Append(m.Wcid).Append(',').Append(m.IsMonster ? 1 : 0).Append(',').Append(m.Name.Replace('|', ' ').Replace(',', ' '));
+                            sb.Append('|').Append(m.Wcid).Append(',').Append(m.IsMonster ? 1 : 0).Append(',')
+                              .Append(m.Name.Replace('|', ' ').Replace(',', ' ')).Append(',')
+                              .Append(ovFlags.TryGetValue(m.Wcid, out var ov) ? ov : 0);
                         Msg(sb.ToString());
                         return;
                     }
@@ -482,6 +513,118 @@ namespace ACE.Server.Command.Handlers
                         }
                         else
                             Msg("op must be add | remove | list | catalog");
+                        return;
+                    }
+
+                    case "spell":
+                    {
+                        // Spell-book rules: disable/re-enable a governed mob's spells, override cast
+                        // chances (percent per cast opportunity), or ADD spells the weenie doesn't know.
+                        // Read-time (Monster_Magic.TryRollSpell) - changes apply LIVE, no respawn needed.
+                        if (args.Count < 3) { Msg("Usage: spell <name> <off|on|add|chance|remove|list> [spellId] [chancePct] [--wcid <id>]"); return; }
+                        var name = args[1];
+                        var area = ZoneControlManager.GetArea(name);
+                        if (area == null) { Msg($"No zone '{name}' (create it first)."); return; }
+                        var op = args[2].ToLowerInvariant();
+                        var wcidTag = wcid.HasValue ? " [wcid " + wcid.Value + "]" : "";
+
+                        if (op == "list")
+                        {
+                            var vpl = wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion);
+                            var rules = vpl?.SpellRules;
+                            if (rules == null || rules.Count == 0) { Msg("(no spell rules)"); return; }
+                            foreach (var r in rules)
+                            {
+                                var spl = new ACE.Server.Entity.Spell(r.SpellId);
+                                Msg($"  {r.SpellId}  {(spl.NotFound ? "(unknown)" : spl.Name)}  {(r.Disabled ? "OFF" : "on")}{(r.Chance.HasValue ? "  chance " + r.Chance.Value.ToString(CultureInfo.InvariantCulture) + " pct" : "")}");
+                            }
+                            return;
+                        }
+
+                        if (args.Count < 4 || !int.TryParse(args[3], out var ruleSpellId) || ruleSpellId <= 0)
+                        { Msg("Usage: spell <name> off|on|add|chance|remove <spellId> [chancePct]"); return; }
+
+                        var spellCheck = new ACE.Server.Entity.Spell(ruleSpellId);
+                        if (spellCheck.NotFound && op != "remove" && op != "on")
+                        { Msg($"No spell with id {ruleSpellId}."); return; }
+                        var spellLabel = spellCheck.NotFound ? "#" + ruleSpellId : spellCheck.Name;
+
+                        double? chanceArg = null;
+                        if (args.Count >= 5 && double.TryParse(args[4], System.Globalization.NumberStyles.Any, CultureInfo.InvariantCulture, out var chanceVal))
+                            chanceArg = Math.Clamp(chanceVal, 0.0, 100.0);
+
+                        switch (op)
+                        {
+                            case "off":
+                                ZoneControlManager.MutateArea(name, a =>
+                                {
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var rule = vp2.SpellRules.Find(r => r.SpellId == ruleSpellId);
+                                    if (rule == null) vp2.SpellRules.Add(new ZoneSpellRule { SpellId = ruleSpellId, Disabled = true });
+                                    else rule.Disabled = true;
+                                });
+                                Msg($"'{name}'{wcidTag} spell OFF: {spellLabel}. Applies live.");
+                                return;
+
+                            case "on":
+                                ZoneControlManager.MutateArea(name, a =>
+                                {
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var rule = vp2?.SpellRules.Find(r => r.SpellId == ruleSpellId);
+                                    if (rule != null)
+                                    {
+                                        rule.Disabled = false;
+                                        if (!rule.Chance.HasValue) vp2.SpellRules.Remove(rule);   // empty rule = no rule
+                                    }
+                                });
+                                Msg($"'{name}'{wcidTag} spell ON: {spellLabel}.");
+                                return;
+
+                            case "add":
+                            case "chance":
+                                ZoneControlManager.MutateArea(name, a =>
+                                {
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var rule = vp2.SpellRules.Find(r => r.SpellId == ruleSpellId);
+                                    if (rule == null) vp2.SpellRules.Add(new ZoneSpellRule { SpellId = ruleSpellId, Chance = chanceArg ?? 2.0 });
+                                    else { rule.Disabled = false; rule.Chance = chanceArg ?? rule.Chance ?? 2.0; }
+                                });
+                                Msg($"'{name}'{wcidTag} spell {(op == "add" ? "added" : "chance set")}: {spellLabel} at {(chanceArg ?? 2.0).ToString(CultureInfo.InvariantCulture)} pct per cast roll.");
+                                return;
+
+                            case "remove":
+                                var removedRule = false;
+                                ZoneControlManager.MutateArea(name, a =>
+                                {
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                                    if (vp2 != null) removedRule = vp2.SpellRules.RemoveAll(r => r.SpellId == ruleSpellId) > 0;
+                                });
+                                Msg(removedRule ? $"'{name}'{wcidTag} spell rule removed for {spellLabel} (back to book default)." : "No rule for that spell.");
+                                return;
+
+                            default:
+                                Msg("op must be off | on | add | chance | remove | list");
+                                return;
+                        }
+                    }
+
+                    case "spellfind":
+                    {
+                        // Name search over the full spell table for the plugin's Add Spell picker.
+                        if (args.Count < 2) { Msg("Usage: spellfind <name fragment>"); return; }
+                        var query = string.Join(" ", args.Skip(1)).Trim();
+                        if (query.Length < 3) { Msg("Give at least 3 characters."); return; }
+                        var sbf = new StringBuilder("[[ZCSF]]q=").Append(query.Replace('|', ' ').Replace('~', ' '));
+                        int found = 0;
+                        foreach (var kv in ACE.DatLoader.DatManager.PortalDat.SpellTable.Spells)
+                        {
+                            var nm = kv.Value?.Name;
+                            if (string.IsNullOrEmpty(nm) || nm.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                                continue;
+                            sbf.Append('|').Append(kv.Key).Append('~').Append(nm.Replace('|', ' ').Replace('~', ' '));
+                            if (++found >= 40) break;
+                        }
+                        Msg(found == 0 ? $"No spells match '{query}'." : sbf.ToString());
                         return;
                     }
 
@@ -1312,6 +1455,43 @@ namespace ACE.Server.Command.Handlers
                 sb.Append('|').Append(stat).Append('=').Append(defined).Append(',').Append(value.ToString(CultureInfo.InvariantCulture));
             }
 
+            // Live server-wide relief-curve defaults (v11_relief_* config, /modify-tunable) so the
+            // plugin's Curves tab hints/graphs/simulator never drift from what combat actually uses
+            // when a zone doesn't author its own anchors. Fixed order: aug s,m,c,b | dr | critdr.
+            sb.Append("|reliefdefs=")
+              .Append(ServerConfig.v11_relief_aug_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_aug_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_aug_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_aug_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_dr_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_dr_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_dr_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_dr_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_critdr_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_critdr_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_critdr_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_relief_critdr_bend.Value.ToString(CultureInfo.InvariantCulture));
+
+            // Live shard-wide tuning defaults for the plugin's Curves Server-defaults view
+            // (owner-approved 2026-07-28). Fixed order: pcthp variance, pcthp crit mult,
+            // vuln effectiveness, vuln cap, vuln enabled (1/0).
+            sb.Append("|tunedefs=")
+              .Append(ServerConfig.v11_pcthp_variance.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_pcthp_crit_mult.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_vuln_effectiveness.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_vuln_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.v11_vuln_enabled.Value ? '1' : '0');
+
+            // Live diagnostics-bool states so the plugin's Log-section toggles show truth.
+            // Fixed order: damage_event_debug_server_log, damage_event_debug_only_nonplayer_attackers,
+            // spawn_diag_verbose, generator_diag_verbose, visibility_create_object_diag_verbose.
+            sb.Append("|diagdefs=")
+              .Append(ServerConfig.damage_event_debug_server_log.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.damage_event_debug_only_nonplayer_attackers.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.spawn_diag_verbose.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.generator_diag_verbose.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.visibility_create_object_diag_verbose.Value ? '1' : '0');
+
             // Body-part overrides: bp_<key>=<armor|->,<damage|->,<variance|->,<dmgtype|-> ('-' = not overridden)
             if (vp?.BodyParts is { Count: > 0 })
             {
@@ -1439,6 +1619,22 @@ namespace ACE.Server.Command.Handlers
             // Custom cantrip pool (for the plugin's Loot cards).
             if (vp?.CustomCantrips is { Count: > 0 })
                 sb.Append("|cantrips=").Append(string.Join(",", vp.CustomCantrips));
+
+            // Spell-book rules (sparse, rebuilt each sync): sprules=id~disabled~chancePct,...
+            // chance blank = book default (or 2 for added spells).
+            if (vp?.SpellRules is { Count: > 0 })
+            {
+                sb.Append("|sprules=");
+                bool firstSr = true;
+                foreach (var r in vp.SpellRules)
+                {
+                    if (r == null || r.SpellId == 0) continue;
+                    if (!firstSr) sb.Append(',');
+                    firstSr = false;
+                    sb.Append(r.SpellId).Append('~').Append(r.Disabled ? 1 : 0).Append('~')
+                      .Append(r.Chance.HasValue ? r.Chance.Value.ToString(CultureInfo.InvariantCulture) : "");
+                }
+            }
 
             // Currency drop table: curr=wcid~amount~chance~direct~name,... (sparse; rebuilt each sync like
             // cantrips=). Name is display-only for the plugin; sanitized of the wire's separator chars.
@@ -1986,9 +2182,32 @@ namespace ACE.Server.Command.Handlers
               .Append(S(Skill.MissileDefense)).Append(',')
               .Append(S(Skill.MagicDefense));
 
-            // ratings: rt=damage_rating,damage_resist_rating
+            // ratings: rt=damage_rating,damage_resist_rating,crit_chance,crit_damage,crit_resist,crit_damage_resist
+            // (plugin accepts 2 or 6 fields - back/forward compatible)
+            // crit_chance/crit_damage are EFFECTIVE bases (chance in percent / final Nx multiplier):
+            // the best wielded weapon's props when present, engine defaults 10 / 2 otherwise - matching
+            // the REPLACE semantics of the crit_rating/crit_damage_rating zone stats.
             int I(PropertyInt p) => weenie.PropertiesInt != null && weenie.PropertiesInt.TryGetValue(p, out var iv) ? iv : 0;
-            sb.Append("|rt=").Append(I(PropertyInt.DamageRating)).Append(',').Append(I(PropertyInt.DamageResistRating));
+            double critChanceBase = 10.0, critDamageBase = 2.0;
+            if (weenie.PropertiesCreateList != null)
+            {
+                foreach (var cl in weenie.PropertiesCreateList)
+                {
+                    if ((cl.DestinationType & DestinationType.Wield) == 0)
+                        continue;
+                    var wieldItem = ACE.Database.DatabaseManager.World.GetCachedWeenie(cl.WeenieClassId);
+                    if (wieldItem?.PropertiesFloat == null)
+                        continue;
+                    if (wieldItem.PropertiesFloat.TryGetValue(PropertyFloat.CriticalFrequency, out var cfb))
+                        critChanceBase = Math.Max(critChanceBase, cfb * 100.0);
+                    if (wieldItem.PropertiesFloat.TryGetValue(PropertyFloat.CriticalMultiplier, out var cmb))
+                        critDamageBase = Math.Max(critDamageBase, 1.0 + cmb);
+                }
+            }
+            sb.Append("|rt=").Append(I(PropertyInt.DamageRating)).Append(',').Append(I(PropertyInt.DamageResistRating))
+              .Append(',').Append(critChanceBase.ToString(CultureInfo.InvariantCulture))
+              .Append(',').Append(critDamageBase.ToString(CultureInfo.InvariantCulture))
+              .Append(',').Append(I(PropertyInt.CritResistRating)).Append(',').Append(I(PropertyInt.CritDamageResistRating));
 
             // body parts: part=<key>,<baseArmor>,<dval>,<dvar>,<dtype>
             if (weenie.PropertiesBodyPart != null)
@@ -2024,7 +2243,10 @@ namespace ACE.Server.Command.Handlers
               .Append(F(PropertyFloat.ArmorModVsElectric).ToString(CultureInfo.InvariantCulture)).Append(',')
               .Append(F(PropertyFloat.ArmorModVsNether).ToString(CultureInfo.InvariantCulture));
 
-            // wielded weapons from the create list: wield=<wcid>,<name>,<damage>,<variance>,<dtypeMask>,<speed>
+            // wielded weapons from the create list:
+            // wield=<wcid>,<name>,<damage>,<variance>,<dtypeMask>,<speed>[,<critFreq>,<critMult>]
+            // critFreq/critMult are the weapon's own props; -1 = unset (engine defaults 0.1 / 1.0 apply).
+            // Plugin accepts 6 or 8 fields - back/forward compatible.
             if (weenie.PropertiesCreateList != null)
             {
                 foreach (var cl in weenie.PropertiesCreateList)
@@ -2037,16 +2259,37 @@ namespace ACE.Server.Command.Handlers
                     var dvar = item.PropertiesFloat != null && item.PropertiesFloat.TryGetValue(PropertyFloat.DamageVariance, out var v) ? v : 0.0;
                     var dtype = item.PropertiesInt.TryGetValue(PropertyInt.DamageType, out var t) ? t : 0;
                     var speed = item.PropertiesInt.TryGetValue(PropertyInt.WeaponTime, out var sp) ? sp : 0;
+                    var critFreq = item.PropertiesFloat != null && item.PropertiesFloat.TryGetValue(PropertyFloat.CriticalFrequency, out var cf) ? cf : -1.0;
+                    var critMult = item.PropertiesFloat != null && item.PropertiesFloat.TryGetValue(PropertyFloat.CriticalMultiplier, out var cm) ? cm : -1.0;
                     sb.Append("|wield=").Append(cl.WeenieClassId).Append(',')
                       .Append((item.GetName() ?? "?").Replace('|', ' ').Replace(',', ' ').Replace('=', ' ')).Append(',')
                       .Append(dmg).Append(',')
                       .Append(dvar.ToString(CultureInfo.InvariantCulture)).Append(',')
                       .Append(dtype).Append(',')
-                      .Append(speed);
+                      .Append(speed).Append(',')
+                      .Append(critFreq.ToString(CultureInfo.InvariantCulture)).Append(',')
+                      .Append(critMult.ToString(CultureInfo.InvariantCulture));
                 }
             }
 
             sb.Append("|spells=").Append(weenie.PropertiesSpellBook?.Count ?? 0);
+
+            // per-spell book rows for the Spells tab: spell=<id>,<chancePct>,<school>,<name>
+            // (chance decoded from the 2.0-base encoding: 2.029 -> 2.9)
+            if (weenie.PropertiesSpellBook != null)
+            {
+                foreach (var s in weenie.PropertiesSpellBook.OrderBy(s => s.Key))
+                {
+                    var sp = new ACE.Server.Entity.Spell(s.Key);
+                    var chancePct = (s.Value > 2.0f ? s.Value - 2.0f : s.Value / 100.0f) * 100.0;
+                    var spName = (sp.NotFound ? "unknown" : sp.Name ?? "unknown")
+                        .Replace('|', ' ').Replace(',', ' ').Replace('=', ' ');
+                    sb.Append("|spell=").Append(s.Key).Append(',')
+                      .Append(chancePct.ToString("0.###", CultureInfo.InvariantCulture)).Append(',')
+                      .Append(sp.NotFound ? "" : sp.School.ToString()).Append(',')
+                      .Append(spName);
+                }
+            }
             return sb.ToString();
         }
     }

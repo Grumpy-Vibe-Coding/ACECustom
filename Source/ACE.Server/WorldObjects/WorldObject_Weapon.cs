@@ -365,11 +365,41 @@ namespace ACE.Server.WorldObjects
             if (wielder != null)
                 critRate += wielder.GetCritRating() * 0.01f;
 
+            // Zone Control: an authored crit_rating REPLACES the governed monster's crit chance outright
+            // (value in percent; the defender's crit-resist below still applies)
+            var zoneCrit = GetZoneCritChanceOverride(wielder);
+            if (zoneCrit.HasValue)
+                critRate = zoneCrit.Value;
+
             // mitigation
             var critResistRatingMod = Creature.GetNegativeRatingMod(target.GetCritResistRating());
             critRate *= critResistRatingMod;
 
             return critRate;
+        }
+
+        /// <summary>Zone Control: zone-authored crit_rating REPLACES a governed monster's crit chance
+        /// (stat value in percent, e.g. 25 = crits 25% of the time). Null for players/ungoverned mobs.</summary>
+        private static float? GetZoneCritChanceOverride(Creature wielder)
+        {
+            if (wielder == null || wielder is Player)
+                return null;
+            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(wielder);
+            if (zp == null || !zp.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.CritRating))
+                return null;
+            return (float)(zp.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CritRating) / 100.0);
+        }
+
+        /// <summary>Zone Control: zone-authored crit_damage_rating IS a governed monster's final crit
+        /// multiplier (e.g. 4 = crits deal 4x). Null for players/ungoverned mobs.</summary>
+        private static float? GetZoneCritDamageOverride(Creature wielder)
+        {
+            if (wielder == null || wielder is Player)
+                return null;
+            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(wielder);
+            if (zp == null || !zp.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating))
+                return null;
+            return (float)zp.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating);
         }
 
         // http://acpedia.org/wiki/Announcements_-_2002/08_-_Atonement#Letter_to_the_Players - 2% originally
@@ -389,7 +419,8 @@ namespace ACE.Server.WorldObjects
             // TODO : merge with above function
 
             if (weapon == null)
-                return defaultMagicCritFrequency;
+                // wandless casters (most monsters): zone-authored crit chance still replaces the default
+                return GetZoneCritChanceOverride(wielder) ?? defaultMagicCritFrequency;
 
             var critRate = (float)(weapon.GetProperty(PropertyFloat.CriticalFrequency) ?? defaultMagicCritFrequency);
 
@@ -403,6 +434,11 @@ namespace ACE.Server.WorldObjects
             }
 
             critRate += wielder.GetCritRating() * 0.01f;
+
+            // Zone Control: authored crit_rating REPLACES the governed monster's crit chance (see melee path)
+            var zoneCrit = GetZoneCritChanceOverride(wielder);
+            if (zoneCrit.HasValue)
+                critRate = zoneCrit.Value;
 
             // mitigation
             var critResistRatingMod = Creature.GetNegativeRatingMod(target.GetCritResistRating());
@@ -424,8 +460,15 @@ namespace ACE.Server.WorldObjects
             {
                 var cripplingBlowMod = GetCripplingBlowMod(skill);
 
-                critDamageMod = Math.Max(critDamageMod, cripplingBlowMod); 
+                critDamageMod = Math.Max(critDamageMod, cripplingBlowMod);
             }
+
+            // Zone Control: authored crit_damage_rating IS the final multiplier; engine computes 1 + mod,
+            // so store value - 1 (e.g. authored 4 -> crits deal exactly 4x)
+            var zoneCritDmg = GetZoneCritDamageOverride(wielder);
+            if (zoneCritDmg.HasValue)
+                critDamageMod = Math.Max(0f, zoneCritDmg.Value - 1.0f);
+
             return critDamageMod;
         }
 

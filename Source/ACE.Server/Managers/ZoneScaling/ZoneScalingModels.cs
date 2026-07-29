@@ -51,12 +51,77 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string VulnCap = "vuln_cap";
         public const string PercentHpBase = "percent_hp_base";
 
+        // B1b. crit ratings (REPLACE the creature's base rating props at spawn; engine reads them
+        // generically - 313/314 shape the mob's outgoing crits, 315/316 blunt incoming player crits.
+        // 313 also drives %HP-floor crit frequency since it feeds the IsCritical roll).
+        public const string CritRating = "crit_rating";
+        public const string CritDamageRating = "crit_damage_rating";
+        public const string CritResistRating = "crit_resist_rating";
+        public const string CritDamageResistRating = "crit_damage_resist_rating";
+
         // B2. offense (REPLACE the weenie's body-part DVal/DVar/DType AND weapon damage — one number for
         // "what this monster hits for"). attack_damage_type is a DamageType flag int (random pick per hit).
         public const string AttackDamage = "attack_damage";
         public const string AttackVariance = "attack_variance";
         public const string AttackDamageType = "attack_damage_type";
+        // spell_damage is WYSIWYG (2026-07-27): the authored value IS the post-mitigation felt damage
+        // per cast — player resists/prots/absorb and the attacker/defender rating mods are bypassed;
+        // crits multiply by crit_damage_rating (final Nx, same rule as the %HP floor), and the floor
+        // still enforces a minimum. spell_variance spreads each cast down from that value (0 = flat,
+        // like attack_variance); spell_damage_mult multiplies on top (kept in code but hidden from
+        // the plugin UI since 2026-07-26 - owner retired it).
+        public const string SpellDamage = "spell_damage";
+        public const string SpellVariance = "spell_variance";
         public const string SpellDamageMult = "spell_damage_mult";
+
+        // B2b. v11+ relief-curve anchors (2026-07-27, owner design): per-zone player-progression
+        // damage reduction on AUTHORED damage (the %HP floor + WYSIWYG spell_damage). Each axis:
+        // 0% reduction at *_start, rising to *_cap (fraction 0-1) at *_max, clamped both ends.
+        // *_bend shapes the rise: relief = cap * t^bend where t = progress start->max; 1 = straight
+        // line, <1 = strong early relief that tapers off, >1 = slow start that ramps late. aug and
+        // dr axes MULTIPLY; critdr shrinks only the crit BONUS. Unset = server defaults
+        // (v11_relief_* config). aug = defender life augs; dr = defender aggregate Damage Resist
+        // rating; critdr = defender Crit Damage Resist rating.
+        public const string ReliefAugStart = "relief_aug_start";
+        public const string ReliefAugMax = "relief_aug_max";
+        public const string ReliefAugCap = "relief_aug_cap";
+        public const string ReliefAugBend = "relief_aug_bend";
+        public const string ReliefDrStart = "relief_dr_start";
+        public const string ReliefDrMax = "relief_dr_max";
+        public const string ReliefDrCap = "relief_dr_cap";
+        public const string ReliefDrBend = "relief_dr_bend";
+        public const string ReliefCritDrStart = "relief_critdr_start";
+        public const string ReliefCritDrMax = "relief_critdr_max";
+        public const string ReliefCritDrCap = "relief_critdr_cap";
+        public const string ReliefCritDrBend = "relief_critdr_bend";
+        // Optional relief mid-points (owner 2026-07-27: "multiple bends"): up to 4 per axis, each an
+        // (x = stat value, y = reduction fraction 0-1) pair. A point counts only when BOTH x and y
+        // are authored. Any defined points REPLACE the bend shape: the curve runs piecewise-linear
+        // through (start,0) -> sorted points -> (max,cap). Points outside (start,max) are ignored.
+        public const string ReliefAugX1 = "relief_aug_x1";
+        public const string ReliefAugY1 = "relief_aug_y1";
+        public const string ReliefAugX2 = "relief_aug_x2";
+        public const string ReliefAugY2 = "relief_aug_y2";
+        public const string ReliefAugX3 = "relief_aug_x3";
+        public const string ReliefAugY3 = "relief_aug_y3";
+        public const string ReliefAugX4 = "relief_aug_x4";
+        public const string ReliefAugY4 = "relief_aug_y4";
+        public const string ReliefDrX1 = "relief_dr_x1";
+        public const string ReliefDrY1 = "relief_dr_y1";
+        public const string ReliefDrX2 = "relief_dr_x2";
+        public const string ReliefDrY2 = "relief_dr_y2";
+        public const string ReliefDrX3 = "relief_dr_x3";
+        public const string ReliefDrY3 = "relief_dr_y3";
+        public const string ReliefDrX4 = "relief_dr_x4";
+        public const string ReliefDrY4 = "relief_dr_y4";
+        public const string ReliefCritDrX1 = "relief_critdr_x1";
+        public const string ReliefCritDrY1 = "relief_critdr_y1";
+        public const string ReliefCritDrX2 = "relief_critdr_x2";
+        public const string ReliefCritDrY2 = "relief_critdr_y2";
+        public const string ReliefCritDrX3 = "relief_critdr_x3";
+        public const string ReliefCritDrY3 = "relief_critdr_y3";
+        public const string ReliefCritDrX4 = "relief_critdr_x4";
+        public const string ReliefCritDrY4 = "relief_critdr_y4";
 
         // B3. incoming resists (REPLACE the creature-level ResistX multiplier; 1.0 neutral, <1 resists, >1 vuln).
         // Applies to melee AND magic damage of that element (same read point the weenie floats use).
@@ -179,7 +244,14 @@ namespace ACE.Server.Managers.ZoneScaling
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
             AttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
             DamageResistRating, ArmorLevel, DamageTakenMult, VulnCap, PercentHpBase,
-            AttackDamage, AttackVariance, AttackDamageType, SpellDamageMult,
+            CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
+            AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,
+            ReliefAugStart, ReliefAugMax, ReliefAugCap, ReliefAugBend,
+            ReliefDrStart, ReliefDrMax, ReliefDrCap, ReliefDrBend,
+            ReliefCritDrStart, ReliefCritDrMax, ReliefCritDrCap, ReliefCritDrBend,
+            ReliefAugX1, ReliefAugY1, ReliefAugX2, ReliefAugY2, ReliefAugX3, ReliefAugY3, ReliefAugX4, ReliefAugY4,
+            ReliefDrX1, ReliefDrY1, ReliefDrX2, ReliefDrY2, ReliefDrX3, ReliefDrY3, ReliefDrX4, ReliefDrY4,
+            ReliefCritDrX1, ReliefCritDrY1, ReliefCritDrX2, ReliefCritDrY2, ReliefCritDrX3, ReliefCritDrY3, ReliefCritDrX4, ReliefCritDrY4,
             ResistSlash, ResistPierce, ResistBludgeon, ResistFire, ResistCold, ResistAcid, ResistElectric, ResistNether,
             ArmorVsSlash, ArmorVsPierce, ArmorVsBludgeon, ArmorVsFire, ArmorVsCold, ArmorVsAcid, ArmorVsElectric, ArmorVsNether,
             LootTierBonus, LootQuantityMult, RareChanceMult, BonusCurrency, LootQualityMult,
@@ -242,6 +314,27 @@ namespace ACE.Server.Managers.ZoneScaling
         public bool Direct { get; set; }
 
         public ZoneCurrencyDrop Clone() => new ZoneCurrencyDrop { Wcid = Wcid, Amount = Amount, Chance = Chance, Direct = Direct };
+    }
+
+    /// <summary>
+    /// One spell-book rule for a zone-governed monster: disable a known spell, override its cast chance,
+    /// or ADD a spell the weenie doesn't know. Consumed READ-TIME at the monster spell-selection choke
+    /// point (Monster_Magic.TryRollSpell) - spell books are weenie-shared, so they are never mutated,
+    /// and rule changes apply LIVE to already-spawned monsters.
+    /// </summary>
+    public class ZoneSpellRule
+    {
+        public int SpellId { get; set; }
+
+        /// <summary>true = the monster never casts this spell (book spells only - an added rule with
+        /// Disabled makes no sense but is harmlessly skipped).</summary>
+        public bool Disabled { get; set; }
+
+        /// <summary>Cast chance in PERCENT per cast opportunity (the book's 2.029 encodes 2.9). Null on a
+        /// book spell = keep the book's own chance; null on an ADDED spell = default 2.0.</summary>
+        public double? Chance { get; set; }
+
+        public ZoneSpellRule Clone() => new ZoneSpellRule { SpellId = SpellId, Disabled = Disabled, Chance = Chance };
     }
 
     /// <summary>
@@ -313,6 +406,10 @@ namespace ACE.Server.Managers.ZoneScaling
         /// <summary>Bonus-currency drop table: each entry rolls independently on every governed kill and
         /// injects a stack onto the corpse. Missing on deserialize of older profiles = empty list.</summary>
         public List<ZoneCurrencyDrop> CurrencyDrops { get; set; } = new();
+
+        /// <summary>Spell-book rules (disable / reweight / add spells) consumed read-time at monster
+        /// spell selection. Missing on deserialize of older profiles = empty list.</summary>
+        public List<ZoneSpellRule> SpellRules { get; set; } = new();
 
         /// <summary>Generic property overrides STAMPED onto each governed monster at (re)spawn
         /// (ApplyZoneSnapshot). Int/Float/Bool/Int64 biota collections are per-instance clones, so
@@ -397,7 +494,8 @@ namespace ACE.Server.Managers.ZoneScaling
             Dictionary<int, ZoneBodyPart> bodyParts = null,
             Dictionary<int, long> propInts = null, Dictionary<int, long> propInt64s = null,
             Dictionary<int, double> propFloats = null, Dictionary<int, bool> propBools = null,
-            List<int> customCantrips = null, List<ZoneCurrencyDrop> currencyDrops = null)
+            List<int> customCantrips = null, List<ZoneCurrencyDrop> currencyDrops = null,
+            List<ZoneSpellRule> spellRules = null)
         {
             ScopeKey = scopeKey;
             Tier = tier;
@@ -410,6 +508,7 @@ namespace ACE.Server.Managers.ZoneScaling
             PropBools = propBools;
             CustomCantrips = customCantrips;
             CurrencyDrops = currencyDrops;
+            SpellRules = spellRules;
         }
 
         /// <summary>Custom cantrip SpellIds for the extra-loot-cantrip roll (may be null = none defined).</summary>
@@ -417,6 +516,9 @@ namespace ACE.Server.Managers.ZoneScaling
 
         /// <summary>Bonus-currency drop table entries (may be null = none defined).</summary>
         public IReadOnlyList<ZoneCurrencyDrop> CurrencyDrops { get; }
+
+        /// <summary>Spell-book rules (may be null = none defined). Read at monster spell selection.</summary>
+        public IReadOnlyList<ZoneSpellRule> SpellRules { get; }
 
         /// <summary>Per-part override for a CombatBodyPart key, or null. Read-time hot path: one dict lookup.</summary>
         public ZoneBodyPart GetBodyPart(int combatBodyPart)

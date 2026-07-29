@@ -19,6 +19,8 @@ namespace ACE.Server.WorldObjects
 {
     public class SpellProjectile : WorldObject
     {
+        private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
         public const float DefaultSpellAttributeMult = 0.25f;
         public Spell Spell;
         public ProjectileSpellType SpellType { get; set; }
@@ -589,7 +591,12 @@ namespace ACE.Server.WorldObjects
                 attribBonus += SkillFormula.GetAttributeMod((int)sourcePlayer.Focus.Current) * DefaultSpellAttributeMult;
                 attribBonus += SkillFormula.GetAttributeMod((int)sourcePlayer.Self.Current) * DefaultSpellAttributeMult;
             }
-            
+
+            // Zone Control WYSIWYG: set when a governed mob authored spell_damage — the authored value
+            // (post-variance) IS the felt damage; the normal mod pipeline is bypassed further below.
+            var wysiwygFlat = false;
+            var wysiwygDamage = 0.0f;
+
             // life magic projectiles: ie., martyr's hecatomb
             if (Spell.MetaSpellType == ACE.Entity.Enum.SpellType.LifeProjectile)
             {
@@ -609,6 +616,28 @@ namespace ACE.Server.WorldObjects
                 if (sourceCreature != null && sourceCreature.LuminanceAugmentLifeCount.HasValue && sourceCreature.LuminanceAugmentLifeCount >= 1)
                 {
                     lifeMagicDamage += sourceCreature.LuminanceAugmentLifeCount.Value;
+                }
+
+                // Zone Control: authored spell_damage REPLACES the life-projectile base + augs; authored
+                // spell_variance spreads each cast down from the base (unset = stock behavior above)
+                if (sourceCreature != null && !(sourceCreature is Player))
+                {
+                    var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
+                    if (zpFlat != null)
+                    {
+                        if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage))
+                        {
+                            lifeMagicDamage = (float)zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage);
+                            wysiwygFlat = true;
+                        }
+                        if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance))
+                        {
+                            var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
+                            lifeMagicDamage *= (float)(1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f));
+                        }
+                        if (wysiwygFlat)
+                            wysiwygDamage = lifeMagicDamage;
+                    }
                 }
 
                 weaponResistanceMod = GetWeaponResistanceModifier(weapon, sourceCreature, attackSkill, Spell.DamageType);
@@ -687,6 +716,29 @@ namespace ACE.Server.WorldObjects
                     }
                 }
 
+                // Zone Control: authored spell_damage REPLACES the rolled spell base + augs (the flat
+                // analogue of attack_damage); authored spell_variance spreads each cast down from the
+                // base (0 = flat, 0.5 = casts land 50-100% of base). Unset = stock behavior above.
+                if (sourceCreature != null && !(sourceCreature is Player))
+                {
+                    var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
+                    if (zpFlat != null)
+                    {
+                        if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage))
+                        {
+                            baseDamage = (long)Math.Round(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage));
+                            wysiwygFlat = true;
+                        }
+                        if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance))
+                        {
+                            var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
+                            baseDamage = (long)Math.Round(baseDamage * (1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f)));
+                        }
+                        if (wysiwygFlat)
+                            wysiwygDamage = baseDamage;
+                    }
+                }
+
                 weaponResistanceMod = GetWeaponResistanceModifier(weapon, sourceCreature, attackSkill, Spell.DamageType);
 
                 // if attacker/weapon has IgnoreMagicResist directly, do not transfer to spell projectile
@@ -710,6 +762,32 @@ namespace ACE.Server.WorldObjects
             // Fork Charm: reduce damage for fork projectiles based on tier multiplier.
             if (IsForkProjectile)
                 finalDamage *= ForkDamageMult;
+
+            // Zone Control WYSIWYG (2026-07-27): authored spell_damage is the felt value for the
+            // REFERENCE player — it replaces the fully-modified pipeline above (caster attrib/slayer/
+            // elemental mods and the defender's resists/protections/absorb), then the v11 relief curves
+            // apply player progression: life augs + Damage Resist reduce it on zone-authorable linear
+            // curves (relief_* stats / v11_relief_* defaults), and a crit multiplies by the zone's
+            // crit_damage_rating with the bonus shrunk by Crit Damage Resist — identical math to the
+            // %HP floor. DamageTarget skips the rating mods for these hits; the floor still applies there.
+            if (wysiwygFlat)
+            {
+                finalDamage = wysiwygDamage;
+
+                if (targetPlayer != null)
+                    finalDamage = (float)(finalDamage * Creature.GetV11ReliefMultiplier(sourceCreature, targetPlayer));
+
+                if (criticalHit)
+                {
+                    var critMult = ServerConfig.v11_pcthp_crit_mult.Value;
+                    var zpCrit = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
+                    if (zpCrit != null && zpCrit.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating))
+                        critMult = zpCrit.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating);
+
+                    var critBonusScale = targetPlayer != null ? Creature.GetV11CritBonusRelief(sourceCreature, targetPlayer) : 1.0;
+                    finalDamage = (float)(finalDamage * (1.0 + (critMult - 1.0) * critBonusScale));
+                }
+            }
 
             // Zone Control: a governed monster's zone profile can scale its spell damage (players resolve null).
             if (sourceCreature != null && !(sourceCreature is Player))
@@ -744,14 +822,28 @@ namespace ACE.Server.WorldObjects
                     finalDamage *= m;
             }
 
-            // v11+ percent-HP floor: a high-variation monster's harmful health-damage spell always deals
-            // at least a %HP chunk to a player, bypassing life-aug damage reduction. Mirrors the melee floor.
-            if (finalDamage > 0 && Spell.IsHarmful && targetPlayer != null && sourceCreature != null
-                && Spell.DamageType != DamageType.Stamina && Spell.DamageType != DamageType.Mana)
+            // v11+ percent-HP floor: applied in DamageTarget, AFTER the attacker/defender rating mods,
+            // so the floor lands at the felt scale (mirrors the melee DamageEvent ordering — taking it
+            // here let a governed mob's damage_rating inflate the floor value itself).
+
+            // Extensive spell-damage server log - same flags and defender gate as the melee/missile
+            // DamageEvent block (damage_event_debug_server_log; incoming damage on Players/CombatPets only).
+            if (ServerConfig.damage_event_debug_server_log.Value
+                && (targetPlayer != null || target is CombatPet)
+                && (!ServerConfig.damage_event_debug_only_nonplayer_attackers.Value || sourceCreature is not Player))
             {
-                var pctHpFloor = Creature.GetPercentHpFloorDamage(sourceCreature, targetPlayer, criticalHit);
-                if (pctHpFloor > finalDamage)
-                    finalDamage = pctHpFloor;
+                var sb = new System.Text.StringBuilder(1024);
+                sb.AppendLine("=== SpellDamage.Debug ===");
+                sb.AppendLine($"Attacker: {sourceCreature?.Name ?? "<null>"} ({sourceCreature?.Guid.ToString() ?? "?"}) wcid={sourceCreature?.WeenieClassId ?? 0} level={sourceCreature?.Level ?? 0}");
+                sb.AppendLine($"Defender: {target.Name} ({target.Guid}) wcid={target.WeenieClassId} level={target.Level ?? 0}");
+                sb.AppendLine($"spell: {Spell.Name} ({Spell.Id}) school={Spell.School} damageType={Spell.DamageType} power={Spell.Power} weapon={weapon?.Name ?? "<none>"}");
+                sb.AppendLine($"crit={criticalHit} critDefended={critDefended} overpower={overpower} critChance={criticalChance:F4}");
+                sb.AppendLine($"components: base={baseDamage:F2} critBonus={critDamageBonus:F2} skillBonus={skillBonus:F2} lifeMagic={lifeMagicDamage:F2} critDmgMod={weaponCritDamageMod:F4}");
+                sb.AppendLine($"mods: elemental={elementalDamageMod:F4} slayer={slayerMod:F4} resist={resistanceMod:F4} weapResist={weaponResistanceMod:F4} absorb={absorbMod:F4} attrib={attribBonus:F4}");
+                sb.AppendLine($"wysiwygFlat={wysiwygFlat} (rating mods + pcthp floor apply post-CalculateDamage in DamageTarget; floor win logs as [SpellFloor])");
+                sb.AppendLine($"final: Damage={finalDamage:F4} defenderHealth: current={target.Health.Current} max={target.Health.MaxValue}");
+                sb.Append("=== end SpellDamage.Debug ===");
+                log.Info(sb.ToString());
             }
 
             return finalDamage;
@@ -1078,7 +1170,17 @@ namespace ACE.Server.WorldObjects
                     damageResistRatingMod = Creature.AdditiveCombine(damageResistRatingMod, pkDamageResistRatingMod);
                 }
 
-                damage *= damageRatingMod * damageResistRatingMod;
+                // Zone Control WYSIWYG: a governed mob's authored spell_damage is post-mitigation — the
+                // value from CalculateDamage IS the felt damage, so the rating mods don't apply to it.
+                var zcWysiwygFlat = false;
+                if (sourceCreature != null && !(sourceCreature is Player))
+                {
+                    var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
+                    zcWysiwygFlat = zpFlat != null && zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage);
+                }
+
+                if (!zcWysiwygFlat)
+                    damage *= damageRatingMod * damageResistRatingMod;
 
                 // Apply enrage damage reduction for the defender
                 if (target.IsEnraged)
@@ -1086,6 +1188,21 @@ namespace ACE.Server.WorldObjects
                     var enrageReduction = target.EnrageDamageReduction ?? 0.0f; // Default to 0% reduction
                     damage *= (1.0f - enrageReduction);
                     //Console.WriteLine($"[DEBUG] Enrage Damage Reduction Applied by Defender: {enrageReduction * 100}%, Final Damage: {damage}");
+                }
+
+                // v11+ percent-HP floor: a high-variation monster's harmful health-damage spell always
+                // deals at least a %HP chunk to a player, bypassing life-aug damage reduction. Taken here,
+                // after the rating mods, so the floor lands at the felt scale (mirrors the melee ordering).
+                if (damage > 0 && Spell.IsHarmful && targetPlayer != null && sourceCreature != null
+                    && Spell.DamageType != DamageType.Stamina && Spell.DamageType != DamageType.Mana)
+                {
+                    var pctHpFloor = Creature.GetPercentHpFloorDamage(sourceCreature, targetPlayer, critical);
+                    if (pctHpFloor > damage)
+                    {
+                        if (ServerConfig.damage_event_debug_server_log.Value)
+                            log.Info($"[SpellFloor] floor won: preFloor={damage:F2} floor={pctHpFloor:F2} attacker={sourceCreature.Name} ({sourceCreature.Guid}) defender={targetPlayer.Name} spell={Spell.Name} ({Spell.Id})");
+                        damage = pctHpFloor;
+                    }
                 }
 
                 percent = damage / target.Health.MaxValue;

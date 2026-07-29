@@ -224,6 +224,18 @@ namespace ACE.Server.WorldObjects
                 ShowResistInfo(targetCreature, this, target, spell, magicSkill, difficulty, resistChance, resisted);
             }
 
+            // Server-log spell-resist visibility - same flags as damage_event_debug_server_log
+            // (incoming spells on Players/CombatPets; logs BOTH outcomes so resisted casts are visible).
+            if (ServerConfig.damage_event_debug_server_log.Value
+                && (target is Player || target is CombatPet)
+                && (!ServerConfig.damage_event_debug_only_nonplayer_attackers.Value || caster is not Player))
+            {
+                log.Info($"[SpellResist] attacker={Name} ({Guid}) wcid={WeenieClassId} spell={spell.Name} ({spell.Id}) " +
+                         $"school={spell.School} castSkill={magicSkill} vs magicDef={difficulty} chance={resistChance:F4} " +
+                         $"resisted={resisted} defender={targetCreature.Name} ({targetCreature.Guid}) " +
+                         $"hp={targetCreature.Health.Current}/{targetCreature.Health.MaxValue}");
+            }
+
             return resisted;
         }
 

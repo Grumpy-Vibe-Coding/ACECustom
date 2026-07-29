@@ -700,6 +700,25 @@ namespace ACE.Server.Managers
         public static ConfigProperty<double> v11_pcthp_reduction_r { get; private set; } = new(0.0002878, "tuning constant r in the floor's life-aug reduction curve cap*(1-(1-r)^effAugs). 0.0002878 ~= 90% of the cap reached by 8000 effective augs (~10k total).");
         public static ConfigProperty<long> v11_min_attack_skill { get; private set; } = new(75300, "attack-skill floor applied to variation>=v11_pcthp_min_variation monsters when they attack a player (melee/missile evade check). Ensures endgame mobs can land hits vs very high Effective Melee Defense. 75300 ~= reliably hits ~75k EMD. Set 0 to disable.");
 
+        // v11+ relief curves (2026-07-27, owner design): player-progression damage reduction applied to
+        // AUTHORED endgame damage (the %HP floor and WYSIWYG spell_damage). Each axis is a straight line:
+        // 0% reduction at *_start, rising to *_cap (a fraction) at *_max, clamped at both ends; the axes
+        // multiply. These are the server-wide defaults; zone stats relief_aug_*/relief_dr_*/relief_critdr_*
+        // override them per zone. Supersedes the exponential v11_pcthp_aug_threshold/reduction_r/
+        // reduction_cap trio (left defined but no longer read by the floor).
+        public static ConfigProperty<long> v11_relief_aug_start { get; private set; } = new(2000, "life augs where relief begins on authored v11 damage (average T11 entrant sits here = 0% reduction).");
+        public static ConfigProperty<long> v11_relief_aug_max { get; private set; } = new(10000, "life augs where the aug relief line reaches its cap.");
+        public static ConfigProperty<double> v11_relief_aug_cap { get; private set; } = new(0.95, "maximum damage reduction from life augs (0.95 = 95% at v11_relief_aug_max; never immune).");
+        public static ConfigProperty<long> v11_relief_dr_start { get; private set; } = new(400, "player Damage Resist rating where gear relief begins (normal T11 entrant ~400-600 = 0-9%).");
+        public static ConfigProperty<long> v11_relief_dr_max { get; private set; } = new(1500, "player Damage Resist rating where the gear relief line reaches its cap.");
+        public static ConfigProperty<double> v11_relief_dr_cap { get; private set; } = new(0.50, "maximum damage reduction from Damage Resist (0.50 = 50% at v11_relief_dr_max).");
+        public static ConfigProperty<long> v11_relief_critdr_start { get; private set; } = new(50, "player Crit Damage Resist rating where crit-bonus relief begins (~50 = casual gear today).");
+        public static ConfigProperty<long> v11_relief_critdr_max { get; private set; } = new(1000, "player Crit Damage Resist rating where the crit relief line reaches its cap.");
+        public static ConfigProperty<double> v11_relief_critdr_cap { get; private set; } = new(0.50, "maximum reduction of the crit BONUS from Crit Damage Resist (at cap a 2x crit lands as 1.5x).");
+        public static ConfigProperty<double> v11_relief_aug_bend { get; private set; } = new(1.0, "shape of the aug relief curve: relief = cap * t^bend (t = progress start->max). 1 = straight line, <1 = strong early relief tapering off, >1 = slow start ramping late.");
+        public static ConfigProperty<double> v11_relief_dr_bend { get; private set; } = new(1.0, "shape of the Damage Resist relief curve (see v11_relief_aug_bend).");
+        public static ConfigProperty<double> v11_relief_critdr_bend { get; private set; } = new(1.0, "shape of the Crit Damage Resist relief curve (see v11_relief_aug_bend).");
+
         // v11+ monster vuln-defense system: compresses the vulnerability (Imperil) enchantment multiplier against variation>=v11_vuln_min_variation monsters so stacked vulns can't produce absurd damage. Only the vuln bonus is compressed; base damage, offensive augs, and weapon rending are untouched.
         public static ConfigProperty<bool> v11_vuln_enabled { get; private set; } = new(true, "master switch for the v11+ monster vuln-compression system. When on, vulnerability (Imperil) enchantment multipliers against variation>=v11_vuln_min_variation monsters are compressed via a diminishing curve + cap.");
         public static ConfigProperty<long> v11_vuln_min_variation { get; private set; } = new(11, "minimum Location.Variation a monster must be spawned in for vuln compression to apply. Matches the v11 endgame convention.");
