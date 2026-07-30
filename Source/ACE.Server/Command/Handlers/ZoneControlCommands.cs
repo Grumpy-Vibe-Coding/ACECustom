@@ -1311,9 +1311,20 @@ namespace ACE.Server.Command.Handlers
                                 _questPulls.TryRemove(dead, out _);
 
                         var quests = ZoneControlManager.GetZoneQuests(name);
+
+                        // BUILD EVERY LINE FIRST, THEN SEND (2026-07-30). BuildQuestPayload reads the
+                        // player's QuestManager (GetQuest / GetNextSolveTime) for `st=live` rows only, so
+                        // the old build-and-send loop interleaved player-state lookups BETWEEN EnqueueSends.
+                        // Exactly the live rows then escaped the plugin's chat interception and rendered in
+                        // the player's chat box - deterministically, the same 9 of 24 every pull, while the
+                        // survey payload (90 messages, no per-line lookups) and the single-message mob
+                        // roster were always clean. Wire format is unchanged; the plugin needs no update.
                         var qi = 0;
+                        var questLines = new List<string>(quests.Count);
                         foreach (var q in quests)
-                            Msg(BuildQuestPayload(name, q, ++qi, session));
+                            questLines.Add(BuildQuestPayload(name, q, ++qi, session));
+                        foreach (var line in questLines)
+                            Msg(line);
                         Msg($"[[ZCQ]]zone={name}|done={quests.Count}");
                         return;
                     }
@@ -2052,6 +2063,48 @@ namespace ACE.Server.Command.Handlers
         private static string QuestSafe(string s)
             => (s ?? "").Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ');
 
+        /// <summary>NPC coords go on the wire as SIGNED DECIMALS - "30.3S, 94.8E" becomes
+        /// "|cy=-30.3|cx=94.8" (N/E positive, S/W negative) - never as coordinate-SHAPED text.
+        ///
+        /// PROVEN 2026-07-30: something in the client stack reacts to a coordinate-shaped substring in a
+        /// chat line and re-renders that line, bypassing the plugin's chat interception entirely. Evidence:
+        /// of 24 [[ZCQ]] lines, the 9 with resolved NPC coords ALWAYS appeared in the player's chat box and
+        /// the 15 with an empty co= never did - including C1-C6, which are st=live but have no coords, so
+        /// it tracks the coordinate text and nothing else. The plugin's log proved all 24 were offered to
+        /// its handler and eaten every time. Every other payload ([[ZC]], [[ZCM]], [[ZCA]], [[ZCS]] at 90
+        /// messages) carries no coordinates and has never leaked.
+        ///
+        /// The plugin reassembles "30.3S, 94.8E" from cy/cx for display. Empty or unparseable -> empty
+        /// fields, which is what an unplaced NPC already produced.</summary>
+        private static string QuestCoordFields(string coords)
+        {
+            var s = (coords ?? "").Trim();
+            var comma = s.IndexOf(',');
+            if (comma > 0 &&
+                TryCoordPart(s.Substring(0, comma), 'N', 'S', out var cy) &&
+                TryCoordPart(s.Substring(comma + 1), 'E', 'W', out var cx))
+            {
+                return "|cy=" + cy.ToString("0.###", CultureInfo.InvariantCulture) +
+                       "|cx=" + cx.ToString("0.###", CultureInfo.InvariantCulture);
+            }
+            return "|cy=|cx=";
+        }
+
+        /// <summary>"30.3S" -> -30.3 (given pos 'N', neg 'S'). False if it isn't that shape.</summary>
+        private static bool TryCoordPart(string part, char pos, char neg, out double value)
+        {
+            value = 0;
+            part = (part ?? "").Trim();
+            if (part.Length < 2) return false;
+            var hemi = char.ToUpperInvariant(part[part.Length - 1]);
+            if (hemi != pos && hemi != neg) return false;
+            if (!double.TryParse(part.Substring(0, part.Length - 1).Trim(),
+                                 NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+                return false;
+            if (hemi == neg) value = -value;
+            return true;
+        }
+
         /// <summary>One [[ZCQ]] line per quest. Static registry fields plus the REQUESTING player's live
         /// progress: pr=solves/max while the task is started, cd=cooldown seconds remaining (0 = ready).</summary>
         private static string BuildQuestPayload(string zone, ZoneControlManager.ZoneQuestRow q, int index, Session session)
@@ -2067,7 +2120,7 @@ namespace ACE.Server.Command.Handlers
               .Append("|npc=").Append(QuestSafe(q.NpcName))
               .Append("|wcid=").Append(q.NpcWcid)
               .Append("|lb=").Append(q.LandblockHex)
-              .Append("|co=").Append(QuestSafe(q.Coords))
+              .Append(QuestCoordFields(q.Coords))
               .Append("|n=").Append(q.Count)
               .Append("|rep=").Append(q.RepeatHours)
               .Append("|rw=").Append(QuestSafe(q.Reward))
