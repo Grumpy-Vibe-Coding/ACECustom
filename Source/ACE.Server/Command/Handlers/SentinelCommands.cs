@@ -148,27 +148,42 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
-        // portal_bypass
+        // portal_bypass [on|off]
         [CommandHandler("portal_bypass", AccessLevel.Sentinel, CommandHandlerFlag.RequiresWorld, 0,
-            "Toggles the ability to bypass portal restrictions.",
-            "")]
+            "Toggles or sets the ability to bypass portal restrictions.",
+            "[on|off|true|false|enable|disable]\n" +
+            "With no argument this toggles, as it always has. An explicit on/off sets the state outright,\n" +
+            "so a button (Zone Control plugin) can't get out of step with the flag.")]
         public static void HandlePortalBypass(Session session, params string[] parameters)
         {
             // @portal_bypass - Toggles the ability to bypass portal restrictions.
+            // Arg parsing added 2026-07-29, same shape as @unkillable: no-arg still toggles.
 
-            var param = session.Player.IgnorePortalRestrictions;
+            bool newValue;
 
-            switch (param)
+            if (parameters == null || parameters.Length == 0)
             {
-                case true:
-                    session.Player.IgnorePortalRestrictions = false;
-                    session.Network.EnqueueSend(new GameMessageSystemChat("You are once again bound by portal restrictions.", ChatMessageType.Broadcast));
-                    break;
-                case false:
-                    session.Player.IgnorePortalRestrictions = true;
-                    session.Network.EnqueueSend(new GameMessageSystemChat("You are no longer bound by portal restrictions.", ChatMessageType.Broadcast));
-                    break;
+                newValue = !session.Player.IgnorePortalRestrictions;
             }
+            else
+            {
+                var arg = parameters[0].ToLower();
+                if (arg == "on" || arg == "true" || arg == "enable")
+                    newValue = true;
+                else if (arg == "off" || arg == "false" || arg == "disable")
+                    newValue = false;
+                else
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat("Usage: @portal_bypass [on|off|true|false|enable|disable]", ChatMessageType.Broadcast));
+                    return;
+                }
+            }
+
+            session.Player.IgnorePortalRestrictions = newValue;
+
+            session.Network.EnqueueSend(new GameMessageSystemChat(newValue
+                ? "You are no longer bound by portal restrictions."
+                : "You are once again bound by portal restrictions.", ChatMessageType.Broadcast));
         }
 
         // fellowbuff [name]
