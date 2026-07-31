@@ -1774,8 +1774,13 @@ namespace ACE.Server.WorldObjects
         /// <paramref name="fromProc"/>: when true, suppresses the War Magic proficiency tick so proc
         /// hits do not grant magic skill XP.
         /// </para>
+        /// <para>
+        /// <paramref name="lifeProjectileDamage"/>: the vital amount the caster drained at cast time.
+        /// Required for LifeProjectile ring spells (e.g. 3818 - Curse of Raven Fury), whose damage is
+        /// derived from the drain rather than from the spell's Min/Max — see SpellProjectile.LifeProjectileDamage.
+        /// </para>
         /// </summary>
-        internal void ApplyRingSpellAreaDamage(Spell spell, Position centerOverride = null, float radiusOverride = 0f, float heightOverride = 0f, float flatDamage = 0f, WorldObject scanOrigin = null, bool fromProc = false)
+        internal void ApplyRingSpellAreaDamage(Spell spell, Position centerOverride = null, float radiusOverride = 0f, float heightOverride = 0f, float flatDamage = 0f, WorldObject scanOrigin = null, bool fromProc = false, float lifeProjectileDamage = 0f)
         {
             var center = centerOverride ?? Location;
             if (center == null) return;
@@ -1826,6 +1831,8 @@ namespace ACE.Server.WorldObjects
             var magicSkill    = attackSkill.Current;
             var resistanceType = Creature.GetResistanceType(spell.DamageType);
             var weapon        = GetEquippedWand();
+
+            var isLifeProjectile = spell.MetaSpellType == ACE.Entity.Enum.SpellType.LifeProjectile;
 
             // CR-2: use scanOrigin's ObjMaint when the detonation center differs from the caster
             // (e.g. Explosive Arrow proc — ring spawns on the target, not the caster).
@@ -1879,9 +1886,15 @@ namespace ACE.Server.WorldObjects
                 {
                     if (!creature.IsAlive) break; // target died on a previous proc!
 
-                    // Resist check — sends the resist message automatically.
+                    // Resist check — sends the resist message automatically.  A resisted spell still
+                    // lands if the caster's Overpower procs, matching SpellProjectile.CalculateDamage,
+                    // which only bails on `resisted && !overpower`.
                     var resisted = TryResistSpell(creature, spell, null, true);
-                    if (resisted) { dbgResist++; continue; }
+                    if (resisted && !(Overpower != null && Creature.GetOverpower(this, creature)))
+                    {
+                        dbgResist++;
+                        continue;
+                    }
 
                     // --- 1. Intercept Enchantment Projectiles (e.g., debuffs like Shroud of Darkness) ---
                     if (spell.MetaSpellType == ACE.Entity.Enum.SpellType.EnchantmentProjectile)
@@ -1892,11 +1905,16 @@ namespace ACE.Server.WorldObjects
                         continue;
                     }
 
-                    // ── War-magic damage calculation (exact parity with SpellProjectile.CalculateDamage) ──
+                    // ── Damage calculation (parity with SpellProjectile.CalculateDamage) ──
                     var criticalHit      = false;
                     var critDamageBonus  = 0.0f;
                     var skillBonus       = 0.0f;
                     var isPvP            = creature is Player;
+
+                    // Life projectiles (e.g. 3818 - Curse of Raven Fury) take their damage from the vital
+                    // the caster drained at cast time, NOT from the spell's Min/Max — those are near-zero
+                    // on such spells.  Mirrors SpellProjectile.CalculateDamage's LifeProjectile branch.
+                    var lifeMagicDamage = isLifeProjectile ? lifeProjectileDamage * spell.DamageRatio : 0.0f;
 
                     // Crit chance — 5% base + player crit rating, mitigated by target resist rating.
                     var critChance = GetWeaponMagicCritFrequency(weapon, this as Creature, attackSkill, creature);
@@ -1914,21 +1932,46 @@ namespace ACE.Server.WorldObjects
                         if (!critDefended)
                         {
                             criticalHit = true;
-                            // PvE: +50% of MaxDamage.  PvP: +50% of MinDamage.
-                            critDamageBonus  = isPvP ? spell.MinDamage * 0.5f : spell.MaxDamage * 0.5f;
+                            // Life: +50% of the drained damage (pre-aug, matching SpellProjectile).
+                            // War/Void — PvE: +50% of MaxDamage.  PvP: +50% of MinDamage.
+                            critDamageBonus  = isLifeProjectile
+                                ? lifeMagicDamage * 0.5f
+                                : (isPvP ? spell.MinDamage * 0.5f : spell.MaxDamage * 0.5f);
                             critDamageBonus *= GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature);
                         }
                     }
 
-                    // Skill-based damage bonus.
-                    if (magicSkill > spell.Power)
-                        skillBonus = spell.MinDamage * (magicSkill - spell.Power) / 1000.0f;
+                    long baseDamage = 0;
 
-                    long baseDamage = ThreadSafeRandom.Next(spell.MinDamage, spell.MaxDamage);
+                    if (isLifeProjectile)
+                    {
+                        // Luminance Life augment — added AFTER the crit bonus, matching SpellProjectile.
+                        // Life projectiles get no skill-based damage bonus.
+                        if (LuminanceAugmentLifeCount.HasValue && LuminanceAugmentLifeCount >= 1)
+                            lifeMagicDamage += LuminanceAugmentLifeCount.Value;
+                    }
+                    else
+                    {
+                        // Skill-based damage bonus.
+                        if (magicSkill > spell.Power)
+                            skillBonus = spell.MinDamage * (magicSkill - spell.Power) / 1000.0f;
 
-                    // Luminance War augment.
-                    if (LuminanceAugmentWarCount.HasValue && LuminanceAugmentWarCount >= 1)
-                        baseDamage += LuminanceAugmentWarCount.Value;
+                        baseDamage = ThreadSafeRandom.Next(spell.MinDamage, spell.MaxDamage);
+
+                        // Luminance augment — the pool MUST match the spell's school.  This previously
+                        // added the War count unconditionally, which fed a caster's War pool into Void
+                        // rings (e.g. Clouded Soul) and dropped their Void pool entirely.
+                        if (spell.School == MagicSchool.WarMagic)
+                        {
+                            if (LuminanceAugmentWarCount.HasValue && LuminanceAugmentWarCount >= 1)
+                                baseDamage += LuminanceAugmentWarCount.Value;
+                        }
+                        else if (spell.School == MagicSchool.VoidMagic)
+                        {
+                            if (LuminanceAugmentVoidCount.HasValue && LuminanceAugmentVoidCount >= 1)
+                                baseDamage += LuminanceAugmentVoidCount.Value;
+                        }
+                    }
 
                     // Elemental modifier (wand element vs target).
                     var elementalMod = GetCasterElementalDamageModifier(weapon, this as Creature, creature, spell.DamageType);
@@ -1937,8 +1980,12 @@ namespace ACE.Server.WorldObjects
                     var slayerMod = GetWeaponCreatureSlayerModifier(weapon, this as Creature, creature);
 
                     // Weapon resistance mod — applies rending on wand to target resistance.
+                    // The wand is deliberately NOT passed as the `weapon` arg below: SpellProjectile
+                    // passes null there so a hollow wand's IgnoreMagicResist does not transfer to the
+                    // spell and blanket-bypass the target's resistances.  Rending still applies — it
+                    // rides in via weaponResistanceMod.
                     var weaponResistanceMod = GetWeaponResistanceModifier(weapon, this as Creature, attackSkill, spell.DamageType);
-                    var resistanceMod = (float)Math.Max(0.0f, creature.GetResistanceMod(resistanceType, this, weapon, weaponResistanceMod));
+                    var resistanceMod = (float)Math.Max(0.0f, creature.GetResistanceMod(resistanceType, this, null, weaponResistanceMod));
 
                     // Void PvP modifier (matches SpellProjectile line ~602).
                     if (isPvP && spell.DamageType == DamageType.Nether)
@@ -1956,9 +2003,13 @@ namespace ACE.Server.WorldObjects
                     }
 
                     // Damage selection:
+                    var preModDamage = isLifeProjectile
+                        ? lifeMagicDamage + critDamageBonus
+                        : baseDamage + critDamageBonus + skillBonus;
+
                     var finalDamage = flatDamage > 0f
                         ? flatDamage
-                        : (baseDamage + critDamageBonus + skillBonus) * elementalMod * slayerMod * resistanceMod * absorbMod * attribBonus;
+                        : preModDamage * elementalMod * slayerMod * resistanceMod * absorbMod * attribBonus;
 
                     // Sneak attack & heritage mods (mirrors SpellProjectile.DamageTarget).
                     if (flatDamage <= 0f)
