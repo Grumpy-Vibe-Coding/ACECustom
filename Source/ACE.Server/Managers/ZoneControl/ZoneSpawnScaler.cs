@@ -17,6 +17,9 @@ namespace ACE.Server.Managers.ZoneControl
     /// </summary>
     public static class ZoneSpawnScaler
     {
+        private static readonly log4net.ILog log =
+            log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
         /// <summary>
         /// Applies the governing zone's spawn snapshot to a freshly-spawned creature: attributes first
         /// (Endurance/Self feed the vital formulas), then Stamina/Mana, then Health — each preserving the
@@ -27,6 +30,20 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (creature == null)
                 return;
+
+            // ORDERING GUARD (2026-07-30): every resolve below keys on Location (landblock + variation).
+            // A caller that applies the snapshot BEFORE assigning a Location silently gets nothing —
+            // no attributes, no vitals, no prop stamps, no appearance — with no error anywhere. That is
+            // exactly how GeneratorProfile.Spawn skipped the snapshot for every generator-spawned mob
+            // until it was found by hand. Fail LOUD instead of silently, so the next such call site is
+            // caught in the log rather than months later in an appraisal window.
+            if (creature.Location == null)
+            {
+                log.Error($"ZoneSpawnScaler.ApplyToSpawn({creature.Name} 0x{creature.Guid}:{creature.WeenieClassId}) " +
+                          "called with a NULL Location - zone resolution needs one, so NOTHING was applied " +
+                          "(no attributes/vitals/props/appearance). Assign Location before calling this.");
+                return;
+            }
 
             // Cosmetic appearance is resolved and stamped SEPARATELY from stats (its own zone lookup), so a
             // per-WCID appearance override never creates a stat bucket and can't detach the mob from scaling.

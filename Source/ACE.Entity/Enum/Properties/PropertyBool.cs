@@ -340,9 +340,10 @@ namespace ACE.Entity.Enum.Properties
 
         /// <summary>TEST HOOK: if TRUE, the v11+ endgame combat systems (percent-HP floor, vuln compression,
         /// damage-taken mitigation, per-tier scaling, attack-skill floor) treat this creature as endgame even
-        /// when spawned at a non-prestige variation (0). Lets a test dummy be spawned in a NORMAL landblock —
+        /// when spawned at a non-endgame variation (0). Lets a test dummy be spawned in a NORMAL landblock —
         /// where /createinst /removeinst /reload-landblock work reliably — instead of the fragile variation layer.
-        /// Tier simulated = PropertyInt.EndgameForcedVariation (default = base prestige v11). Never set on real mobs.</summary>
+        /// Variation simulated = PropertyInt.EndgameForcedVariation (unset, or below 11, resolves to v11).
+        /// Never set on real mobs; rift creatures have it stripped at spawn (RiftScaling).</summary>
         ForceEndgameSystems = 50046,
 
         /// <summary>ZONE SCALER opt-out: if TRUE on a monster, the Zone Scaler leaves it untouched (keeps its

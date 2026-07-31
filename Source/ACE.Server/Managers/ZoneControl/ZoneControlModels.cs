@@ -66,36 +66,108 @@ namespace ACE.Server.Managers.ZoneControl
     }
 
     /// <summary>
+    /// The DEFAULT layer for one world variation (2026-07-30): the baseline every zone at that variation
+    /// inherits. Resolution is <c>VariationDefault -&gt; zone -&gt; wcid</c>, merged PER STAT — a zone that
+    /// authors nothing IS its variation's Default, and a zone that authors one stat overrides one stat.
+    ///
+    /// Progression across v11-v25 is expressed as 15 of these, each explicitly authored. The server never
+    /// derives a stat from the variation number (owner ruling: computed scaling is out).
+    ///
+    /// Runtime zones (rift runs) deliberately do NOT inherit — they live at negative variations and set
+    /// their own stats at registration, so a rift can never pick up Tide combat numbers.
+    /// </summary>
+    public class VariationDefault
+    {
+        /// <summary>Stat/prop/body-part/list payload — the same shape a zone carries.</summary>
+        public ZoneVariantProfile Profile { get; set; } = new();
+
+        /// <summary>Player effects (DoT etc.) inherited by zones at this variation. Nullable per field.</summary>
+        public ZoneEffects Effects { get; set; } = new();
+
+        /// <summary>Cosmetic baseline, overlaid by the zone's own appearance then per-WCID.</summary>
+        public ZoneAppearance Appearance { get; set; } = new();
+
+        public string Notes { get; set; }
+
+        public bool IsEmpty =>
+            (Profile == null || Profile.IsEmpty)
+            && (Effects == null || Effects.IsEmpty)
+            && (Appearance == null || Appearance.IsEmpty);
+    }
+
+    /// <summary>
     /// Per-zone effects applied to PLAYERS inside the zone, evaluated each player heartbeat by
     /// <see cref="ZoneControl.ZoneEffectManager"/>. Only <see cref="DotEnabled"/> is wired today; the
     /// slow/charm fields are reserved placeholders so the wire format + store schema are forward-compatible.
     /// </summary>
     public class ZoneEffects
     {
+        // Every field is NULLABLE (2026-07-30 Default layer): null means "not authored at THIS layer", so a
+        // variation Default can supply the DoT and an individual zone can override just the damage number
+        // without restating type/interval. The Effective* accessors below apply the defaults a caller needs.
+
         // ── Damage over time ("the floor is lava") ──
         /// <summary>When true, players in the zone take a periodic hit every <see cref="DotIntervalSeconds"/>.</summary>
-        public bool DotEnabled { get; set; }
+        public bool? DotEnabled { get; set; }
 
         /// <summary>Amount applied PER TICK. Flat points normally, or a percent of the player's max health when
         /// <see cref="DotPercent"/> is true (e.g. 5 = 5% of max health per tick).</summary>
-        public double DotDamage { get; set; }
+        public double? DotDamage { get; set; }
 
         /// <summary>When true, <see cref="DotDamage"/> is a percent of the player's max health (drains Health).</summary>
-        public bool DotPercent { get; set; }
+        public bool? DotPercent { get; set; }
 
         /// <summary>Seconds between ticks (min 1). Applied by a per-player timer, independent of the 5s heartbeat.</summary>
-        public double DotIntervalSeconds { get; set; } = 5.0;
+        public double? DotIntervalSeconds { get; set; }
 
         /// <summary>ACE.Entity.Enum.DamageType as int (default Fire = 0x10). Stored as int to keep the model enum-free.
         /// Stamina/Mana drain those pools; Health = "drained"; percent mode forces Health.</summary>
-        public int DotDamageType { get; set; } = 0x10;
+        public int? DotDamageType { get; set; }
 
         // ── Reserved for later slices (NOT applied yet) ──
-        public bool SlowEnabled { get; set; }
-        public double SlowPercent { get; set; }
-        public bool CharmEnabled { get; set; }
+        public bool? SlowEnabled { get; set; }
+        public double? SlowPercent { get; set; }
+        public bool? CharmEnabled { get; set; }
+
+        // ── Effective reads (the defaults that used to be field initializers) ──
+        public bool EffectiveDotEnabled => DotEnabled == true;
+        public double EffectiveDotDamage => DotDamage ?? 0.0;
+        public bool EffectiveDotPercent => DotPercent == true;
+        public double EffectiveDotIntervalSeconds => DotIntervalSeconds ?? 5.0;
+        public int EffectiveDotDamageType => DotDamageType ?? 0x10;
 
         /// <summary>True if any effect is active — used to skip zones that author no effects during resolution.</summary>
-        public bool AnyActive => DotEnabled || SlowEnabled || CharmEnabled;
+        public bool AnyActive => DotEnabled == true || SlowEnabled == true || CharmEnabled == true;
+
+        /// <summary>True when nothing at all is authored at this layer.</summary>
+        public bool IsEmpty =>
+            DotEnabled == null && DotDamage == null && DotPercent == null && DotIntervalSeconds == null
+            && DotDamageType == null && SlowEnabled == null && SlowPercent == null && CharmEnabled == null;
+
+        public ZoneEffects Clone() => new ZoneEffects
+        {
+            DotEnabled = DotEnabled, DotDamage = DotDamage, DotPercent = DotPercent,
+            DotIntervalSeconds = DotIntervalSeconds, DotDamageType = DotDamageType,
+            SlowEnabled = SlowEnabled, SlowPercent = SlowPercent, CharmEnabled = CharmEnabled,
+        };
+
+        /// <summary>Per-FIELD layered merge: any authored (non-null) field on <paramref name="upper"/> wins,
+        /// everything else falls through to <paramref name="lower"/>. Returns a new instance.</summary>
+        public static ZoneEffects Merge(ZoneEffects lower, ZoneEffects upper)
+        {
+            if (lower == null) return upper?.Clone() ?? new ZoneEffects();
+            if (upper == null) return lower.Clone();
+            return new ZoneEffects
+            {
+                DotEnabled = upper.DotEnabled ?? lower.DotEnabled,
+                DotDamage = upper.DotDamage ?? lower.DotDamage,
+                DotPercent = upper.DotPercent ?? lower.DotPercent,
+                DotIntervalSeconds = upper.DotIntervalSeconds ?? lower.DotIntervalSeconds,
+                DotDamageType = upper.DotDamageType ?? lower.DotDamageType,
+                SlowEnabled = upper.SlowEnabled ?? lower.SlowEnabled,
+                SlowPercent = upper.SlowPercent ?? lower.SlowPercent,
+                CharmEnabled = upper.CharmEnabled ?? lower.CharmEnabled,
+            };
+        }
     }
 }

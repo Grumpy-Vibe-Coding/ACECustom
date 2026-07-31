@@ -4,8 +4,10 @@ using System.Collections.Generic;
 namespace ACE.Server.Managers.ZoneScaling
 {
     /// <summary>
-    /// Granularity of a zone-scaling profile. Resolution is most-specific-wins:
-    /// LandblockVariation &gt; Landblock &gt; Zone &gt; Global.
+    /// RESERVED — not read by anything. Left over from the pre-rewrite Zone Scaler design, which resolved
+    /// LandblockVariation &gt; Landblock &gt; Zone &gt; Global. The live model layers
+    /// <c>VariationDefault -&gt; zone -&gt; wcid</c> instead (see ZoneControlManager) and never consults this.
+    /// Kept deliberately (owner, 2026-07-30) in case scoped profiles come back; do NOT assume it works.
     /// </summary>
     public enum ZoneScopeType
     {
@@ -41,6 +43,13 @@ namespace ACE.Server.Managers.ZoneScaling
 
         // B. live per-hit
         public const string AttackSkill = "attack_skill";
+        // Minimum EFFECTIVE attack skill a governed monster uses against a PLAYER defender (evade check
+        // only; mob-vs-mob is untouched). Unlike attack_skill this is a FLOOR, not a replacement: the
+        // monster keeps its own higher skill when it has one. Authoring it also ENABLES the floor
+        // independently of the prestige master switch — same shape as percent_hp_base / vuln_cap /
+        // damage_taken_mult. Unset => the v11_min_attack_skill server default, which only applies while
+        // prestige_systems_enabled is on.
+        public const string MinAttackSkill = "min_attack_skill";
         public const string MeleeDefense = "melee_defense";
         public const string MissileDefense = "missile_defense";
         public const string MagicDefense = "magic_defense";
@@ -242,7 +251,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
-            AttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
+            AttackSkill, MinAttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
             DamageResistRating, ArmorLevel, DamageTakenMult, VulnCap, PercentHpBase,
             CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
             AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,
@@ -295,6 +304,21 @@ namespace ACE.Server.Managers.ZoneScaling
         public bool IsEmpty => Armor == null && Damage == null && Variance == null && DamageType == null;
 
         public ZoneBodyPart Clone() => new ZoneBodyPart { Armor = Armor, Damage = Damage, Variance = Variance, DamageType = DamageType };
+
+        /// <summary>Per-FIELD layered merge: any non-null field on <paramref name="upper"/> wins, everything
+        /// else falls through to <paramref name="lower"/>. Returns a new instance; inputs are untouched.</summary>
+        public static ZoneBodyPart Merge(ZoneBodyPart lower, ZoneBodyPart upper)
+        {
+            if (lower == null) return upper?.Clone();
+            if (upper == null) return lower.Clone();
+            return new ZoneBodyPart
+            {
+                Armor = upper.Armor ?? lower.Armor,
+                Damage = upper.Damage ?? lower.Damage,
+                Variance = upper.Variance ?? lower.Variance,
+                DamageType = upper.DamageType ?? lower.DamageType,
+            };
+        }
     }
 
     /// <summary>
@@ -365,8 +389,14 @@ namespace ACE.Server.Managers.ZoneScaling
     }
 
     /// <summary>
-    /// One stat's value across tiers: a default curve (base at tier 1, grown per-tier) plus optional
-    /// per-tier pinned overrides. Additive =&gt; base + growth*(tier-1); otherwise base * growth^(tier-1).
+    /// One stat's value. Only <see cref="Base"/> is live: <c>EvaluateVariant</c> always calls
+    /// <c>Evaluate(1)</c>, so a stat is a flat number.
+    ///
+    /// <see cref="Growth"/> / <see cref="Additive"/> / <see cref="Overrides"/> are RESERVED and not wired up.
+    /// Reviving them would mean deriving a stat from the variation number, which is exactly the computed
+    /// scaling the owner ruled out on 2026-07-30 — progression is expressed as 15 explicitly AUTHORED
+    /// per-variation Defaults (v11-v25) instead, because those are visible and editable in a way a growth
+    /// exponent is not. The fields stay because the store already serializes them.
     /// </summary>
     public class StatCurve
     {
@@ -420,6 +450,91 @@ namespace ACE.Server.Managers.ZoneScaling
         public Dictionary<int, bool> PropBools { get; set; } = new();
 
         public bool TryGet(string statKey, out StatCurve curve) => Stats.TryGetValue(statKey, out curve);
+
+        /// <summary>
+        /// Layered merge (2026-07-30 Default layer): later layers win, PER KEY — never wholesale. Feed it
+        /// <c>VariationDefault -&gt; zone -&gt; wcid</c>; a key absent from a layer falls through to the one
+        /// above it. Returns a NEW profile; every input is left untouched (they are the live admin-mutable
+        /// objects) and every nested value is cloned, so the result is safe to hand to a lock-free reader.
+        ///
+        /// Null layers are skipped, so a zone with no Default and no WCID bucket merges to just itself.
+        ///
+        /// List-valued fields UNION rather than replace (owner ruling): a zone can add one boss-specific
+        /// currency drop without restating the variation's standard drops. Collisions are keyed —
+        /// cantrip key / currency wcid / spell id — with the most specific layer winning.
+        /// </summary>
+        public static ZoneVariantProfile Merge(params ZoneVariantProfile[] layers)
+        {
+            var result = new ZoneVariantProfile();
+            if (layers == null)
+                return result;
+
+            foreach (var layer in layers)
+            {
+                if (layer == null)
+                    continue;
+
+                if (layer.Stats != null)
+                    foreach (var kv in layer.Stats)
+                        result.Stats[kv.Key] = kv.Value;
+
+                if (layer.BodyParts != null)
+                    foreach (var kv in layer.BodyParts)
+                    {
+                        result.BodyParts.TryGetValue(kv.Key, out var lower);
+                        var merged = ZoneBodyPart.Merge(lower, kv.Value);
+                        if (merged != null)
+                            result.BodyParts[kv.Key] = merged;
+                    }
+
+                if (layer.PropInts != null)
+                    foreach (var kv in layer.PropInts) result.PropInts[kv.Key] = kv.Value;
+                if (layer.PropInt64s != null)
+                    foreach (var kv in layer.PropInt64s) result.PropInt64s[kv.Key] = kv.Value;
+                if (layer.PropFloats != null)
+                    foreach (var kv in layer.PropFloats) result.PropFloats[kv.Key] = kv.Value;
+                if (layer.PropBools != null)
+                    foreach (var kv in layer.PropBools) result.PropBools[kv.Key] = kv.Value;
+
+                // union, deduped by key, most specific wins
+                if (layer.CustomCantrips != null)
+                    foreach (var key in layer.CustomCantrips)
+                        if (!result.CustomCantrips.Contains(key))
+                            result.CustomCantrips.Add(key);
+
+                if (layer.CurrencyDrops != null)
+                    foreach (var drop in layer.CurrencyDrops)
+                    {
+                        if (drop == null) continue;
+                        var at = result.CurrencyDrops.FindIndex(d => d.Wcid == drop.Wcid);
+                        if (at >= 0) result.CurrencyDrops[at] = drop.Clone();
+                        else result.CurrencyDrops.Add(drop.Clone());
+                    }
+
+                if (layer.SpellRules != null)
+                    foreach (var rule in layer.SpellRules)
+                    {
+                        if (rule == null) continue;
+                        var at = result.SpellRules.FindIndex(r => r.SpellId == rule.SpellId);
+                        if (at >= 0) result.SpellRules[at] = rule.Clone();
+                        else result.SpellRules.Add(rule.Clone());
+                    }
+            }
+
+            return result;
+        }
+
+        /// <summary>True when this layer carries nothing at all (used to prune empty buckets).</summary>
+        public bool IsEmpty =>
+            (Stats == null || Stats.Count == 0)
+            && (BodyParts == null || BodyParts.Count == 0)
+            && (PropInts == null || PropInts.Count == 0)
+            && (PropInt64s == null || PropInt64s.Count == 0)
+            && (PropFloats == null || PropFloats.Count == 0)
+            && (PropBools == null || PropBools.Count == 0)
+            && (CustomCantrips == null || CustomCantrips.Count == 0)
+            && (CurrencyDrops == null || CurrencyDrops.Count == 0)
+            && (SpellRules == null || SpellRules.Count == 0);
     }
 
     /// <summary>
@@ -435,30 +550,33 @@ namespace ACE.Server.Managers.ZoneScaling
         public bool Enabled { get; set; } = true;
         public string Notes { get; set; }
 
+        /// <summary>The ZONE-level layer: stats authored on this zone specifically. Sits between its
+        /// variation's Default and any per-WCID bucket. (JSON key stays "Minion" — the pre-2026-07-30 name
+        /// from when this was the minion slot of a minion/boss pair — so existing stores keep loading.)</summary>
+        [Newtonsoft.Json.JsonProperty("Minion")]
         public ZoneVariantProfile Minion { get; set; } = new();
-        public ZoneVariantProfile Boss { get; set; } = new();
 
-        /// <summary>Per-WCID overrides: if a mob's WeenieClassId has an entry here, it's used as a
-        /// COMPLETE standalone stat set (NOT layered on Minion/Boss) — a full replacement, not a delta.
-        /// Any WCID without an entry falls back to the Minion/Boss resolution as before. Missing on
-        /// deserialize of older profiles = empty dict (backward compatible, no migration needed).</summary>
+        // Boss slot REMOVED 2026-07-30 (owner ruling): nothing read it post-decouple, and bosses are now
+        // ordinary mobs tuned ~2x their minions via per-WCID overrides, which are strictly more precise.
+        // Any "Boss" key still present in a stored profile simply deserializes to nothing.
+
+        /// <summary>Per-WCID overrides: a monster's own layer, merged ON TOP of its variation's Default and
+        /// the zone layer, PER STAT (2026-07-30 — it used to REPLACE the whole profile wholesale). A bucket
+        /// that sets one stat overrides one stat. Missing on deserialize of older profiles = empty dict.</summary>
         public Dictionary<uint, ZoneVariantProfile> WcidOverrides { get; set; } = new();
 
-        public ZoneVariantProfile Variant(ZoneVariant v) => v == ZoneVariant.Boss ? Boss : Minion;
-
-        /// <summary>Resolves the WCID override if one exists for this creature, else falls back to the
-        /// normal Minion/Boss variant. Auto-creates the override bucket on first access when `create`.</summary>
-        public ZoneVariantProfile VariantForWcid(uint wcid, ZoneVariant fallback, bool create = false)
+        /// <summary>The per-WCID bucket to EDIT, or null when absent and <paramref name="create"/> is false.
+        /// Callers that want the RESOLVED stats for a monster must not use this — resolution layers
+        /// Default -&gt; zone -&gt; wcid and happens in ZoneControlManager.</summary>
+        public ZoneVariantProfile VariantForWcid(uint wcid, bool create = false)
         {
             if (WcidOverrides.TryGetValue(wcid, out var v))
                 return v;
-            if (create)
-            {
-                v = new ZoneVariantProfile();
-                WcidOverrides[wcid] = v;
-                return v;
-            }
-            return Variant(fallback);
+            if (!create)
+                return null;
+            v = new ZoneVariantProfile();
+            WcidOverrides[wcid] = v;
+            return v;
         }
 
         /// <summary>Canonical scope key used for the registry and memo cache.</summary>

@@ -130,15 +130,12 @@ namespace ACE.Server.WorldObjects
             if (vulnMod > 1.0f && ServerConfig.v11_vuln_enabled.Value && !(this is Player)
                 && ((zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap))
                     || (ACE.Server.Managers.PrestigeManager.SystemsEnabled
-                        && ACE.Server.Managers.PrestigeManager.GetEffectiveVariation(this) >= ServerConfig.v11_vuln_min_variation.Value)))
+                        && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.v11_vuln_min_variation.Value)))
             {
                 var vulnEff = GetProperty(PropertyFloat.VulnEffectivenessOverride) ?? ServerConfig.v11_vuln_effectiveness.Value;
                 var vulnCap = GetProperty(PropertyFloat.VulnCapOverride) ?? ServerConfig.v11_vuln_cap.Value;
                 if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap))
                     vulnCap = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap);
-
-                // per-tier tightening: deeper prestige tiers resist vulns progressively more (no-op at tier 0 or when disabled)
-                vulnEff = Math.Max(0.0, vulnEff - ACE.Server.Managers.PrestigeManager.GetVulnEffectivenessReduction(this));
 
                 // diminishing curve: only a fraction of the vuln bonus lands, then clamp to the cap
                 vulnMod = 1.0f + (vulnMod - 1.0f) * (float)vulnEff;
@@ -193,7 +190,7 @@ namespace ACE.Server.WorldObjects
             if (ServerConfig.v11_mob_dmg_taken_enabled.Value && !(this is Player)
                 && ((zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult))
                     || (ACE.Server.Managers.PrestigeManager.SystemsEnabled
-                        && ACE.Server.Managers.PrestigeManager.GetEffectiveVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)))
+                        && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)))
             {
                 double dmgMult;
                 if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult))
@@ -208,8 +205,6 @@ namespace ACE.Server.WorldObjects
 
                     if (GetProperty(PropertyBool.IsEmpowerSource) == true)
                         dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
-
-                    dmgMult -= ACE.Server.Managers.PrestigeManager.GetDamageTakenTierReduction(this);
                 }
                 dmgMult = Math.Clamp(dmgMult, ServerConfig.v11_mob_dmg_taken_floor.Value, 1.0);
 

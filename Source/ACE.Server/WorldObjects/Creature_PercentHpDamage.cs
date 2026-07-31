@@ -181,7 +181,7 @@ namespace ACE.Server.WorldObjects
             if (!ServerConfig.v11_pcthp_enabled.Value)
                 return 0f;
 
-            var variation = PrestigeManager.GetEffectiveVariation(attacker);
+            var variation = VariationManager.GetEffectiveEndgameVariation(attacker);
             var minVariation = ServerConfig.v11_pcthp_min_variation.Value;
 
             // floor fraction P: per-weenie override wins; otherwise tier-scaled (+ boss multiplier)
@@ -254,17 +254,32 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// v11+ attack-skill floor. When a variation>=v11_pcthp_min_variation monster attacks a player,
-        /// returns the configured minimum effective attack skill (v11_min_attack_skill) so endgame mobs can
-        /// land hits against very high Effective Melee/Missile Defense. Returns 0 when disabled or ineligible,
-        /// in which case callers keep the monster's normal attack skill.
+        /// v11+ attack-skill floor: the minimum effective attack skill a monster uses against a PLAYER
+        /// defender, so endgame mobs can land hits against very high Effective Melee/Missile Defense.
+        /// Two independent triggers, mirroring the other v11 combat systems:
+        ///   1. Zone Control — a governed monster whose zone authors min_attack_skill uses that value,
+        ///      NEVER gated by the prestige master switch.
+        ///   2. Prestige — variation >= v11_pcthp_min_variation uses the v11_min_attack_skill config,
+        ///      only while prestige_systems_enabled is on.
+        /// Returns 0 when neither applies, in which case callers keep the monster's normal attack skill.
         /// </summary>
         public static uint GetV11AttackSkillFloor(Creature attacker, Player defender)
         {
             if (attacker == null || defender == null)
                 return 0;
 
-            // Purely variation-triggered (no zone path) — fully off with the prestige master switch.
+            // Zone Control path (2026-07-30): the floor used to be prestige-only, so with
+            // prestige_systems_enabled off — the live setting — endgame mobs had no accuracy floor at all
+            // while percent_hp_base / vuln_cap / damage_taken_mult all kept working through their zone
+            // stats. This closes that gap. Opt-in: nothing changes until a zone authors min_attack_skill.
+            var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
+            if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.MinAttackSkill))
+            {
+                var zoneFloor = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.MinAttackSkill);
+                return zoneFloor > 0 ? (uint)Math.Round(zoneFloor) : 0;
+            }
+
+            // Variation-triggered path — fully off with the prestige master switch.
             if (!PrestigeManager.SystemsEnabled)
                 return 0;
 
@@ -272,7 +287,7 @@ namespace ACE.Server.WorldObjects
             if (floor <= 0)
                 return 0;
 
-            var variation = PrestigeManager.GetEffectiveVariation(attacker);
+            var variation = VariationManager.GetEffectiveEndgameVariation(attacker);
             if (variation < ServerConfig.v11_pcthp_min_variation.Value)
                 return 0;
 

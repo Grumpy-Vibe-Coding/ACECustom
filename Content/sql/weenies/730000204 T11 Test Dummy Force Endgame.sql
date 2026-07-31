@@ -5,7 +5,9 @@
 -- This sidesteps the prestige variation-layer fragility in /createinst /removeinst /reload-landblock so the
 -- dummy can be spawned/removed/reloaded reliably anywhere for tuning.
 --   PropertyBool.ForceEndgameSystems (50046) = true.
---   Optional: PropertyInt.EndgameForcedVariation (50105) simulates a specific tier (unset => v11 = tier 1).
+--   Optional: PropertyInt.EndgameForcedVariation (50105) simulates a specific variation (unset => v11).
+--   Values below 11 are floored to 11 (PrestigeManager.ENDGAME_MIN_VARIATION); a dummy at v11 behaves
+--   exactly like a real Tide mob, which carries no prestige tier at the current PRESTIGE_VAR_OFFSET.
 -- DO NOT apply this flag to real production mobs — they must use their real Location.Variation.
 -- Idempotent. Generated 2026-07-07.
 SET FOREIGN_KEY_CHECKS = 0;

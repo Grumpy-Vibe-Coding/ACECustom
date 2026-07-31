@@ -35,7 +35,12 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>Variant instances begin at variation 11 (0 = normal world, 1..10 = retail layers).
         /// Bounded zones (player boundaries) are only allowed at variant instances — Zone Control's own
-        /// constant, independent of any other system's tiering.</summary>
+        /// constant, independent of any other system's tiering.
+        ///
+        /// SCOPE: the player-boundary minimum, and nothing else. It used to double as the endgame-content
+        /// floor inside GetEffectiveVariation, which meant retuning the boundary rule would silently move a
+        /// combat gate; that role now belongs to <see cref="VariationManager.EndgameMinVariation"/>. The two
+        /// happen to share the value 11 — they are not required to.</summary>
         public const int MinBoundedVariation = 11;
 
         // zone name (case-insensitive) -> zone
@@ -104,7 +109,14 @@ namespace ACE.Server.Managers.ZoneControl
         private class Store
         {
             public List<ControlledArea> Areas { get; set; } = new();
+
+            /// <summary>Per-VARIATION Defaults (2026-07-30): variation -> the baseline layer every zone at
+            /// that variation inherits, per stat. Absent on older stores = no Defaults = prior behavior.</summary>
+            public Dictionary<int, VariationDefault> VariationDefaults { get; set; } = new();
         }
+
+        // variation -> Default layer. Guarded by _lock; copied into the lock-free snapshot at rebuild.
+        private static readonly Dictionary<int, VariationDefault> _variationDefaults = new();
 
         #region init / persistence
 
@@ -134,6 +146,7 @@ namespace ACE.Server.Managers.ZoneControl
         {
             _areas.Clear();
             _evalCache.Clear();
+            _variationDefaults.Clear();
 
             string json = null;
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
@@ -156,6 +169,19 @@ namespace ACE.Server.Managers.ZoneControl
                 _areas[a.Name] = a;
             }
 
+            // Per-variation Defaults. Absent on pre-2026-07-30 stores -> empty -> zones resolve exactly as before.
+            if (store.VariationDefaults != null)
+            {
+                foreach (var kv in store.VariationDefaults)
+                {
+                    if (kv.Value == null) continue;
+                    kv.Value.Profile ??= new ZoneVariantProfile();
+                    kv.Value.Effects ??= new ZoneEffects();
+                    kv.Value.Appearance ??= new ZoneAppearance();
+                    _variationDefaults[kv.Key] = kv.Value;
+                }
+            }
+
             RebuildIndexes();
         }
 
@@ -165,7 +191,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// ride the per-WCID stat bucket. Idempotent: after the move there are no appearance-id props left to find.</summary>
         private static void MigrateAppearanceProps(ControlledArea a)
         {
-            MigrateAppearancePropsFromVariant(a.Profile.Variant(ZoneVariant.Minion), a.AppearanceDefault);
+            MigrateAppearancePropsFromVariant(a.Profile.Minion, a.AppearanceDefault);
 
             List<uint> emptiedStatBuckets = null;
             foreach (var kv in a.Profile.WcidOverrides)
@@ -224,7 +250,11 @@ namespace ACE.Server.Managers.ZoneControl
 
         private static void Save()
         {
-            var store = new Store { Areas = _areas.Values.ToList() };
+            var store = new Store
+            {
+                Areas = _areas.Values.ToList(),
+                VariationDefaults = new Dictionary<int, VariationDefault>(_variationDefaults),
+            };
             var jsonOut = JsonConvert.SerializeObject(store);
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
                 DatabaseManager.ShardConfig.SaveString(new ConfigPropertiesString { Key = StoreKey, Value = jsonOut, Description = "Zone Control store (JSON)" });
@@ -370,29 +400,47 @@ namespace ACE.Server.Managers.ZoneControl
             }
         }
 
-        /// <summary>Build the immutable per-zone read record: precompute the default + per-WCID evaluated profiles
-        /// and copy the effects, so lock-free readers never dereference the live (mutable) zone object.</summary>
+        /// <summary>
+        /// Build the immutable per-zone read record. THIS is where the Default layer is applied: the
+        /// <c>VariationDefault -&gt; zone -&gt; wcid</c> merge happens once here, at snapshot-build time, and the
+        /// result is a fully-resolved <see cref="EvaluatedProfile"/> per bucket. The combat hot path therefore
+        /// stays exactly one dictionary lookup with ZERO per-hit merge cost — the whole point of doing it here.
+        ///
+        /// Runtime zones (rifts, negative variations) get no Default: <see cref="DefaultFor"/> returns null for
+        /// any variation without an authored entry, and rift variations never have one.
+        /// </summary>
         private static ZoneRef BuildZoneRef(ControlledArea area)
         {
+            var def = DefaultFor(area.Variation);
+            var defProfile = def?.Profile;
+
+            // zone layer = variation Default + the zone's own stats
+            var zoneMerged = ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
+
+            // per-WCID = the zone layer + that monster's bucket (per stat, NOT a wholesale replacement)
             var wcid = new Dictionary<uint, EvaluatedProfile>();
             foreach (var kv in area.Profile.WcidOverrides)
-                wcid[kv.Key] = EvaluateVariant(area.Name, kv.Value);
+                wcid[kv.Key] = EvaluateVariant(area.Name, ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, kv.Value));
 
+            // appearance layers the same way: Default -> zone -> wcid, per field
+            var apZone = ZoneAppearance.Merge(def?.Appearance, area.AppearanceDefault) ?? new ZoneAppearance();
             var apWcid = new Dictionary<uint, ZoneAppearance>();
             if (area.AppearanceByWcid != null)
                 foreach (var kv in area.AppearanceByWcid)
-                    if (kv.Value != null && !kv.Value.IsEmpty)
-                        apWcid[kv.Key] = kv.Value.Clone();
+                {
+                    if (kv.Value == null || kv.Value.IsEmpty) continue;
+                    apWcid[kv.Key] = kv.Value.Clone();
+                }
 
             return new ZoneRef
             {
                 Name = area.Name,
                 Variation = area.Variation,
                 LandblockCount = area.Landblocks.Count,
-                Default = EvaluateVariant(area.Name, area.Profile.Variant(ZoneVariant.Minion)),
+                Default = EvaluateVariant(area.Name, zoneMerged),
                 Wcid = wcid,
-                Effects = CopyEffects(area.Effects),
-                AppearanceDefault = area.AppearanceDefault?.Clone() ?? new ZoneAppearance(),
+                Effects = ZoneEffects.Merge(def?.Effects, area.Effects),
+                AppearanceDefault = apZone,
                 AppearanceByWcid = apWcid,
             };
         }
@@ -450,46 +498,30 @@ namespace ACE.Server.Managers.ZoneControl
             return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops, spellRules);
         }
 
-        private static ZoneEffects CopyEffects(ZoneEffects e)
-        {
-            if (e == null) return new ZoneEffects();
-            return new ZoneEffects
-            {
-                DotEnabled = e.DotEnabled,
-                DotDamage = e.DotDamage,
-                DotPercent = e.DotPercent,
-                DotIntervalSeconds = e.DotIntervalSeconds,
-                DotDamageType = e.DotDamageType,
-                SlowEnabled = e.SlowEnabled,
-                SlowPercent = e.SlowPercent,
-                CharmEnabled = e.CharmEnabled,
-            };
-        }
+        // CopyEffects removed 2026-07-30 — ZoneEffects.Merge(default, zone) both layers AND clones.
+
+        /// <summary>The authored Default layer for a variation, or null when none exists (which is every
+        /// variation until one is authored, and always for rift/runtime negative variations). Call under
+        /// _lock, or from RebuildIndexes which already holds it.</summary>
+        private static VariationDefault DefaultFor(int variation)
+            => _variationDefaults.TryGetValue(variation, out var d) ? d : null;
 
         #endregion
 
         #region resolution / public API
 
         /// <summary>
-        /// Zone Control's own effective-variation lookup (standalone — no other manager consulted): the world
-        /// object's real Location variation, except that a retail-side object carrying ForceEndgameSystems is
-        /// treated as standing at its EndgameForcedVariation (or the first variant instance when unset), so a
-        /// test dummy in the normal world can still be governed by a variant zone.
+        /// The variation Zone Control resolves a world object on: its real Location variation, except that an
+        /// object carrying ForceEndgameSystems is treated as standing at its EndgameForcedVariation (floored to
+        /// v11), so a test dummy in the normal world can still be governed by a variant zone.
+        ///
+        /// Delegates to <see cref="VariationManager.GetEffectiveEndgameVariation"/> — the shared endgame-layer
+        /// resolver. This used to be a private copy floored on <see cref="MinBoundedVariation"/>, with an
+        /// identical copy in PrestigeManager; the two drifted apart when the prestige offset moved and broke
+        /// the ForceEndgameSystems test hook (2026-07-30). Kept as a named method because it is Zone Control's
+        /// own vocabulary and has 9 call sites here and in the command surface.
         /// </summary>
-        public static int GetEffectiveVariation(WorldObject wo)
-        {
-            var real = wo?.Location?.Variation ?? 0;
-            if (real >= MinBoundedVariation)
-                return real;
-
-            if (wo?.GetProperty(PropertyBool.ForceEndgameSystems) == true)
-            {
-                var forced = wo.GetProperty(PropertyInt.EndgameForcedVariation) ?? 0;
-                return forced >= MinBoundedVariation ? forced : MinBoundedVariation;
-            }
-
-            return real;
-        }
+        public static int GetEffectiveVariation(WorldObject wo) => VariationManager.GetEffectiveEndgameVariation(wo);
 
         /// <summary>
         /// Resolves the winning zone for a creature and evaluates its stat profile. Returns null when the
@@ -850,13 +882,66 @@ namespace ACE.Server.Managers.ZoneControl
                 if (_evalCache.TryGetValue(cacheKey, out var cached))
                     return cached;
 
+                // Same layering the combat snapshot uses, so the GUI/command readout matches what a mob
+                // actually gets: VariationDefault -> zone -> wcid, merged per stat.
+                var defProfile = DefaultFor(area.Variation)?.Profile;
                 var variantProfile = hasWcidOverride
-                    ? area.Profile.WcidOverrides[wcid.Value]
-                    : area.Profile.Variant(ZoneVariant.Minion); // minion slot = the zone's DEFAULT stat set
+                    ? ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, area.Profile.WcidOverrides[wcid.Value])
+                    : ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
 
                 var eval = EvaluateVariant(area.Name, variantProfile);
                 _evalCache[cacheKey] = eval;
                 return eval;
+            }
+        }
+
+        /// <summary>
+        /// The fully-layered profile for a zone (and optionally one WCID), as a live-shaped
+        /// <see cref="ZoneVariantProfile"/> rather than a flattened <see cref="EvaluatedProfile"/> — so callers
+        /// that need the authored <see cref="StatCurve"/> (the plugin sync payload, command readouts) see the
+        /// SAME numbers combat resolves. Merges VariationDefault -&gt; zone -&gt; wcid. Null if no such zone.
+        /// </summary>
+        public static ZoneVariantProfile ResolveProfileForDisplay(string name, uint? wcid = null)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                var area = FindArea(name);
+                if (area == null)
+                    return null;
+
+                var defProfile = DefaultFor(area.Variation)?.Profile;
+                if (wcid.HasValue && area.Profile.WcidOverrides.TryGetValue(wcid.Value, out var bucket))
+                    return ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, bucket);
+
+                return ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
+            }
+        }
+
+        /// <summary>Which layer a stat's winning value came from, for provenance readouts:
+        /// "wcid" / "zone" / "default vN", or null when nothing authors it. Most specific wins.</summary>
+        public static string ResolveStatSource(string name, uint? wcid, string stat)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                var area = FindArea(name);
+                if (area == null || string.IsNullOrEmpty(stat))
+                    return null;
+
+                if (wcid.HasValue
+                    && area.Profile.WcidOverrides.TryGetValue(wcid.Value, out var bucket)
+                    && bucket?.Stats != null && bucket.Stats.ContainsKey(stat))
+                    return "wcid";
+
+                if (area.Profile.Minion?.Stats != null && area.Profile.Minion.Stats.ContainsKey(stat))
+                    return "zone";
+
+                var def = DefaultFor(area.Variation);
+                if (def?.Profile?.Stats != null && def.Profile.Stats.ContainsKey(stat))
+                    return "default v" + area.Variation;
+
+                return null;
             }
         }
 
@@ -956,6 +1041,87 @@ namespace ACE.Server.Managers.ZoneControl
                 a.Profile ??= new ZoneScalingProfile();
                 a.Effects ??= new ZoneEffects();
                 mutate(a);
+                Save();
+                return true;
+            }
+        }
+
+        // ── per-variation Defaults (2026-07-30) ──
+
+        /// <summary>Read-only snapshot of a variation's Default, or null when none is authored.</summary>
+        public static VariationDefault GetVariationDefault(int variation)
+        {
+            EnsureInitialized();
+            lock (_lock)
+                return DefaultFor(variation);
+        }
+
+        /// <summary>Variations that currently have an authored Default, ascending.</summary>
+        public static List<int> ListVariationDefaults()
+        {
+            EnsureInitialized();
+            lock (_lock)
+                return _variationDefaults.Keys.OrderBy(v => v).ToList();
+        }
+
+        /// <summary>
+        /// Atomically read-modify-write a variation's Default, creating it on first touch, then persist and
+        /// republish the snapshot (so every zone at that variation picks the change up live). Mirrors
+        /// <see cref="MutateArea"/>. Prunes the entry again if the mutation left it empty.
+        /// </summary>
+        public static void MutateVariationDefault(int variation, Action<VariationDefault> mutate)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                if (!_variationDefaults.TryGetValue(variation, out var def) || def == null)
+                    _variationDefaults[variation] = def = new VariationDefault();
+
+                def.Profile ??= new ZoneVariantProfile();
+                def.Effects ??= new ZoneEffects();
+                def.Appearance ??= new ZoneAppearance();
+
+                mutate(def);
+
+                if (def.IsEmpty && string.IsNullOrWhiteSpace(def.Notes))
+                    _variationDefaults.Remove(variation);
+
+                Save();
+            }
+        }
+
+        /// <summary>Drop a variation's Default entirely. Returns false when there wasn't one.</summary>
+        public static bool ClearVariationDefault(int variation)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                if (!_variationDefaults.Remove(variation))
+                    return false;
+                Save();
+                return true;
+            }
+        }
+
+        /// <summary>Deep-copy one variation's Default over another (seed v12 from v11, then tweak).
+        /// Returns false when the source has no Default.</summary>
+        public static bool CopyVariationDefault(int from, int to)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                var src = DefaultFor(from);
+                if (src == null)
+                    return false;
+
+                _variationDefaults[to] = new VariationDefault
+                {
+                    // Merge against nothing = a clean deep copy with every nested value cloned
+                    Profile = ZoneVariantProfile.Merge(src.Profile),
+                    Effects = src.Effects?.Clone() ?? new ZoneEffects(),
+                    Appearance = src.Appearance?.Clone() ?? new ZoneAppearance(),
+                    Notes = src.Notes,
+                };
                 Save();
                 return true;
             }

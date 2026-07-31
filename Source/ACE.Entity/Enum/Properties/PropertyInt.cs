@@ -818,9 +818,10 @@ namespace ACE.Entity.Enum.Properties
         /// </summary>
         VariationScaledSpawnBaseline = 50104,
 
-        /// <summary>TEST HOOK (pairs with PropertyBool.ForceEndgameSystems): the prestige variation this creature
-        /// should SIMULATE when force-enabled at a non-prestige variation. Sets the tier for percent-HP growth,
-        /// per-tier scaling, etc. Unset/&lt;11 defaults to the base prestige variation (11 = tier 1). Never set on real mobs.</summary>
+        /// <summary>TEST HOOK (pairs with PropertyBool.ForceEndgameSystems): the ENDGAME CONTENT variation this
+        /// creature should SIMULATE when force-enabled at a non-endgame variation. Drives percent-HP growth and
+        /// the v11 combat gates. Unset — or any value below 11 — resolves to v11, i.e. the dummy behaves exactly
+        /// like a real Tide mob (see VariationManager.EndgameMinVariation). Never set on real mobs.</summary>
         EndgameForcedVariation = 50105,
 
         /// <summary>ELEMENTAL WEAKNESS: a bitmask of ACE.Entity.Enum.DamageType flags the monster takes EXTRA damage

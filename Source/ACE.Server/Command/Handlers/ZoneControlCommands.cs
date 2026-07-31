@@ -81,6 +81,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("zonecontrol", AccessLevel.Developer, CommandHandlerFlag.None, 0,
             "Author/toggle Zone Control zones (any world area).",
             "help | list | here | create <name> <variation> [here|hex] | rename <old> <new> | delete <name> | "
+            + "default <variation> <show|set|clearstat|setall|copyfrom|clear> | default list | "
             + "enable <name> | disable <name> | addlb <name> <hex|here> | removelb <name> <hex> | "
             + "set <name> <stat> <value> [--wcid <id>] | clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>] | "
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
@@ -103,6 +104,9 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol rename <old> <new...> | delete <name>");
                 Msg("  /zonecontrol enable <name> | disable <name> | setvar <name> <variation|here>");
                 Msg("  /zonecontrol addlb <name> <hex|here> | removelb <name> <hex>");
+                Msg("  /zonecontrol default <variation> <show|set|clearstat|setall|copyfrom|clear> | default list");
+                Msg("      the per-variation BASELINE every zone at that variation inherits, per stat;");
+                Msg("      a zone (or a --wcid) overrides only the stats it sets. v11-v25 = the progression.");
                 Msg("  /zonecontrol set <name> <stat> <value> [--wcid <id>]   (--wcid = a specific monster's override)");
                 Msg("  /zonecontrol clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>]");
                 Msg("  /zonecontrol effect <name> [show | dot on|off | dmg <amount> | type <fire|cold|...|percent> | interval <secs>]   (player DoT)");
@@ -141,7 +145,8 @@ namespace ACE.Server.Command.Handlers
             // instead (the zone doesn't exist yet); sync's name sits at args[2].
             if (sub == "sync")
                 CollapseZoneNameTokens(args, 2);
-            else if (sub != "create")
+            else if (sub != "create" && sub != "default")
+                // 'default' takes a VARIATION at args[1], not a zone name — collapsing would mangle it.
                 CollapseZoneNameTokens(args, 1);
 
             try
@@ -210,8 +215,8 @@ namespace ACE.Server.Command.Handlers
                         var name = args[1];
                         var area = ZoneControlManager.GetArea(name);
                         var hasOverride = wcid.HasValue && area != null && area.Profile.WcidOverrides.ContainsKey(wcid.Value);
-                        var vp = area == null ? null
-                            : (wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion));
+                        // layered (Default -> zone -> wcid), same as combat
+                        var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
                         var sb = new StringBuilder("[[ZCSIM]]scope=").Append(name)
                             .Append("|wcid=").Append(wcid?.ToString() ?? "")
                             .Append("|found=").Append(area != null ? 1 : 0)
@@ -436,7 +441,7 @@ namespace ACE.Server.Command.Handlers
 
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                             vp.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false };
                         });
                         Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} {stat} = {value:0.####}. " +
@@ -454,7 +459,7 @@ namespace ACE.Server.Command.Handlers
                         var removed = false;
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                             if (vp != null) removed = vp.Stats.Remove(stat);
                         });
                         Msg(removed ? $"'{name}' {stat} cleared." : "That stat wasn't set.");
@@ -472,7 +477,8 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "list")
                         {
-                            var vp = wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion);
+                            // effective pool: variation Default + zone + this wcid (union across layers)
+                            var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
                             var ids = vp?.CustomCantrips;
                             if (ids == null || ids.Count == 0) { Msg("(no zone cantrips in the pool)"); return; }
                             foreach (var id in ids)
@@ -496,7 +502,7 @@ namespace ACE.Server.Command.Handlers
                             { Msg($"No zone cantrip with key {cantripKey}. See 'cantrip <name> catalog'."); return; }
                             ZoneControlManager.MutateArea(name, a =>
                             {
-                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                                 if (!vp.CustomCantrips.Contains(cantripKey)) vp.CustomCantrips.Add(cantripKey);
                             });
                             Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} zone cantrip added: {def.Name} ({def.Effect}).");
@@ -506,7 +512,7 @@ namespace ACE.Server.Command.Handlers
                             var removed = false;
                             ZoneControlManager.MutateArea(name, a =>
                             {
-                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                                 if (vp != null) removed = vp.CustomCantrips.Remove(cantripKey);
                             });
                             Msg(removed ? $"'{name}' zone cantrip {cantripKey} removed." : "That key wasn't in the pool.");
@@ -530,7 +536,8 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "list")
                         {
-                            var vpl = wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion);
+                            // effective rules: variation Default + zone + this wcid (union, most specific wins)
+                            var vpl = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
                             var rules = vpl?.SpellRules;
                             if (rules == null || rules.Count == 0) { Msg("(no spell rules)"); return; }
                             foreach (var r in rules)
@@ -558,7 +565,7 @@ namespace ACE.Server.Command.Handlers
                             case "off":
                                 ZoneControlManager.MutateArea(name, a =>
                                 {
-                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                                     var rule = vp2.SpellRules.Find(r => r.SpellId == ruleSpellId);
                                     if (rule == null) vp2.SpellRules.Add(new ZoneSpellRule { SpellId = ruleSpellId, Disabled = true });
                                     else rule.Disabled = true;
@@ -569,7 +576,7 @@ namespace ACE.Server.Command.Handlers
                             case "on":
                                 ZoneControlManager.MutateArea(name, a =>
                                 {
-                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                                     var rule = vp2?.SpellRules.Find(r => r.SpellId == ruleSpellId);
                                     if (rule != null)
                                     {
@@ -584,7 +591,7 @@ namespace ACE.Server.Command.Handlers
                             case "chance":
                                 ZoneControlManager.MutateArea(name, a =>
                                 {
-                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                                     var rule = vp2.SpellRules.Find(r => r.SpellId == ruleSpellId);
                                     if (rule == null) vp2.SpellRules.Add(new ZoneSpellRule { SpellId = ruleSpellId, Chance = chanceArg ?? 2.0 });
                                     else { rule.Disabled = false; rule.Chance = chanceArg ?? rule.Chance ?? 2.0; }
@@ -596,7 +603,7 @@ namespace ACE.Server.Command.Handlers
                                 var removedRule = false;
                                 ZoneControlManager.MutateArea(name, a =>
                                 {
-                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                                    var vp2 = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                                     if (vp2 != null) removedRule = vp2.SpellRules.RemoveAll(r => r.SpellId == ruleSpellId) > 0;
                                 });
                                 Msg(removedRule ? $"'{name}'{wcidTag} spell rule removed for {spellLabel} (back to book default)." : "No rule for that spell.");
@@ -641,7 +648,8 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "list")
                         {
-                            var vp = wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion);
+                            // effective table: variation Default + zone + this wcid (union, most specific wins)
+                            var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
                             var drops = vp?.CurrencyDrops;
                             if (drops == null || drops.Count == 0) { Msg("(no currency drops defined)"); return; }
                             foreach (var d in drops)
@@ -689,7 +697,7 @@ namespace ACE.Server.Command.Handlers
 
                             ZoneControlManager.MutateArea(name, a =>
                             {
-                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                                 var existing = vp.CurrencyDrops.FirstOrDefault(d => d.Wcid == itemWcid);
                                 if (existing != null) { existing.Amount = amount; existing.Chance = chance; existing.Direct = direct; }
                                 else vp.CurrencyDrops.Add(new ZoneCurrencyDrop { Wcid = itemWcid, Amount = amount, Chance = chance, Direct = direct });
@@ -701,7 +709,7 @@ namespace ACE.Server.Command.Handlers
                             var removed = false;
                             ZoneControlManager.MutateArea(name, a =>
                             {
-                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                                var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                                 if (vp != null) removed = vp.CurrencyDrops.RemoveAll(d => d.Wcid == itemWcid) > 0;
                             });
                             Msg(removed ? $"'{name}' currency drop {itemWcid} removed." : "That item wasn't in the drop table.");
@@ -731,7 +739,7 @@ namespace ACE.Server.Command.Handlers
 
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion);
+                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                             if (!vp.BodyParts.TryGetValue((int)partKey, out var bp))
                                 vp.BodyParts[(int)partKey] = bp = new ZoneBodyPart();
                             switch (field)
@@ -757,7 +765,7 @@ namespace ACE.Server.Command.Handlers
                         var removed = false;
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                             if (vp == null || !vp.BodyParts.TryGetValue((int)partKey, out var bp))
                                 return;
                             switch (field)
@@ -809,7 +817,7 @@ namespace ACE.Server.Command.Handlers
                         }
 
                         ZoneControlManager.MutateArea(name, a => applyProp(
-                            wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion, create: true) : a.Profile.Variant(ZoneVariant.Minion)));
+                            wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion));
                         Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} prop {propLabel} = {valueEcho}. Applies on (re)spawn.");
                         return;
                     }
@@ -824,7 +832,7 @@ namespace ACE.Server.Command.Handlers
                         var removed = false;
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : a.Profile.Variant(ZoneVariant.Minion);
+                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                             if (vp == null) return;
                             removed = type switch
                             {
@@ -1344,10 +1352,129 @@ namespace ACE.Server.Command.Handlers
                         if (area == null) { Msg($"No zone '{name}'."); return; }
                         var eval = ZoneControlManager.EvaluateForDisplay(name, wcid);
                         Msg($"'{name}' v{area.Variation} {(area.Enabled ? "ENABLED" : "disabled")}" +
-                            $"{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : " [default]")}:");
+                            $"{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : " [zone]")}:");
                         if (eval == null || eval.Values.Count == 0) { Msg("  (no stats set)"); return; }
+                        // Layered values with PROVENANCE, so it is obvious which layer each number came from.
                         foreach (var kv in eval.Values.OrderBy(k => k.Key))
-                            Msg($"    {kv.Key,-22} = {kv.Value:0.####}");
+                        {
+                            var src = ZoneControlManager.ResolveStatSource(name, wcid, kv.Key);
+                            Msg($"    {kv.Key,-22} = {kv.Value,-12:0.####} ({src ?? "?"})");
+                        }
+                        return;
+                    }
+
+                    case "default":
+                    {
+                        // Per-variation Default layer (2026-07-30). Every zone at <var> inherits these, per
+                        // stat; a zone or per-WCID value overrides just that stat. Progression across v11-v25
+                        // is 15 of these, all explicitly authored — the server never derives one.
+                        if (args.Count < 2)
+                        {
+                            Msg("Usage: default <variation> <show|set|clearstat|setall|copyfrom|clear|list>");
+                            Msg("  default list                              variations that have a Default");
+                            Msg("  default <var> show                        the Default's stats");
+                            Msg("  default <var> set <stat> <value>");
+                            Msg("  default <var> clearstat <stat>");
+                            Msg("  default <var> setall <value>              every combat stat at once");
+                            Msg("  default <var> copyfrom <var>              seed from another variation");
+                            Msg("  default <var> clear                       drop the whole Default");
+                            return;
+                        }
+
+                        if (args[1].Equals("list", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var vars = ZoneControlManager.ListVariationDefaults();
+                            if (vars.Count == 0) { Msg("(no variation Defaults authored)"); return; }
+                            foreach (var v in vars)
+                            {
+                                var d = ZoneControlManager.GetVariationDefault(v);
+                                Msg($"  v{v,-4} stats:{d?.Profile?.Stats?.Count ?? 0}  " +
+                                    $"effects:{(d?.Effects != null && !d.Effects.IsEmpty ? "yes" : "no")}  " +
+                                    $"appearance:{(d?.Appearance != null && !d.Appearance.IsEmpty ? "yes" : "no")}");
+                            }
+                            return;
+                        }
+
+                        if (!int.TryParse(args[1].TrimStart('v', 'V'), out var dvar))
+                        { Msg("variation must be a number, e.g. 'default 11 show'."); return; }
+                        if (dvar < 0)
+                        { Msg("variation must be >= 0 (negative variations are rift instances and never inherit a Default)."); return; }
+
+                        var dop = args.Count >= 3 ? args[2].ToLowerInvariant() : "show";
+
+                        if (dop == "show")
+                        {
+                            var d = ZoneControlManager.GetVariationDefault(dvar);
+                            if (d == null) { Msg($"v{dvar} has no Default."); return; }
+                            var stats = d.Profile?.Stats;
+                            Msg($"Default v{dvar}:");
+                            if (stats == null || stats.Count == 0) Msg("  (no stats set)");
+                            else
+                                foreach (var kv in stats.OrderBy(k => k.Key))
+                                    Msg($"    {kv.Key,-22} = {kv.Value.Base:0.####}");
+                            if (d.Effects != null && !d.Effects.IsEmpty) Msg($"  effects: {DescribeDot(d.Effects)}");
+                            return;
+                        }
+
+                        if (dop == "clear")
+                        {
+                            Msg(ZoneControlManager.ClearVariationDefault(dvar)
+                                ? $"Default v{dvar} cleared. Zones at v{dvar} fall back to their own stats only."
+                                : $"v{dvar} had no Default.");
+                            return;
+                        }
+
+                        if (dop == "copyfrom")
+                        {
+                            if (args.Count < 4 || !int.TryParse(args[3].TrimStart('v', 'V'), out var srcVar))
+                            { Msg("Usage: default <var> copyfrom <var>"); return; }
+                            Msg(ZoneControlManager.CopyVariationDefault(srcVar, dvar)
+                                ? $"Default v{dvar} seeded from v{srcVar} (deep copy - edit either independently)."
+                                : $"v{srcVar} has no Default to copy.");
+                            return;
+                        }
+
+                        if (dop == "setall")
+                        {
+                            if (args.Count < 4 || !TryDouble(args[3], out var allVal))
+                            { Msg("Usage: default <var> setall <value>"); return; }
+
+                            ZoneControlManager.MutateVariationDefault(dvar, d =>
+                            {
+                                foreach (var s in SetAllStats)
+                                    d.Profile.Stats[s] = new StatCurve { Base = allVal, Growth = 1.0, Additive = false };
+                            });
+                            Msg($"Default v{dvar}: set {SetAllStats.Length} combat stats to {allVal:0.####}.");
+                            Msg($"  ({string.Join(", ", SetAllStats)})");
+                            Msg("  Chance rolls, relief anchors, loot-slot counts and loot multipliers were NOT touched - set those individually.");
+                            return;
+                        }
+
+                        if (dop == "set")
+                        {
+                            if (args.Count < 5) { Msg("Usage: default <var> set <stat> <value>"); return; }
+                            var dstat = NormalizeStat(args[3]);
+                            if (dstat == null) { Msg("Unknown stat. Stats: " + string.Join(", ", ZoneStat.All)); return; }
+                            if (!TryDouble(args[4], out var dval)) { Msg("value must be a number."); return; }
+
+                            ZoneControlManager.MutateVariationDefault(dvar, d =>
+                                d.Profile.Stats[dstat] = new StatCurve { Base = dval, Growth = 1.0, Additive = false });
+                            Msg($"Default v{dvar} {dstat} = {dval:0.####}. Every zone at v{dvar} that doesn't set it inherits this.");
+                            return;
+                        }
+
+                        if (dop == "clearstat")
+                        {
+                            if (args.Count < 4) { Msg("Usage: default <var> clearstat <stat>"); return; }
+                            var dstat = NormalizeStat(args[3]);
+                            if (dstat == null) { Msg("Unknown stat."); return; }
+                            var dremoved = false;
+                            ZoneControlManager.MutateVariationDefault(dvar, d => dremoved = d.Profile.Stats.Remove(dstat));
+                            Msg(dremoved ? $"Default v{dvar} {dstat} cleared." : "That stat wasn't set on the Default.");
+                            return;
+                        }
+
+                        Msg("op must be show | set | clearstat | setall | copyfrom | clear | list");
                         return;
                     }
 
@@ -1427,7 +1554,10 @@ namespace ACE.Server.Command.Handlers
         private static string BuildZonePayload(string name, uint? wcid, Session session)
         {
             var area = ZoneControlManager.GetArea(name);
-            var vp = area == null ? null : (wcid.HasValue ? area.Profile.VariantForWcid(wcid.Value, ZoneVariant.Minion) : area.Profile.Variant(ZoneVariant.Minion));
+            // LAYERED view (2026-07-30): VariationDefault -> zone -> wcid, so the plugin shows the value combat
+            // actually uses rather than only what this bucket authors. Wire shape is unchanged (still
+            // "<stat>=<defined>,<value>") — provenance is a Phase 3 change made together with the plugin.
+            var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
 
             var sb = new StringBuilder();
             sb.Append("[[ZC]]scope=").Append(name)
@@ -1667,11 +1797,11 @@ namespace ACE.Server.Command.Handlers
 
             // Zone player-effects (for the plugin's Effects tab).
             var effects = area?.Effects ?? new ZoneEffects();
-            sb.Append("|fx_dot=").Append(effects.DotEnabled ? 1 : 0)
-              .Append("|fx_dotdmg=").Append(effects.DotDamage.ToString(CultureInfo.InvariantCulture))
-              .Append("|fx_dottype=").Append(effects.DotDamageType)
-              .Append("|fx_dotpercent=").Append(effects.DotPercent ? 1 : 0)
-              .Append("|fx_dotinterval=").Append(effects.DotIntervalSeconds.ToString(CultureInfo.InvariantCulture));
+            sb.Append("|fx_dot=").Append(effects.EffectiveDotEnabled ? 1 : 0)
+              .Append("|fx_dotdmg=").Append(effects.EffectiveDotDamage.ToString(CultureInfo.InvariantCulture))
+              .Append("|fx_dottype=").Append(effects.EffectiveDotDamageType)
+              .Append("|fx_dotpercent=").Append(effects.EffectiveDotPercent ? 1 : 0)
+              .Append("|fx_dotinterval=").Append(effects.EffectiveDotIntervalSeconds.ToString(CultureInfo.InvariantCulture));
 
             // Live hints from the admin's in-game target. When the plugin is watching a SPECIFIC monster
             // (--wcid), only send them if the in-game target IS that monster — otherwise targeting some other
@@ -1941,9 +2071,11 @@ namespace ACE.Server.Command.Handlers
         /// <summary>Human-readable one-liner for a zone's DoT config (command echoes + show).</summary>
         private static string DescribeDot(ZoneEffects e)
         {
-            if (!e.DotEnabled) return "DoT off";
-            var amount = e.DotPercent ? $"{e.DotDamage:0.##}% max health" : $"{e.DotDamage:0.##} {(DamageType)e.DotDamageType}";
-            return $"DoT ON: {amount} every {Math.Max(1.0, e.DotIntervalSeconds):0.##}s";
+            if (!e.EffectiveDotEnabled) return "DoT off";
+            var amount = e.EffectiveDotPercent
+                ? $"{e.EffectiveDotDamage:0.##} pct max health"
+                : $"{e.EffectiveDotDamage:0.##} {(DamageType)e.EffectiveDotDamageType}";
+            return $"DoT ON: {amount} every {Math.Max(1.0, e.EffectiveDotIntervalSeconds):0.##}s";
         }
 
         private static readonly string[] DamageTypeNames =
@@ -1969,6 +2101,29 @@ namespace ACE.Server.Command.Handlers
             s = s.Trim().ToLowerInvariant();
             return ZoneStat.All.FirstOrDefault(k => k.Equals(s, StringComparison.OrdinalIgnoreCase));
         }
+
+        /// <summary>
+        /// The stats `default &lt;var&gt; setall &lt;value&gt;` writes: RAW MAGNITUDE combat stats only, where
+        /// "bigger number = stronger" and a blanket value like 1100 is meaningful.
+        ///
+        /// Deliberately EXCLUDED, because a blanket value there is meaningless or destructive:
+        ///   * multipliers/fractions — damage_taken_mult, vuln_cap, percent_hp_base, attack_variance,
+        ///     spell_variance, spell_damage_mult, resist_*, armor_vs_*, crit_* (1100 would one-shot everything)
+        ///   * relief_* curve anchors — they are (x,y) points on a progression curve, not magnitudes
+        ///   * *_chance rolls — probabilities in 0..1
+        ///   * loot_slot_* counts and loot_*/weapon_*/armor_*/qb_* knobs — item counts and roll shaping
+        /// Set those individually.
+        /// </summary>
+        private static readonly string[] SetAllStats =
+        {
+            ZoneStat.Strength, ZoneStat.Endurance, ZoneStat.Coordination,
+            ZoneStat.Quickness, ZoneStat.Focus, ZoneStat.Self,
+            ZoneStat.MaxHealth, ZoneStat.MaxStamina, ZoneStat.MaxMana,
+            ZoneStat.AttackSkill, ZoneStat.MinAttackSkill,
+            ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
+            ZoneStat.DamageRating, ZoneStat.DamageResistRating, ZoneStat.ArmorLevel,
+            ZoneStat.AttackDamage, ZoneStat.SpellDamage,
+        };
 
         /// <summary>Parse a CombatBodyPart by enum name (case-insensitive) or raw int; rejects Undefined.</summary>
         private static bool TryParseBodyPart(string s, out CombatBodyPart part)

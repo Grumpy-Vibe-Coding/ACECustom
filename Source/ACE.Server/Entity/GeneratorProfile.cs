@@ -298,6 +298,18 @@ namespace ACE.Server.Entity
                 ConsecutiveSpawnFailures = 0;
                 if (wo is Creature creature && creature.IsMonster && creature.Attackable)
                 {
+                    // PROVISIONAL LOCATION (2026-07-30): zone resolution keys on Location (landblock +
+                    // variation), but the Spawn_* handlers below don't assign one until after this block —
+                    // so every generator-spawned mob resolved landblock 0, matched no zone, and silently
+                    // received NO spawn snapshot: attributes, max health/stamina/mana, crit resist ratings,
+                    // prop stamps and APPEARANCE were all skipped. Placed (landblock_instance) mobs were
+                    // unaffected because WorldObjectFactory sets Location first, which is why this went
+                    // unnoticed until a variation Default authored spawn-snapshot stats for the first time.
+                    // Safe: Spawn_Scatter and Spawn_Default both open by overwriting Location outright, so
+                    // this value only ever survives long enough to be resolved against.
+                    if (Generator.Location != null)
+                        wo.Location = new ACE.Entity.Position(Generator.Location);
+
                     CreatureVariantHelper.MaybeApplyRandomVariant(creature, (float)ServerConfig.creature_variant_chance.Value);
                     PrestigeManager.ApplyPrestigeScaling(creature, Generator.Location.Variation);
                     Managers.ZoneControl.ZoneSpawnScaler.ApplyToSpawn(creature);

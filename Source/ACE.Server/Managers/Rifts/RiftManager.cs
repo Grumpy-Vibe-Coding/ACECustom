@@ -692,7 +692,7 @@ namespace ACE.Server.Managers.Rifts
                 Enabled = true,
             };
 
-            var variant = area.Profile.Variant(ZoneVariant.Minion);
+            var variant = area.Profile.Minion;
             foreach (var kv in stats)
             {
                 if (!ZoneStat.All.Contains(kv.Key, StringComparer.OrdinalIgnoreCase))

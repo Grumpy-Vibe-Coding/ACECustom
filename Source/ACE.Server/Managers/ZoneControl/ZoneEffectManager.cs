@@ -48,12 +48,12 @@ namespace ACE.Server.Managers.ZoneControl
                 return;
             }
 
-            if (fx == null || !fx.DotEnabled || fx.DotDamage <= 0)
+            if (fx == null || !fx.EffectiveDotEnabled || fx.EffectiveDotDamage <= 0)
                 return;
 
             ApplyDot(player, fx);
 
-            var interval = Math.Max(MinIntervalSeconds, fx.DotIntervalSeconds);
+            var interval = Math.Max(MinIntervalSeconds, fx.EffectiveDotIntervalSeconds);
             player.ZoneEffectNextTick = currentUnixTime + interval;
         }
 
@@ -61,15 +61,15 @@ namespace ACE.Server.Managers.ZoneControl
         /// (which forces Health damage). Vital selection + messaging live in Player.TakeZoneEffectDamage.</summary>
         private static void ApplyDot(Player player, ZoneEffects fx)
         {
-            double raw = fx.DotPercent
-                ? player.Health.MaxValue * (fx.DotDamage / 100.0)
-                : fx.DotDamage;
+            double raw = fx.EffectiveDotPercent
+                ? player.Health.MaxValue * (fx.EffectiveDotDamage / 100.0)
+                : fx.EffectiveDotDamage;
 
             var amount = (uint)Math.Round(raw);
             if (amount == 0)
                 return;
 
-            var damageType = fx.DotPercent ? DamageType.Health : (DamageType)fx.DotDamageType;
+            var damageType = fx.EffectiveDotPercent ? DamageType.Health : (DamageType)fx.EffectiveDotDamageType;
             if (damageType == DamageType.Undef)
                 damageType = DamageType.Fire;
 

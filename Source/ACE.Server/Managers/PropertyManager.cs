@@ -737,19 +737,17 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> v11_mob_dmg_taken_min_variation { get; private set; } = new(11, "minimum Location.Variation a monster must be spawned in for damage-taken mitigation to apply. Matches the v11 endgame convention.");
         public static ConfigProperty<double> v11_mob_dmg_taken_mult { get; private set; } = new(0.25, "incoming-damage multiplier for v11+ MINIONS. 0.25 = they take 25% of normal damage (4x effective HP). 1.0 = no mitigation. Lower = tankier. Read live per hit.");
         public static ConfigProperty<double> v11_mob_dmg_taken_boss_mult { get; private set; } = new(0.60, "EXTRA multiplier stacked on v11_mob_dmg_taken_mult for BOSSES (PropertyBool.IsEmpowerSource). 0.60 => boss takes mult*0.60 (e.g. 0.25*0.60 = 0.15 = ~6.7x effective HP). 1.0 = bosses same as minions.");
-        public static ConfigProperty<double> v11_mob_dmg_taken_per_tier { get; private set; } = new(0.0, "EXTRA damage-taken reduction subtracted from the multiplier per prestige tier: effMult = max(floor, mult*bossFactor - tier*this). 0.0 = flat (no per-tier ramp). Raise later to wall out higher tiers. Read live.");
         public static ConfigProperty<double> v11_mob_dmg_taken_floor { get; private set; } = new(0.02, "hard minimum for the incoming-damage multiplier after all reductions, so mobs are never fully damage-immune. 0.02 = they always take at least 2% of normal damage.");
 
-        // v11+ per-tier prestige scaling: makes each prestige tier (tier = variation - 10) meaningfully harder. When enabled,
-        // HP scales GEOMETRICALLY (steeper at high tiers, unlike the old linear +25%/tier) and defense/magic-defense/attack
-        // skills + vuln resistance also scale per tier. Read live at hit time (except HP, which is applied at spawn).
-        public static ConfigProperty<bool> v11_tier_enabled { get; private set; } = new(true, "master switch for config-driven per-prestige-tier monster scaling (HP geometric + defense/magic-def/attack/vuln per tier). Off = fall back to the legacy linear HP/damage scaling only.");
-        public static ConfigProperty<long> v11_tier_max { get; private set; } = new(15, "tier is clamped to this maximum for ALL per-tier scaling (tier = variation - 10, so 15 covers variations 11-25). Prevents runaway scaling past the designed top tier.");
-        public static ConfigProperty<double> v11_tier_hp_growth { get; private set; } = new(1.25, "GEOMETRIC HP multiplier per tier: hpMod = hp_growth^tier. 1.25 => tier1 x1.25, tier5 x3.05, tier10 x9.3, tier15 x28.4. Higher = steeper endgame. Set 1.0 to disable HP scaling. (Replaces the old linear +25%/tier which flattened at high tiers.)");
-        public static ConfigProperty<double> v11_tier_damage_rating_per_tier { get; private set; } = new(15.0, "additive DamageRating granted to a monster per tier (applied at spawn). 15 => tier10 = +150 DamageRating on the monster's NORMAL attacks. Note: vs augged players the percent-HP floor usually dominates normal damage, so this mostly matters at low tiers / low augs.");
-        public static ConfigProperty<double> v11_tier_defense_per_tier { get; private set; } = new(0.06, "monster melee/missile/magic DEFENSE skill multiplier per tier: defMod = 1 + tier * this. 0.06 => tier10 defenses x1.6 (harder for the player to land hits and to resist). Read live. 0 = no defense scaling.");
-        public static ConfigProperty<double> v11_tier_attack_per_tier { get; private set; } = new(0.0, "monster ATTACK skill multiplier per tier: atkMod = 1 + tier * this. Default 0 because v11_min_attack_skill already floors accuracy vs players; raise to make higher tiers exceed that floor. Read live.");
-        public static ConfigProperty<double> v11_tier_vuln_per_tier { get; private set; } = new(0.02, "EXTRA vuln-effectiveness reduction per tier, subtracted from v11_vuln_effectiveness: effTier = max(0, v11_vuln_effectiveness - tier * this). 0.02 => tier10 vulns are 20 percentage-points weaker than tier0. Makes deep-tier mobs progressively more vuln-resistant. Read live.");
+        // REMOVED 2026-07-30 (owner ruling): the v11_tier_* per-tier prestige scaling block
+        // (v11_tier_enabled/_max/_hp_growth/_damage_rating_per_tier/_defense_per_tier/_attack_per_tier/
+        // _vuln_per_tier) and v11_mob_dmg_taken_per_tier. It derived monster difficulty from the
+        // variation NUMBER; Zone Control authors depth explicitly via per-variation Defaults instead.
+        // It also never fired at the content variations (11-25) — GetTier is keyed on
+        // PRESTIGE_VAR_OFFSET (1000) — while its descriptions claimed otherwise, which made it a live
+        // trap for anyone tuning. Prestige keeps its own original linear HP/damage scaling.
+        // See ZoneControl_Roadmap_2026-07-30.md §1.
+
         public static ConfigProperty<double> creature_variant_chance { get; private set; } = new(0.0001, "the chance that a creature variant (e.g. shiny) will spawn");
         public static ConfigProperty<double> siphon_lens_flawed_rate { get; private set; } = new(0.002, "drop rate for Flawed Siphon Lens in mundane roll (0.002 = ~1 in 1,000 kills)");
         public static ConfigProperty<double> siphon_lens_pristine_rate { get; private set; } = new(0.0008, "drop rate for Pristine Siphon Lens in mundane roll (0.0008 = ~1 in 2,500 kills)");
