@@ -1104,10 +1104,12 @@ namespace ACE.Server.WorldObjects
 
             // For ring spells cast by a player, apply guaranteed radius-based area damage
             // unless the player has opted into Classic mode (physics collision / multi-hit).
+            // `damage` is the vital drained above for LifeProjectile spells (0 otherwise) — it must be
+            // forwarded, since those spells derive their damage from the drain and not from Min/Max.
             if (SpellProjectile.GetProjectileSpellType(spell.Id) == ProjectileSpellType.Ring
                 && this is Player ringPlayer
                 && !(ringPlayer.GetProperty(PropertyBool.ClassicRingAoe) ?? false))
-                ringPlayer.ApplyRingSpellAreaDamage(spell);
+                ringPlayer.ApplyRingSpellAreaDamage(spell, lifeProjectileDamage: damage);
 
             if (spell.School == MagicSchool.LifeMagic)
             {
