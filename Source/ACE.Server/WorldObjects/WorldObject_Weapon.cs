@@ -463,6 +463,12 @@ namespace ACE.Server.WorldObjects
                 critDamageMod = Math.Max(critDamageMod, cripplingBlowMod);
             }
 
+            // Weapon aug-scaling crit term (T11 weapon relevance): kc(quality) x per-aug crit
+            // modifier x min(matching combat augs, tier cap) — the aug-pegged floor. Math.Max so
+            // a Crushing Blow card / big CriticalMultiplier stays the jackpot above it (§7.10).
+            critDamageMod = Math.Max(critDamageMod,
+                ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetCritDamageBonus(weapon, wielder));
+
             // Zone Control: authored crit_damage_rating IS the final multiplier; engine computes 1 + mod,
             // so store value - 1 (e.g. authored 4 -> crits deal exactly 4x)
             var zoneCritDmg = GetZoneCritDamageOverride(wielder);

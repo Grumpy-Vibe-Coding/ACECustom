@@ -326,6 +326,14 @@ namespace ACE.Server.Entity
             BaseDamage += damageBonus;
             DebugLuminanceFlatDamageBonus = damageBonus;
 
+            // Weapon aug-scaling (T11 weapon relevance): per-strike flat = k(quality) x
+            // min(wielder's item augs, tier cap). LIVE read every event, never baked (plan §6.2).
+            // Lands here post-roll beside the aug flat — NOT in BaseDamageMod.DamageBonus, which
+            // launcher DamageMod would multiply ~3.6-3.9x on atlatls (§6.1). 0 when the master
+            // switch is off / weapon unstamped / attacker not a player.
+            if (playerAttacker != null)
+                BaseDamage += Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(Weapon, playerAttacker);
+
             // get damage modifiers
             PowerMod = attacker.GetPowerMod(Weapon);
             AttributeMod = attacker.GetAttributeMod(Weapon);

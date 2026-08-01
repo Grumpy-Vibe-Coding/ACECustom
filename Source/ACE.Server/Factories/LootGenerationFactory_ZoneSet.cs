@@ -119,19 +119,105 @@ namespace ACE.Server.Factories
         public const int ZoneLootSetWieldItemAugs = 2000;
 
         /// <summary>
-        /// The tier-11+ wield gate: 2000 item augmentations (LumAugItemCount), replacing every
+        /// The tier-11+ wield gate: item augmentations (LumAugItemCount), replacing every
         /// requirement StripWieldRequirements removed. Validated server-side by the
         /// WieldRequirement.Int64Stat case. The client cannot render this requirement type, so
-        /// the stock panel shows no wield line -- a future LongDesc append will display it.
+        /// the LongDesc block appends the line instead.
+        ///
+        /// PER-TIER (T11 weapon relevance plan §7.10): the floor comes from the weaponscaling_data
+        /// tier table (minWieldAugs — the market-segmentation gate: minWield(Tn) = cap(Tn-1)),
+        /// editable live in the plugin's Weapons panel; a missing tier row or a 0 value falls back
+        /// to the legacy 2000 constant, preserving pre-plan behavior. Applies to ALL T11+ drops
+        /// (weapons, armor, jewelry) — the gate is the tier's, not the weapon system's.
         /// </summary>
-        public static void ApplyT11WieldRequirement(WorldObject wo)
+        public static void ApplyT11WieldRequirement(WorldObject wo, int tier = 0)
         {
             if (wo == null)
                 return;
 
+            var minWield = ZoneLootSetWieldItemAugs;
+            var tierRow = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(tier);
+            if (tierRow != null && tierRow.MinWieldAugs > 0)
+                minWield = tierRow.MinWieldAugs;
+
             wo.WieldRequirements = ACE.Entity.Enum.WieldRequirement.Int64Stat;
             wo.WieldSkillType = (int)PropertyInt64.LumAugItemCount;
-            wo.WieldDifficulty = ZoneLootSetWieldItemAugs;
+            wo.WieldDifficulty = minWield;
+
+            // The client cannot render Int64Stat requirements. WEAPONS show the gate in the
+            // Property Details section instead (AppraiseInfo, pinned bottom - owner 2026-08-01);
+            // armor/jewelry have no such section, so they keep this LongDesc line.
+            if (!(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
+                AppendLongDescLine(wo, $"Wield requires: {minWield:N0} Item Augmentations");
+        }
+
+        /// <summary>Append one line to an item's LongDesc (the LIVE description path - the
+        /// provenance line from ZoneLootMutator lands the same way). Idempotent per line text.</summary>
+        private static void AppendLongDescLine(WorldObject wo, string line)
+        {
+            if (wo == null || string.IsNullOrWhiteSpace(line))
+                return;
+            var cur = wo.LongDesc;
+            if (!string.IsNullOrEmpty(cur) && cur.Contains(line))
+                return;
+            wo.LongDesc = string.IsNullOrEmpty(cur) ? line : cur + "\n" + line;
+        }
+
+        /// <summary>
+        /// Stamp the aug-scaling identity on a tier-11+ WEAPON drop: a QUALITY percentile roll
+        /// (0-1000) and the loot TIER. That is ALL the item ever carries — k ranges, tier caps and
+        /// kc live in the weaponscaling_data config and resolve at swing time, so plugin edits
+        /// re-price every stamped weapon retroactively (plan §9.1). Stamped even while the master
+        /// switch is OFF (inert data; flipping Enabled later activates existing drops). Casters
+        /// are stamped too — inert until the caster wire-in.
+        /// </summary>
+        public static void ApplyWeaponAugScaleStamp(WorldObject wo, int tier)
+        {
+            if (wo == null || tier < ZoneLootSetMinTier)
+                return;
+            if (!(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
+                return;
+
+            var quality = ThreadSafeRandom.Next(0, ACE.Server.Managers.WeaponScaling.WeaponScalingManager.QualityMax);
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
+
+            // Visible identity line (the sectioned composer with the original line is dead code -
+            // this is the live LongDesc path, same as the wield gate + provenance lines). Grade
+            // first for the at-a-glance read; the percent says how close to a perfect roll this
+            // copy came (owner 2026-08-01: the raw 0-1000 fraction confused even the owner).
+            // The grade line lives in the Property Details section (AppraiseInfo, pinned top -
+            // owner 2026-08-01), computed live from the quality prop; nothing baked here.
+        }
+
+        /// <summary>Final pass over a T11+ drop's description (owner 2026-08-01): drop the inherited
+        /// weenie flavor text (e.g. a bare "Claw" line), keep our known lines in stamp order, and
+        /// move the ZoneLootMutator provenance ("Dropped by ...") to the very bottom. Runs LAST in
+        /// the Creature_Death presentation sweep. Whitelist-based: a future line-adder must either
+        /// run after this or register its prefix here.</summary>
+        public static void FinalizeT11LongDesc(WorldObject wo)
+        {
+            var ld = wo?.LongDesc;
+            if (string.IsNullOrWhiteSpace(ld))
+                return;
+
+            var keep = new System.Text.StringBuilder();
+            var provenance = new System.Text.StringBuilder();
+            foreach (var raw in ld.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0)
+                    continue;
+                if (line.StartsWith("Dropped by") || line.StartsWith("Dropped in ") || line.StartsWith("Location:"))
+                    provenance.Append(provenance.Length > 0 ? "\n" : "").Append(line);
+                else if (line.StartsWith("Wield requires:") || line.StartsWith("Weapon Grade:") || line.StartsWith("Aug Scaling"))
+                    keep.Append(keep.Length > 0 ? "\n" : "").Append(line);
+                // anything else = inherited weenie flavor text - discarded by design
+            }
+
+            if (provenance.Length > 0)
+                keep.Append(keep.Length > 0 ? "\n\n" : "").Append(provenance);
+            wo.LongDesc = keep.Length > 0 ? keep.ToString() : null;
         }
 
         public static void StripWieldRequirements(WorldObject wo)
@@ -616,6 +702,11 @@ namespace ACE.Server.Factories
             if (wo.WieldRequirements == ACE.Entity.Enum.WieldRequirement.Int64Stat &&
                 wo.WieldSkillType == (int)PropertyInt64.LumAugItemCount)
                 sb.Append($"Wield requires: {wo.WieldDifficulty ?? 0:N0} Item Augmentations\n");
+
+            // aug-scaling identity (the per-wielder damage term itself shows live in the weapon
+            // panel via WeaponProfile; this line records the item's fixed roll)
+            if (wo.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality) is int wsq)
+                sb.Append($"Aug Scaling Quality: {wsq:N0} / 1,000\n");
 
             // ---- 5. provenance, at the very bottom: what dropped it, at which variant, and the
             // Zone Control zone when one governed the kill (omitted otherwise)

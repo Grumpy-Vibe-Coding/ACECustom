@@ -42,10 +42,13 @@ namespace ACE.Server.Managers.ZoneControl
             // the creature's effective variation; killed = the dropping monster). Every non-coin drop gets it.
             if (!string.IsNullOrEmpty(p.ScopeKey))
             {
+                // Two-line provenance (owner 2026-08-01). FinalizeT11LongDesc and the AppraiseInfo
+                // projection-insert anchor on the "Dropped by"/"Location:" prefixes - the three
+                // move together.
                 var variation = killed != null ? ZoneControlManager.GetEffectiveVariation(killed) : 0;
                 var origin = killed != null
-                    ? $"Dropped by {killed.Name} in the {p.ScopeKey} zone (v{variation})."
-                    : $"Dropped in the {p.ScopeKey} zone (v{variation}).";
+                    ? $"Dropped by: {killed.Name}\nLocation: {p.ScopeKey} v{variation}"
+                    : $"Location: {p.ScopeKey} v{variation}";
                 wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? origin : wo.LongDesc + "\n\n" + origin;
             }
 

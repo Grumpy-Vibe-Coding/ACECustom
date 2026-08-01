@@ -52,6 +52,24 @@ namespace ACE.Server.Network.Structure
             WeaponSkill = (Skill)(weapon.GetProperty(PropertyInt.WeaponSkill) ?? 0);
             Damage = GetDamage(weapon);
             DamageVariance = GetDamageVariance(weapon);
+
+            // Weapon aug-scaling: fold the scaling term into the displayed range. WIELDED = the
+            // wielder's live value; UNWIELDED = the wield-FLOOR value (k x min-wield augs) — an
+            // honest minimum for any possible hands, so drops read like real weapons instead of
+            // a bare static range (owner 2026-08-01). In combat the term is a flat post-roll add
+            // (variance never touches it), so the reported variance is re-derived to keep the
+            // displayed MIN true: min = staticMin + term, max = staticMax + term — without this
+            // the client applies the weapon's variance to the whole and understates min ~2x.
+            var augTerm = weapon.Wielder is Player wielderPlayer
+                ? (int)ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(weapon, wielderPlayer)
+                : (int)ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFloorBonus(weapon);
+            if (augTerm > 0)
+            {
+                var trueMin = Damage * (1.0 - DamageVariance) + augTerm;
+                Damage = (uint)(Damage + augTerm);
+                Enchantment_Damage += augTerm;   // green "buffed" coloring client-side
+                DamageVariance = Damage > 0 ? Math.Max(0.0, 1.0 - trueMin / Damage) : 0.0;
+            }
             DamageMod = GetDamageMultiplier(weapon);
             WeaponLength = weapon.GetProperty(PropertyFloat.WeaponLength) ?? 1.0f;
             MaxVelocity = weapon.MaximumVelocity ?? 1.0f;
@@ -68,6 +86,8 @@ namespace ACE.Server.Network.Structure
             var damageBonus = weapon.EnchantmentManager.GetDamageBonus();
             var auraDamageBonus = weapon.Wielder != null && (weapon.WeenieType != WeenieType.Ammunition || ServerConfig.show_ammo_buff.Value) ? weapon.Wielder.EnchantmentManager.GetDamageBonus() : 0;
             Enchantment_Damage = weapon.IsEnchantable ? damageBonus + auraDamageBonus : damageBonus;
+            // (the aug-scaling term is folded in by the ctor AFTER variance is known, so the
+            // displayed min can be corrected to the true post-roll value)
             return (uint)Math.Max(0, baseDamage + Enchantment_Damage);
         }
 

@@ -260,6 +260,43 @@ namespace ACE.Server.Network.Structure
                 PropertiesInt.Remove(PropertyInt.EncumbranceVal);
             }
 
+            // Weapon aug-scaling: the EXAMINER-projected value, so a drop can be evaluated without
+            // equipping it (owner 2026-08-01). Computed from the VIEWER's current item augs — the
+            // same resolve combat uses — so re-examining after buying augs refreshes it. Appraisal
+            // output only, never persisted; only shows while the system is enabled and the item is
+            // stamped (GetFlatBonus returns 0 otherwise). While WIELDED the green damage line
+            // already includes the term (WeaponProfile), so the projection is for the unwielded case.
+            if (examiner != null && wo.Wielder == null)
+            {
+                var projected = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(wo, examiner);
+                var floor = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFloorBonus(wo);
+                if (projected > floor)
+                {
+                    // The unwielded damage line already shows the wield-FLOOR value (an honest
+                    // minimum for any hands), so this line is the examiner's bonus ABOVE that
+                    // floor — hidden entirely for a player sitting exactly at the wield req.
+                    var msg = $"Bonus Damage to weapon while equipped by you: +{(int)(projected - floor):N0}";
+
+                    // Provenance ("Dropped by:" / "Location:") stays the very last block (owner
+                    // 2026-08-01) - insert the per-viewer projection ABOVE it, not after. Legacy
+                    // single-line formats ("Dropped by X in...", "Dropped in the...") still match.
+                    if (PropertiesString.TryGetValue(PropertyString.LongDesc, out var ldCur) && !string.IsNullOrEmpty(ldCur))
+                    {
+                        var provIdx = ldCur.IndexOf("Dropped by", StringComparison.Ordinal);
+                        if (provIdx < 0)
+                            provIdx = ldCur.IndexOf("Dropped in ", StringComparison.Ordinal);
+                        if (provIdx < 0)
+                            provIdx = ldCur.IndexOf("Location:", StringComparison.Ordinal);
+                        if (provIdx >= 0)
+                            PropertiesString[PropertyString.LongDesc] = ldCur.Insert(provIdx, $"{msg}\n\n");
+                        else
+                            PropertiesString[PropertyString.LongDesc] = ldCur + $"\n\n{msg}";
+                    }
+                    else
+                        PropertiesString[PropertyString.LongDesc] = msg;
+                }
+            }
+
             // Pet Bonding System - display bond info on PetDevice appraisal
             // This is intentionally done in appraisal output (not persisted to wo.LongDesc).
             if (wo is ACE.Server.WorldObjects.PetDevice petDevice)
@@ -1048,7 +1085,22 @@ namespace ACE.Server.Network.Structure
             uint emdVal = (uint)Math.Round(meleeSkill * meleeMod * burdenMod * 1.0f + meleeImbues + meleeLum);
 
             effectDescriptions.Sort();
+
+            // Weapon Grade pinned ABOVE the sorted list; wield gate pinned to the very BOTTOM
+            // (owner 2026-08-01). Weapons carry these here instead of in the description block
+            // (armor/jewelry have no Property Details section and keep the LongDesc line).
+            var wsQuality = weapon.GetProperty(PropertyInt.WeaponAugScaleQuality);
+            if (wsQuality != null)
+            {
+                var wsGrade = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetQualityGrade(wsQuality.Value);
+                effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade} ({wsQuality.Value / 10}% of max)");
+            }
+
             effectDescriptions.Add($"- Effective Melee Defense: {emdVal}");
+
+            if (weapon.WieldRequirements == WieldRequirement.Int64Stat &&
+                weapon.WieldSkillType == (int)PropertyInt64.LumAugItemCount)
+                effectDescriptions.Add($"- Wield requires: {weapon.WieldDifficulty ?? 0:N0} Item Augmentations");
 
             var useParts = new List<string>();
             useParts.Add($"Property Details:\n{string.Join("\n", effectDescriptions)}");

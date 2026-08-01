@@ -525,6 +525,8 @@ namespace ACE.Server.Managers
 
             ACE.Server.Command.Handlers.ZoneControlCommands.PushTick();
 
+            ACE.Server.Command.Handlers.WeaponScalingCommands.PushTick();
+
             Rifts.RiftManager.Tick();
 
             ServerPerformanceMonitor.RegisterEventEnd(ServerPerformanceMonitor.MonitorType.UpdateGameWorld_Entire);

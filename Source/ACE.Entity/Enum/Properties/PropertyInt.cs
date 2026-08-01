@@ -771,6 +771,15 @@ namespace ACE.Entity.Enum.Properties
         /// </summary>
         EssenceSalvageYield                     = 9057,
 
+        // -- Weapon aug-scaling (T11 weapon relevance; server/custom) ----------------
+        /// <summary>On a T11+ weapon: the quality percentile roll (0-1000). The server-wide
+        /// weaponscaling_data config maps quality -> the k coefficient at swing time, so config
+        /// edits re-price every stamped weapon live. Absent = the weapon has no scaling term.</summary>
+        WeaponAugScaleQuality                   = 9060,
+        /// <summary>On a T11+ weapon: the loot tier it was stamped at. Selects the tier row
+        /// (scaling cap / min-wield augs) in the weaponscaling_data config.</summary>
+        WeaponAugScaleTier                      = 9061,
+
         /// <summary>
         /// The absolute Unix timestamp (in seconds since epoch) when the item expires.
         /// </summary>

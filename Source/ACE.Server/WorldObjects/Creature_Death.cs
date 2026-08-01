@@ -985,12 +985,19 @@ namespace ACE.Server.WorldObjects
                     // from the base weenie or any mutation above.
                     if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
                     {
-                        // ALL inherited wield reqs removed, replaced by the T11 item-aug gate
+                        // ALL inherited wield reqs removed, replaced by the per-tier item-aug gate
                         LootGenerationFactory.StripWieldRequirements(wo);
-                        LootGenerationFactory.ApplyT11WieldRequirement(wo);
+                        LootGenerationFactory.ApplyT11WieldRequirement(wo, effectiveTreasure.Tier);
+
+                        // Weapon aug-scaling identity: quality roll + tier (weapons/casters only)
+                        LootGenerationFactory.ApplyWeaponAugScaleStamp(wo, effectiveTreasure.Tier);
 
                         // one uniform resist value across all eight elements
                         LootGenerationFactory.EqualizeT11ArmorResists(wo);
+
+                        // description cleanup LAST: drop inherited weenie flavor text, keep our
+                        // lines in order, provenance ("Dropped by") to the very bottom
+                        LootGenerationFactory.FinalizeT11LongDesc(wo);
 
                         // NOTE (owner 2026-07-21): the server-composed info block / full panel
                         // takeover was REVERTED -- the client renders its stock examine panel.
