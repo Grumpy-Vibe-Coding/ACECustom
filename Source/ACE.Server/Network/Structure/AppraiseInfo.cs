@@ -598,6 +598,31 @@ namespace ACE.Server.Network.Structure
             PropertiesDID = wo.GetAllPropertyDataId().Where(x => AssessmentProperties.PropertiesDataId.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value);
             PropertiesIID = wo.GetAllPropertyInstanceId().Where(x => AssessmentProperties.PropertiesInstanceId.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value);
 
+            // Int64Stat is a server-side extension the client has no requirement text for — it
+            // renders the wield-requirement rows as a blank block (between the native Melee Defense
+            // and Mana Conversion sections on casters). Enforcement reads the biota, not appraisal;
+            // the authored "Wield requires: N Item Augmentations" line carries the requirement.
+            if (PropertiesInt.TryGetValue(PropertyInt.WieldRequirements, out var wieldReqType) &&
+                wieldReqType == (int)WieldRequirement.Int64Stat)
+            {
+                PropertiesInt.Remove(PropertyInt.WieldRequirements);
+                PropertiesInt.Remove(PropertyInt.WieldSkillType);
+                PropertiesInt.Remove(PropertyInt.WieldDifficulty);
+            }
+
+            // Paragon-stamped items (recipe + the ZoneLootMutator pre-Paragon card) carry
+            // ItemMaxLevel/ItemBaseXp/ItemTotalXp but no ItemXpStyle, and the client can't compose
+            // its item-level section without the style — it renders a blank block instead (between
+            // the native Melee Defense and Mana Conversion sections on casters). Real leveling
+            // items (cloaks, aetheria) always set ItemXpStyle and keep their display.
+            if (PropertiesInt.ContainsKey(PropertyInt.ItemMaxLevel) &&
+                !PropertiesInt.ContainsKey(PropertyInt.ItemXpStyle))
+            {
+                PropertiesInt.Remove(PropertyInt.ItemMaxLevel);
+                PropertiesInt64.Remove(PropertyInt64.ItemBaseXp);
+                PropertiesInt64.Remove(PropertyInt64.ItemTotalXp);
+            }
+
             if (wo is Player player)
             {
                 // handle character options
@@ -1102,21 +1127,16 @@ namespace ACE.Server.Network.Structure
                 weapon.WieldSkillType == (int)PropertyInt64.LumAugItemCount)
                 effectDescriptions.Add($"- Wield requires: {weapon.WieldDifficulty ?? 0:N0} Item Augmentations");
 
-            var useParts = new List<string>();
-            useParts.Add($"Property Details:\n{string.Join("\n", effectDescriptions)}");
-
-            if (PropertiesString.TryGetValue(PropertyString.Use, out string existingUse) && !string.IsNullOrWhiteSpace(existingUse))
-            {
-                useParts.Add(existingUse);
-            }
-
-            PropertiesString[PropertyString.Use] = string.Join("\n\n", useParts);
-
-            // Make sure there's a line break between the string and some of the other "details".
-            if (PropertiesInt.ContainsKey(PropertyInt.ItemMaxLevel) ||
-                PropertiesInt.ContainsKey(PropertyInt.ItemSpellcraft) ||
-                PropertiesInt.ContainsKey(PropertyInt.WieldRequirements))
-                PropertiesString[PropertyString.Use] += "\n";
+            // Property Details renders via the LONG DESCRIPTION, not the Use string (owner
+            // 2026-08-01): the client draws its native caster sections (Mana Conversion, "Damage
+            // bonus for X spells") AFTER the Use text, so a Use-carried block sat ABOVE them on
+            // wands. Prepending to LongDesc puts the block below every native section and above
+            // the per-viewer bonus line + provenance (which were inserted earlier in the build).
+            var detailsBlock = $"Property Details:\n{string.Join("\n", effectDescriptions)}";
+            if (PropertiesString.TryGetValue(PropertyString.LongDesc, out var ldExisting) && !string.IsNullOrEmpty(ldExisting))
+                PropertiesString[PropertyString.LongDesc] = $"{detailsBlock}\n\n{ldExisting}";
+            else
+                PropertiesString[PropertyString.LongDesc] = detailsBlock;
 
             // item enchantments can also be on wielder currently
             AddEnchantments(weapon);
