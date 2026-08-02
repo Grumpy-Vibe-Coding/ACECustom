@@ -2119,7 +2119,7 @@ namespace ACE.Server.Command.Handlers
             ZoneStat.Strength, ZoneStat.Endurance, ZoneStat.Coordination,
             ZoneStat.Quickness, ZoneStat.Focus, ZoneStat.Self,
             ZoneStat.MaxHealth, ZoneStat.MaxStamina, ZoneStat.MaxMana,
-            ZoneStat.AttackSkill, ZoneStat.MinAttackSkill,
+            ZoneStat.AttackSkill,
             ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
             ZoneStat.DamageRating, ZoneStat.DamageResistRating, ZoneStat.ArmorLevel,
             ZoneStat.AttackDamage, ZoneStat.SpellDamage,

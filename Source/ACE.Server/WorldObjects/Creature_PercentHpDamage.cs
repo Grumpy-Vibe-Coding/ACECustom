@@ -227,10 +227,9 @@ namespace ACE.Server.WorldObjects
             // the per-weenie PercentHpReduction*Override props retired - no longer read here).
             var floor = p * maxHealth * GetV11ReliefMultiplier(attacker, defender);
 
-            // Empower and crit multiply the floor too — otherwise they vanish once the floor
-            // dominates the (heavily mitigated) normal damage component.
-            if (attacker.GetProperty(PropertyBool.IsEmpowered) == true)
-                floor *= ServerConfig.v11_pcthp_empower_mult.Value;
+            // Crit multiplies the floor too — otherwise it vanishes once the floor dominates
+            // the (heavily mitigated) normal damage component. (The old Empower floor mult was
+            // REMOVED 2026-08-02 with the rest of the empowered-boss damage bonuses - dead system.)
 
             if (isCrit)
             {
@@ -256,28 +255,15 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// v11+ attack-skill floor: the minimum effective attack skill a monster uses against a PLAYER
         /// defender, so endgame mobs can land hits against very high Effective Melee/Missile Defense.
-        /// Two independent triggers, mirroring the other v11 combat systems:
-        ///   1. Zone Control — a governed monster whose zone authors min_attack_skill uses that value,
-        ///      NEVER gated by the prestige master switch.
-        ///   2. Prestige — variation >= v11_pcthp_min_variation uses the v11_min_attack_skill config,
-        ///      only while prestige_systems_enabled is on.
-        /// Returns 0 when neither applies, in which case callers keep the monster's normal attack skill.
+        /// Prestige-only: variation >= v11_pcthp_min_variation uses the v11_min_attack_skill config,
+        /// while prestige_systems_enabled is on. (The zone min_attack_skill stat was REMOVED 2026-08-02
+        /// — redundant with attack_skill's absolute replace; zones tune accuracy via attack_skill.)
+        /// Returns 0 when it doesn't apply, in which case callers keep the monster's normal attack skill.
         /// </summary>
         public static uint GetV11AttackSkillFloor(Creature attacker, Player defender)
         {
             if (attacker == null || defender == null)
                 return 0;
-
-            // Zone Control path (2026-07-30): the floor used to be prestige-only, so with
-            // prestige_systems_enabled off — the live setting — endgame mobs had no accuracy floor at all
-            // while percent_hp_base / vuln_cap / damage_taken_mult all kept working through their zone
-            // stats. This closes that gap. Opt-in: nothing changes until a zone authors min_attack_skill.
-            var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
-            if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.MinAttackSkill))
-            {
-                var zoneFloor = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.MinAttackSkill);
-                return zoneFloor > 0 ? (uint)Math.Round(zoneFloor) : 0;
-            }
 
             // Variation-triggered path — fully off with the prestige master switch.
             if (!PrestigeManager.SystemsEnabled)

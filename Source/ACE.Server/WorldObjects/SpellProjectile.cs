@@ -592,10 +592,6 @@ namespace ACE.Server.WorldObjects
                 attribBonus += SkillFormula.GetAttributeMod((int)sourcePlayer.Self.Current) * DefaultSpellAttributeMult;
             }
 
-            // Zone Control WYSIWYG: set when a governed mob authored spell_damage — the authored value
-            // (post-variance) IS the felt damage; the normal mod pipeline is bypassed further below.
-            var wysiwygFlat = false;
-            var wysiwygDamage = 0.0f;
 
             // life magic projectiles: ie., martyr's hecatomb
             if (Spell.MetaSpellType == ACE.Entity.Enum.SpellType.LifeProjectile)
@@ -618,25 +614,31 @@ namespace ACE.Server.WorldObjects
                     lifeMagicDamage += sourceCreature.LuminanceAugmentLifeCount.Value;
                 }
 
-                // Zone Control: authored spell_damage REPLACES the life-projectile base + augs; authored
-                // spell_variance spreads each cast down from the base (unset = stock behavior above)
+                // Zone Control (retail-semantics since 2026-08-02, owner ruling — the old WYSIWYG felt-damage
+                // bypass is GONE): authored spell_damage REPLACES the life-projectile base + augs PRE-mitigation,
+                // exactly like attack_damage replaces weapon/part damage. Every downstream mod still applies:
+                // elemental/slayer, the defender's resists + absorb, and the rating chain in DamageTarget.
+                // spell_variance spreads each cast down from the base (unset = stock behavior above).
                 if (sourceCreature != null && !(sourceCreature is Player))
                 {
                     var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
                     if (zpFlat != null)
                     {
+                        var zoneReplaced = false;
                         if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage))
                         {
-                            lifeMagicDamage = (float)zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage);
-                            wysiwygFlat = true;
+                            // negative authored spell_damage would heal - floor at 0
+                            lifeMagicDamage = (float)Math.Max(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage), 0.0);
+                            zoneReplaced = true;
                         }
                         if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance))
                         {
                             var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
                             lifeMagicDamage *= (float)(1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f));
                         }
-                        if (wysiwygFlat)
-                            wysiwygDamage = lifeMagicDamage;
+                        // crit bonus re-derived from the replaced base (stock bonus above used the weenie base)
+                        if (zoneReplaced && criticalHit)
+                            critDamageBonus = lifeMagicDamage * 0.5f * weaponCritDamageMod;
                     }
                 }
 
@@ -716,26 +718,31 @@ namespace ACE.Server.WorldObjects
                     }
                 }
 
-                // Zone Control: authored spell_damage REPLACES the rolled spell base + augs (the flat
-                // analogue of attack_damage); authored spell_variance spreads each cast down from the
-                // base (0 = flat, 0.5 = casts land 50-100% of base). Unset = stock behavior above.
+                // Zone Control (retail-semantics since 2026-08-02, owner ruling — the old WYSIWYG felt-damage
+                // bypass is GONE): authored spell_damage REPLACES the rolled spell base + augs PRE-mitigation,
+                // the exact analogue of attack_damage. All downstream mods still apply (elemental/slayer,
+                // defender resists + absorb, rating chain in DamageTarget). spell_variance spreads each cast
+                // down from the base (0 = flat, 0.5 = casts land 50-100% of base). Unset = stock behavior above.
                 if (sourceCreature != null && !(sourceCreature is Player))
                 {
                     var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
                     if (zpFlat != null)
                     {
+                        var zoneReplaced = false;
                         if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage))
                         {
-                            baseDamage = (long)Math.Round(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage));
-                            wysiwygFlat = true;
+                            // negative authored spell_damage would heal - floor at 0
+                            baseDamage = (long)Math.Round(Math.Max(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage), 0.0));
+                            zoneReplaced = true;
                         }
                         if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance))
                         {
                             var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
                             baseDamage = (long)Math.Round(baseDamage * (1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f)));
                         }
-                        if (wysiwygFlat)
-                            wysiwygDamage = baseDamage;
+                        // crit bonus re-derived from the replaced base (stock PvE bonus above used Spell.MaxDamage)
+                        if (zoneReplaced && criticalHit)
+                            critDamageBonus = (float)(baseDamage * 0.5f * weaponCritDamageMod);
                     }
                 }
 
@@ -763,31 +770,8 @@ namespace ACE.Server.WorldObjects
             if (IsForkProjectile)
                 finalDamage *= ForkDamageMult;
 
-            // Zone Control WYSIWYG (2026-07-27): authored spell_damage is the felt value for the
-            // REFERENCE player — it replaces the fully-modified pipeline above (caster attrib/slayer/
-            // elemental mods and the defender's resists/protections/absorb), then the v11 relief curves
-            // apply player progression: life augs + Damage Resist reduce it on zone-authorable linear
-            // curves (relief_* stats / v11_relief_* defaults), and a crit multiplies by the zone's
-            // crit_damage_rating with the bonus shrunk by Crit Damage Resist — identical math to the
-            // %HP floor. DamageTarget skips the rating mods for these hits; the floor still applies there.
-            if (wysiwygFlat)
-            {
-                finalDamage = wysiwygDamage;
-
-                if (targetPlayer != null)
-                    finalDamage = (float)(finalDamage * Creature.GetV11ReliefMultiplier(sourceCreature, targetPlayer));
-
-                if (criticalHit)
-                {
-                    var critMult = ServerConfig.v11_pcthp_crit_mult.Value;
-                    var zpCrit = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
-                    if (zpCrit != null && zpCrit.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating))
-                        critMult = zpCrit.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating);
-
-                    var critBonusScale = targetPlayer != null ? Creature.GetV11CritBonusRelief(sourceCreature, targetPlayer) : 1.0;
-                    finalDamage = (float)(finalDamage * (1.0 + (critMult - 1.0) * critBonusScale));
-                }
-            }
+            // (The 2026-07-27 WYSIWYG felt-damage override that used to live here was REMOVED 2026-08-02:
+            // spell_damage is now a plain PRE-mitigation base replacement and rides the retail pipeline.)
 
             // Zone Control: a governed monster's zone profile can scale its spell damage (players resolve null).
             if (sourceCreature != null && !(sourceCreature is Player))
@@ -795,12 +779,6 @@ namespace ACE.Server.WorldObjects
                 var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
                 if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamageMult))
                     finalDamage *= (float)zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamageMult);
-
-                // Empower aura: mirror the flat 1.5x melee/missile bonus (Monster_Melee.GetBaseDamage /
-                // WorldObject.GetDamageMod) so an empowered caster's spells scale the same way its swings do.
-                // Applied before pet mitigation, like the melee empower, so pet summon-aug mitigation still reduces it.
-                if (sourceCreature.GetProperty(PropertyBool.IsEmpowered) == true)
-                    finalDamage *= 1.5f;
             }
 
             // show debug info (after fork mult so displayed damage matches actual dealt damage)
@@ -840,7 +818,7 @@ namespace ACE.Server.WorldObjects
                 sb.AppendLine($"crit={criticalHit} critDefended={critDefended} overpower={overpower} critChance={criticalChance:F4}");
                 sb.AppendLine($"components: base={baseDamage:F2} critBonus={critDamageBonus:F2} skillBonus={skillBonus:F2} lifeMagic={lifeMagicDamage:F2} critDmgMod={weaponCritDamageMod:F4}");
                 sb.AppendLine($"mods: elemental={elementalDamageMod:F4} slayer={slayerMod:F4} resist={resistanceMod:F4} weapResist={weaponResistanceMod:F4} absorb={absorbMod:F4} attrib={attribBonus:F4}");
-                sb.AppendLine($"wysiwygFlat={wysiwygFlat} (rating mods + pcthp floor apply post-CalculateDamage in DamageTarget; floor win logs as [SpellFloor])");
+                sb.AppendLine("(rating mods + pcthp floor apply post-CalculateDamage in DamageTarget; floor win logs as [SpellFloor])");
                 sb.AppendLine($"final: Damage={finalDamage:F4} defenderHealth: current={target.Health.Current} max={target.Health.MaxValue}");
                 sb.Append("=== end SpellDamage.Debug ===");
                 log.Info(sb.ToString());
@@ -1170,17 +1148,10 @@ namespace ACE.Server.WorldObjects
                     damageResistRatingMod = Creature.AdditiveCombine(damageResistRatingMod, pkDamageResistRatingMod);
                 }
 
-                // Zone Control WYSIWYG: a governed mob's authored spell_damage is post-mitigation — the
-                // value from CalculateDamage IS the felt damage, so the rating mods don't apply to it.
-                var zcWysiwygFlat = false;
-                if (sourceCreature != null && !(sourceCreature is Player))
-                {
-                    var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
-                    zcWysiwygFlat = zpFlat != null && zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage);
-                }
-
-                if (!zcWysiwygFlat)
-                    damage *= damageRatingMod * damageResistRatingMod;
+                // Rating chain applies unconditionally (2026-08-02, owner ruling): authored spell_damage
+                // is a PRE-mitigation base replacement, so Damage Rating and the defender's Damage Resist
+                // Rating hit spells exactly like they hit melee. (Old WYSIWYG skip removed.)
+                damage *= damageRatingMod * damageResistRatingMod;
 
                 // Apply enrage damage reduction for the defender
                 if (target.IsEnraged)

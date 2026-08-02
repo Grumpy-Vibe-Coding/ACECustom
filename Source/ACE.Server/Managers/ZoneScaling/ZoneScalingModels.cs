@@ -43,13 +43,8 @@ namespace ACE.Server.Managers.ZoneScaling
 
         // B. live per-hit
         public const string AttackSkill = "attack_skill";
-        // Minimum EFFECTIVE attack skill a governed monster uses against a PLAYER defender (evade check
-        // only; mob-vs-mob is untouched). Unlike attack_skill this is a FLOOR, not a replacement: the
-        // monster keeps its own higher skill when it has one. Authoring it also ENABLES the floor
-        // independently of the prestige master switch — same shape as percent_hp_base / vuln_cap /
-        // damage_taken_mult. Unset => the v11_min_attack_skill server default, which only applies while
-        // prestige_systems_enabled is on.
-        public const string MinAttackSkill = "min_attack_skill";
+        // min_attack_skill REMOVED 2026-08-02 (owner): redundant with attack_skill's absolute replace.
+        // The prestige-gated v11_min_attack_skill server config floor still exists independently.
         public const string MeleeDefense = "melee_defense";
         public const string MissileDefense = "missile_defense";
         public const string MagicDefense = "magic_defense";
@@ -251,7 +246,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
-            AttackSkill, MinAttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
+            AttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
             DamageResistRating, ArmorLevel, DamageTakenMult, VulnCap, PercentHpBase,
             CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
             AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,

@@ -303,21 +303,22 @@ namespace ACE.Server.WorldObjects
 
         public DamageType GetDamageType(PropertiesBodyPart attackPart, CombatType? combatType = null)
         {
-            // Zone Control offense element: per-part DamageType override > attack_damage_type scalar >
-            // OutgoingDamageTypeOverride prop > weapon/body-part. Random flag per hit when multi-flag.
+            // Zone Control offense element: attack_damage_type scalar > per-part DamageType override >
+            // OutgoingDamageTypeOverride prop > weapon/body-part (blanket beats per-part, owner ruling
+            // 2026-08-02). Random flag per hit when multi-flag.
             var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
             if (zoneProfile != null)
             {
-                var zonePart = FindZoneBodyPart(zoneProfile, attackPart);
-                if (zonePart?.DamageType is int partMask && partMask != 0)
-                    return EnumFlagRandom.SelectRandomFlag((DamageType)partMask, DamageType.Physical);
-
                 if (zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackDamageType))
                 {
                     var mask = (int)zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackDamageType);
                     if (mask != 0)
                         return EnumFlagRandom.SelectRandomFlag((DamageType)mask, DamageType.Physical);
                 }
+
+                var zonePart = FindZoneBodyPart(zoneProfile, attackPart);
+                if (zonePart?.DamageType is int partMask && partMask != 0)
+                    return EnumFlagRandom.SelectRandomFlag((DamageType)partMask, DamageType.Physical);
             }
 
             // OFFENSE DAMAGE TYPE override: force this mob's physical/melee/missile attacks to a chosen element,

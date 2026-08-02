@@ -448,19 +448,32 @@ namespace ACE.Server.WorldObjects
         public virtual BaseDamageMod GetBaseDamage(PropertiesBodyPart attackPart)
         {
             // Zone Control offense: a governed monster's zone profile can REPLACE its attack damage.
-            // Precedence: per-part override > attack_damage/attack_variance scalar > weenie (weapon OR body part).
+            // Precedence: attack_damage/attack_variance scalar > per-part override > weenie (weapon OR body part)
+            // — the blanket Offense-tab stats are the always-live tuning lever; per-part values are a refined
+            // baseline that only shows through where the blanket stat is unset (owner ruling 2026-08-02).
             // This is the single choke point for melee, missile and weapon damage, so one number covers them all.
             var zoneProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
             double? zoneMax = null, zoneVar = null;
             if (zoneProfile != null)
             {
                 var zonePart = FindZoneBodyPart(zoneProfile, attackPart);
-                zoneMax = zonePart?.Damage;
-                zoneVar = zonePart?.Variance;
-                if (zoneMax == null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackDamage))
+                if (zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackDamage))
                     zoneMax = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackDamage);
-                if (zoneVar == null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackVariance))
+                else
+                    zoneMax = zonePart?.Damage;
+                if (zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackVariance))
                     zoneVar = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackVariance);
+                else
+                    zoneVar = zonePart?.Variance;
+
+                // variance is a fraction of the max hit (min = max * (1 - v)); out-of-range values
+                // produce negative rolls, so clamp 0..1 exactly like the spell_variance path does
+                if (zoneVar.HasValue)
+                    zoneVar = Math.Clamp(zoneVar.Value, 0.0, 1.0);
+
+                // a negative authored attack_damage would roll negative hits (heals) - floor at 0
+                if (zoneMax.HasValue)
+                    zoneMax = Math.Max(zoneMax.Value, 0.0);
             }
 
             if (CurrentAttack == CombatType.Missile && GetMissileAmmo() != null)
@@ -480,11 +493,6 @@ namespace ACE.Server.WorldObjects
 
             var baseDamage = new BaseDamage(maxDamage, variance);
             var baseDamageMod = new BaseDamageMod(baseDamage);
-
-            if (GetProperty(PropertyBool.IsEmpowered) == true)
-            {
-                baseDamageMod.DamageMod *= 1.5f;
-            }
 
             return baseDamageMod;
         }
