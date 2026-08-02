@@ -22,11 +22,22 @@ namespace ACE.Server.Command.Handlers
     {
         [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Boost character stats/gear/weapons to Tier 11 or Tier 10, or reset to Tier 0.",
-            "Usage: /testchar <T11|T10|T0>  |  /testchar stats <T11|T10>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>  |  /testchar charms")]
+            "Usage: /testchar <T11|T10|T0>  |  /testchar stats <T11|T10>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>  |  /testchar charms\n" +
+            "Granular (Character tab): /testchar set attrs|vitals|level|enl|augs|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar save")]
         public static void HandleTestChar(Session session, params string[] parameters)
         {
             var player = session.Player;
             if (player == null) return;
+
+            // Granular setters (Admin > Character tab, 2026-08-02 — CharacterTab_Plan): the
+            // plugin applies a tier preset as a short batch of these. Dispatched BEFORE the
+            // tier parsing below, which would reject them as bad tiers.
+            var sub0 = parameters[0].ToLowerInvariant();
+            if (sub0 == "set" || sub0 == "apply" || sub0 == "save")
+            {
+                HandleCharacterSetter(session, player, parameters);
+                return;
+            }
 
             if (parameters.Length == 1)
             {
@@ -34,6 +45,7 @@ namespace ACE.Server.Command.Handlers
                 var tier = parameters[0].ToUpper();
                 if (tier == "T0" || tier == "0")
                 {
+                    if (!GuardWipe(session, player)) return;
                     ResetToTier0(player);
                     player.SendMessage("Character successfully reset to Tier 0 baseline! Please log out and back in to completely refresh your client spellbook.");
                     player.SaveBiotaToDatabase();
@@ -164,6 +176,7 @@ namespace ACE.Server.Command.Handlers
                 {
                     if (sub == "stats")
                     {
+                        if (!GuardWipe(session, player)) return;
                         ResetToTier0(player);
                         player.SendMessage("Character stats, skills, augmentations, and spellbook reset to Tier 0 baseline! Please log out and back in to completely refresh your client spellbook.");
                         player.SaveBiotaToDatabase();
@@ -300,6 +313,19 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
+        /// <summary>The T0 wipe may only ever touch an admin (plussed, "+Name") character —
+        /// never a real player character (owner 2026-08-02). Gate for BOTH wipe entry points
+        /// (/testchar T0 and /testchar stats T0).</summary>
+        private static bool GuardWipe(Session session, Player player)
+        {
+            if (player.IsPlussed)
+                return true;
+            ChatPacket.SendServerMessage(session,
+                "testchar T0: REFUSED - this is not an admin (+) character. The wipe only runs on plussed test characters.",
+                ChatMessageType.Broadcast);
+            return false;
+        }
+
         private static void ResetToTier0(Player player)
         {
             // 1. Reset Base Attributes to 10 starting value and 0 raised ranks
@@ -403,8 +429,21 @@ namespace ACE.Server.Command.Handlers
                 player.TryDequipObjectWithNetworking(guid, out _, Player.DequipObjectAction.ConsumeItem);
             }
 
-            // 12. Clear all remaining inventory items
-            player.ClearInventory(false);
+            // 12. Clear all remaining inventory items. NOT Container.ClearInventory: that
+            // destroys server-side without telling the client (packs looked untouched in-game,
+            // owner 2026-08-02), and one removal failure stops it destroying anything after.
+            // Per-item remove + client notify + destroy; top-level packs take their contents
+            // with them. Deliberately no ability-charm exemption — a wipe means everything.
+            var inventoryItems = new List<WorldObject>(player.Inventory.Values);
+            foreach (var invItem in inventoryItems)
+            {
+                if (player.TryRemoveFromInventory(invItem.Guid, out var removed))
+                {
+                    player.Session.Network.EnqueueSend(new GameMessageInventoryRemoveObject(removed));
+                    removed.Destroy();
+                }
+            }
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.EncumbranceVal, player.EncumbranceVal ?? 0));
         }
 
         private static void ConfigureStatsAndSpells(Player player)
@@ -422,21 +461,7 @@ namespace ACE.Server.Command.Handlers
             };
 
             foreach (var kvp in attributeTargets)
-            {
-                var attrType = kvp.Key;
-                var targetValue = kvp.Value;
-                if (!player.Attributes.TryGetValue(attrType, out var attr))
-                    continue;
-
-                // Set innate StartingValue to 100
-                attr.StartingValue = 100;
-                
-                // Ranks = Target - 100
-                uint ranks = targetValue > 100 ? targetValue - 100 : 0;
-                player.SetAttributeRank(attr, ranks);
-                
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateAttribute(player, attr));
-            }
+                SetChAttribute(player, kvp.Key, kvp.Value);
 
             // 2. Set Secondary Vitals (Max)
             // Secondary Vitals: Max Health 700, Max Stamina 900, Max Mana 900
@@ -448,48 +473,13 @@ namespace ACE.Server.Command.Handlers
             };
 
             foreach (var kvp in vitalTargets)
-            {
-                var vitalType = kvp.Key;
-                var targetValue = kvp.Value;
-                if (!player.Vitals.TryGetValue(vitalType, out var vital))
-                    continue;
-
-                // Clear CP ranks
-                vital.Ranks = 0;
-                vital.ExperienceSpent = 0;
-
-                // Adjust starting value based on current base attribute formulas, etc.
-                int baseFormula = (int)AttributeFormula.GetFormula(player, vitalType, true);
-                int enlBonus = (int)vital.EnlBonus;
-                int gearBonus = (int)vital.GearBonus;
-                
-                int startingValue = (int)targetValue - baseFormula - enlBonus - gearBonus;
-                vital.StartingValue = (uint)Math.Max(1, startingValue);
-                
-                // Fully restore current vital value
-                vital.Current = vital.MaxValue;
-                
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateVital(player, vital));
-            }
+                SetChVital(player, kvp.Key, kvp.Value);
 
             // 2.5 Set Level and Maximize All Skills
             player.Level = 1300;
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Level, 1300));
 
-            foreach (var skill in player.Skills.Values)
-            {
-                skill.AdvancementClass = SkillAdvancementClass.Specialized;
-                skill.InitLevel = 10;
-
-                var skillXPTable = Player.GetSkillXPTable(SkillAdvancementClass.Specialized);
-                if (skillXPTable != null && skillXPTable.Count > 0)
-                {
-                    skill.Ranks = (ushort)(skillXPTable.Count - 1);
-                    skill.ExperienceSpent = skillXPTable[skillXPTable.Count - 1];
-                }
-
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(player, skill));
-            }
+            ApplyChMaxSkills(player);
 
             // 3. Set Custom Augmentations (Luminance Augmentations)
             player.LuminanceAugmentCreatureCount = 5000;
@@ -526,13 +516,7 @@ namespace ACE.Server.Command.Handlers
             }
 
             // 5. Learn All Spells Silently
-            foreach (var spellID in Player.PlayerSpellTable)
-            {
-                if (player.AddKnownSpell(spellID))
-                {
-                    player.Session.Network.EnqueueSend(new GameEventMagicUpdateSpell(player.Session, (ushort)spellID));
-                }
-            }
+            ApplyChAllSpells(player);
 
             // 6. Enable Aetheria Slots
             player.UpdateProperty(player, PropertyInt.AetheriaBitfield, (int)AetheriaBitfield.All);
@@ -542,13 +526,285 @@ namespace ACE.Server.Command.Handlers
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 325));
 
             // 8. Spawn Eternal Mana Charge (Infinite Mana Stone)
+            SpawnChManaStone(player);
+        }
+
+        // ─── Per-knob setter helpers, shared by /testchar stats and the granular
+        // /testchar set|apply commands (Admin > Character tab, 2026-08-02). Extracted from
+        // ConfigureStatsAndSpells the same way the gear spawns were split for /asforge. ───
+
+        /// <summary>Set one base attribute to an exact target (innate 100 + ranks; a target
+        /// under 100 becomes the innate value with 0 ranks).</summary>
+        private static void SetChAttribute(Player player, PropertyAttribute attrType, uint targetValue)
+        {
+            if (!player.Attributes.TryGetValue(attrType, out var attr))
+                return;
+
+            attr.StartingValue = Math.Min(targetValue, 100);
+            uint ranks = targetValue > 100 ? targetValue - 100 : 0;
+            player.SetAttributeRank(attr, ranks);
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateAttribute(player, attr));
+        }
+
+        /// <summary>Set one secondary vital's MAX to an exact target by back-solving the
+        /// starting value against the attribute formula + enl/gear bonuses. Attribute and
+        /// enlightenment setters must run BEFORE this for the solve to land on target.</summary>
+        private static void SetChVital(Player player, PropertyAttribute2nd vitalType, uint targetValue)
+        {
+            if (!player.Vitals.TryGetValue(vitalType, out var vital))
+                return;
+
+            vital.Ranks = 0;
+            vital.ExperienceSpent = 0;
+
+            int baseFormula = (int)AttributeFormula.GetFormula(player, vitalType, true);
+            int enlBonus = (int)vital.EnlBonus;
+            int gearBonus = (int)vital.GearBonus;
+
+            int startingValue = (int)targetValue - baseFormula - enlBonus - gearBonus;
+            vital.StartingValue = (uint)Math.Max(1, startingValue);
+
+            vital.Current = vital.MaxValue;
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateVital(player, vital));
+        }
+
+        /// <summary>Specialize every skill and max its ranks (does NOT touch Level).</summary>
+        private static void ApplyChMaxSkills(Player player)
+        {
+            foreach (var skill in player.Skills.Values)
+            {
+                skill.AdvancementClass = SkillAdvancementClass.Specialized;
+                skill.InitLevel = 10;
+
+                var skillXPTable = Player.GetSkillXPTable(SkillAdvancementClass.Specialized);
+                if (skillXPTable != null && skillXPTable.Count > 0)
+                {
+                    skill.Ranks = (ushort)(skillXPTable.Count - 1);
+                    skill.ExperienceSpent = skillXPTable[skillXPTable.Count - 1];
+                }
+
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(player, skill));
+            }
+        }
+
+        private static void ApplyChAllSpells(Player player)
+        {
+            foreach (var spellID in Player.PlayerSpellTable)
+            {
+                if (player.AddKnownSpell(spellID))
+                    player.Session.Network.EnqueueSend(new GameEventMagicUpdateSpell(player.Session, (ushort)spellID));
+            }
+        }
+
+        private static void SpawnChManaStone(Player player)
+        {
             if (!player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == 30254))
             {
                 var manaCharge = WorldObjectFactory.CreateNewWorldObject(30254);
                 if (manaCharge != null)
-                {
                     player.TryCreateInInventoryWithNetworking(manaCharge);
+            }
+        }
+
+        /// <summary>Set all 10 luminance augs at once (plugin order: creature, item, life,
+        /// war, void, duration, specialize, summon, melee, missile).</summary>
+        private static void SetChLumAugs(Player player, uint[] v)
+        {
+            player.LuminanceAugmentCreatureCount = v[0];
+            player.LuminanceAugmentItemCount = v[1];
+            player.LuminanceAugmentLifeCount = v[2];
+            player.LuminanceAugmentWarCount = v[3];
+            player.LuminanceAugmentVoidCount = v[4];
+            player.LuminanceAugmentSpellDurationCount = v[5];
+            player.LuminanceAugmentSpecializeCount = v[6];
+            player.LuminanceAugmentSummonCount = v[7];
+            player.LuminanceAugmentMeleeCount = v[8];
+            player.LuminanceAugmentMissileCount = v[9];
+
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugCreatureCount, player.LuminanceAugmentCreatureCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, player.LuminanceAugmentItemCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugLifeCount, player.LuminanceAugmentLifeCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugWarCount, player.LuminanceAugmentWarCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugVoidCount, player.LuminanceAugmentVoidCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugDurationCount, player.LuminanceAugmentSpellDurationCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSpecializeCount, player.LuminanceAugmentSpecializeCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSummonCount, player.LuminanceAugmentSummonCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMeleeCount, player.LuminanceAugmentMeleeCount ?? 0));
+            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMissileCount, player.LuminanceAugmentMissileCount ?? 0));
+        }
+
+        /// <summary>/testchar set|apply|save — the Admin > Character tab's Apply batch
+        /// (CharacterTab_Plan_2026-08-02.md section 3). Setters do NOT save; the batch ends
+        /// with /testchar save.</summary>
+        private static void HandleCharacterSetter(Session session, Player player, string[] parameters)
+        {
+            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
+            var sub = parameters[0].ToLowerInvariant();
+
+            if (sub == "save")
+            {
+                player.SaveBiotaToDatabase();
+                Msg("testchar: character saved.");
+                return;
+            }
+
+            if (sub == "apply")
+            {
+                if (parameters.Length < 2)
+                {
+                    Msg("usage: /testchar apply skills,spells,aetheria,manastone");
+                    return;
                 }
+                foreach (var key in parameters[1].ToLowerInvariant().Split(','))
+                {
+                    switch (key)
+                    {
+                        case "skills":
+                            ApplyChMaxSkills(player);
+                            Msg("applied: all skills specialized + maxed");
+                            break;
+                        case "spells":
+                            ApplyChAllSpells(player);
+                            Msg("applied: all spells learned");
+                            break;
+                        case "aetheria":
+                            player.UpdateProperty(player, PropertyInt.AetheriaBitfield, (int)AetheriaBitfield.All);
+                            Msg("applied: aetheria slots");
+                            break;
+                        case "manastone":
+                            SpawnChManaStone(player);
+                            Msg("applied: eternal mana charge");
+                            break;
+                        default:
+                            Msg($"testchar apply: unknown '{key}' (skills|spells|aetheria|manastone)");
+                            return;
+                    }
+                }
+                return;
+            }
+
+            // set <what> <values>
+            if (parameters.Length < 3)
+            {
+                Msg("usage: /testchar set attrs|vitals|level|enl|augs|raugs <values>");
+                return;
+            }
+            var what = parameters[1].ToLowerInvariant();
+            var arg = parameters[2];
+
+            bool ParseCsv(string csv, int count, out uint[] vals)
+            {
+                vals = new uint[count];
+                var parts = csv.Split(',');
+                if (parts.Length != count) return false;
+                for (int i = 0; i < count; i++)
+                    if (!uint.TryParse(parts[i], out vals[i])) return false;
+                return true;
+            }
+
+            switch (what)
+            {
+                case "attrs":
+                {
+                    if (!ParseCsv(arg, 6, out var v))
+                    {
+                        Msg("set attrs: need 6 csv values (str,end,coord,quick,focus,self)");
+                        return;
+                    }
+                    var order = new[] { PropertyAttribute.Strength, PropertyAttribute.Endurance, PropertyAttribute.Coordination,
+                                        PropertyAttribute.Quickness, PropertyAttribute.Focus, PropertyAttribute.Self };
+                    for (int i = 0; i < 6; i++)
+                        SetChAttribute(player, order[i], v[i]);
+                    Msg("set attrs: " + arg);
+                    return;
+                }
+                case "vitals":
+                {
+                    if (!ParseCsv(arg, 3, out var v))
+                    {
+                        Msg("set vitals: need 3 csv values (health,stamina,mana)");
+                        return;
+                    }
+                    var order = new[] { PropertyAttribute2nd.MaxHealth, PropertyAttribute2nd.MaxStamina, PropertyAttribute2nd.MaxMana };
+                    for (int i = 0; i < 3; i++)
+                        SetChVital(player, order[i], v[i]);
+                    Msg("set vitals: " + arg);
+                    return;
+                }
+                case "level":
+                {
+                    if (!int.TryParse(arg, out var lvl) || lvl < 1)
+                    {
+                        Msg("set level: bad value");
+                        return;
+                    }
+                    player.Level = lvl;
+                    player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Level, lvl));
+                    Msg("set level: " + lvl);
+                    return;
+                }
+                case "enl":
+                {
+                    if (!int.TryParse(arg, out var enl) || enl < 0)
+                    {
+                        Msg("set enl: bad value");
+                        return;
+                    }
+                    player.Enlightenment = enl;
+                    player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, enl));
+                    Msg("set enl: " + enl);
+                    return;
+                }
+                case "augs":
+                {
+                    if (!ParseCsv(arg, 10, out var v))
+                    {
+                        Msg("set augs: need 10 csv values (creature,item,life,war,void,duration,specialize,summon,melee,missile)");
+                        return;
+                    }
+                    SetChLumAugs(player, v);
+                    Msg("set augs: " + arg);
+                    return;
+                }
+                case "raugs":
+                {
+                    if (arg.Equals("max", StringComparison.OrdinalIgnoreCase) || arg.Equals("zero", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var toMax = arg.Equals("max", StringComparison.OrdinalIgnoreCase);
+                        foreach (var kvp in AugmentationDevice.MaxAugs)
+                        {
+                            var prop = AugmentationDevice.AugProps[kvp.Key];
+                            var val = toMax ? kvp.Value : 0;
+                            player.SetProperty(prop, val);
+                            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, prop, val));
+                        }
+                        Msg("set raugs: " + (toMax ? "all max" : "all zero"));
+                        return;
+                    }
+
+                    var applied = 0;
+                    foreach (var pair in arg.Split(','))
+                    {
+                        var kv = pair.Split('=');
+                        if (kv.Length != 2 || !int.TryParse(kv[1], out var val)
+                            || !Enum.TryParse<AugmentationType>(kv[0], true, out var at)
+                            || !AugmentationDevice.MaxAugs.TryGetValue(at, out var max))
+                        {
+                            Msg($"set raugs: bad entry '{pair}' (key=value, key = augmentation name)");
+                            return;
+                        }
+                        val = Math.Clamp(val, 0, max);
+                        var prop = AugmentationDevice.AugProps[at];
+                        player.SetProperty(prop, val);
+                        player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, prop, val));
+                        applied++;
+                    }
+                    Msg($"set raugs: {applied} set");
+                    return;
+                }
+                default:
+                    Msg("usage: /testchar set attrs|vitals|level|enl|augs|raugs <values>");
+                    return;
             }
         }
 
@@ -627,6 +883,43 @@ namespace ACE.Server.Command.Handlers
             ("greaves",   3110268, "Greaves"),
             ("sollerets", 3110270, "Sollerets"),
         };
+
+        // The eight per-element armor resistance mods (mirrors LootGenerationFactory's
+        // private list) — the loadout "prot" card overrides all of them uniformly.
+        private static readonly ACE.Entity.Enum.Properties.PropertyFloat[] ForgeArmorModVsProps =
+        {
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsSlash,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsPierce,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsBludgeon,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsFire,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsCold,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsAcid,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsElectric,
+            ACE.Entity.Enum.Properties.PropertyFloat.ArmorModVsNether,
+        };
+
+        // Loadout spell suites (owner 2026-08-02, DB-verified ids): the 7 Legendary elemental
+        // Wards and the 7 life Protections, both WEARER buffs -> both apply to every minted
+        // piece. Protection tier = "Incantation of X Protection Self" — the tier the /testchar
+        // gear (the set this forge is based on) actually carries (necklace: 4462/4466 + wards
+        // 6079/6085; shirt 4466; pants 4470). Banes/Impen rejected (owner: life protections).
+        private static readonly uint[] LegendaryWardSpells = { 6079, 6080, 6081, 6082, 6083, 6084, 6085 };
+        private static readonly uint[] LifeProtectionSpells = { 4460, 4462, 4464, 4466, 4468, 4470, 4472 };
+
+        /// <summary>Adds spells to a forged piece and stamps the /testchar-norm spell-support
+        /// props (spellcraft/mana) if the piece has none — without them item spells never
+        /// activate. No ItemDifficulty stamp: test gear gets no arcane lore gate.</summary>
+        private static void AddForgeSpells(WorldObject wo, uint[] spells)
+        {
+            foreach (var s in spells)
+                wo.Biota.GetOrAddKnownSpell((int)s, wo.BiotaDatabaseLock, out _);
+            if ((wo.GetProperty(PropertyInt.ItemSpellcraft) ?? 0) == 0)
+                wo.SetProperty(PropertyInt.ItemSpellcraft, 750);
+            if ((wo.GetProperty(PropertyInt.ItemMaxMana) ?? 0) == 0)
+                wo.SetProperty(PropertyInt.ItemMaxMana, 3500);
+            wo.SetProperty(PropertyInt.ItemCurMana, wo.GetProperty(PropertyInt.ItemMaxMana) ?? 3500);
+            wo.UiEffects = UiEffects.Magical;
+        }
 
         // The full Gear* rating set — /asforge strips these from every mint (owner 2026-08-02:
         // bare pieces until the per-tier loadout is decided).
@@ -1057,10 +1350,12 @@ namespace ACE.Server.Command.Handlers
         /// real drops. Everything forged is Attuned + Bonded (owner 2026-08-02).</summary>
         [CommandHandler("asforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges VoD test armor/clothing/jewelry (the /testchar look) at a chosen tier. All pieces Attuned + Bonded.",
-            "<piece|suit|jewel|all> [tier 10-25, default 11]\n" +
+            "<piece|suit|jewel|all> [tier 10-25, default 11] [cards:key=val,key,...]\n" +
             "Pieces: helm coat pauldrons bracers gloves girth tassets greaves sollerets shirt pants cloak neck ring bracelet trinket\n" +
             "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
-            "ring/bracelet mint the left + right pair.")]
+            "ring/bracelet mint the left + right pair.\n" +
+            "cards: albonus=N (AL over tier baseline) prot=X (uniform 8-element mod) dresist/cdresist/maxhp/drating/cdrating=N (Gear ratings)\n" +
+            "ward (adds the 7 Legendary elemental Wards) lifeprot (adds the 7 life Protections) - both on every minted piece")]
         public static void HandleAsForge(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -1075,6 +1370,47 @@ namespace ACE.Server.Command.Handlers
             if (parameters.Length > 1 && int.TryParse(parameters[1], out var t))
                 tier = Math.Clamp(t, 10, 25);
             var tierLabel = $"T{tier}";
+
+            // Loadout clause (the plugin's Cards section, owner 2026-08-02): cards:key=val,key,...
+            // Any position after the piece arg. Unknown keys are an error, not a silent skip.
+            var albonus = 0;
+            double? protOverride = null;
+            int? dresist = null, cdresist = null, maxhp = null, drating = null, cdrating = null;
+            var ward = false;
+            var lifeprot = false;
+            var loadoutDesc = "";
+            foreach (var p in parameters.Skip(1))
+            {
+                if (!p.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                loadoutDesc = p.Substring(6);
+                foreach (var token in loadoutDesc.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var parts = token.Split('=');
+                    var ck = parts[0].ToLowerInvariant();
+                    var cv = parts.Length > 1 ? parts[1] : null;
+                    int Iv() => int.TryParse(cv, out var n) ? Math.Max(0, n) : 0;
+                    switch (ck)
+                    {
+                        case "albonus": albonus = Iv(); break;
+                        case "prot":
+                            if (double.TryParse(cv, System.Globalization.NumberStyles.Any,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var pv))
+                                protOverride = pv;
+                            break;
+                        case "dresist": dresist = Iv(); break;
+                        case "cdresist": cdresist = Iv(); break;
+                        case "maxhp": maxhp = Iv(); break;
+                        case "drating": drating = Iv(); break;
+                        case "cdrating": cdrating = Iv(); break;
+                        case "ward": ward = true; break;
+                        case "lifeprot": lifeprot = true; break;
+                        default:
+                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot dresist cdresist maxhp drating cdrating ward lifeprot");
+                            return;
+                    }
+                }
+            }
 
             var items = new List<WorldObject>();
             bool AddPiece(string piece)
@@ -1157,25 +1493,41 @@ namespace ACE.Server.Command.Handlers
                 wo.Attuned = AttunedStatus.Attuned;
                 wo.Bonded = BondedStatus.Bonded;
 
-                // Bare pieces (owner 2026-08-02): no spells, no Gear* ratings, no equipment-set
-                // membership (Dexterous etc.) on forged gear — the per-tier loadout decision is
-                // still open; the coming Armor tab card system layers loadout back on. Strips
-                // the builders' loadout AND anything base-weenie-authored; /testchar keeps its
-                // spells and ratings (it is the regression yardstick), so this lives here and
-                // not in the shared builders.
+                // Pieces mint BARE first (owner 2026-08-02): spells, the full Gear* rating set
+                // and equipment-set membership (Dexterous etc.) all stripped — builders' loadout
+                // AND anything base-weenie-authored. The cards clause then layers the requested
+                // loadout back on. /testchar keeps its spells and ratings (it is the regression
+                // yardstick), so none of this lives in the shared builders.
                 wo.Biota.ClearSpells(wo.BiotaDatabaseLock);
                 foreach (var ratingProp in ForgeStrippedRatings)
                     wo.RemoveProperty(ratingProp);
                 wo.RemoveProperty(PropertyInt.EquipmentSetId);
+
+                // rating cards (any piece — jewelry carries ratings in the real game too)
+                if (dresist.HasValue) wo.SetProperty(PropertyInt.GearDamageResist, dresist.Value);
+                if (cdresist.HasValue) wo.SetProperty(PropertyInt.GearCritDamageResist, cdresist.Value);
+                if (maxhp.HasValue) wo.SetProperty(PropertyInt.GearMaxHealth, maxhp.Value);
+                if (drating.HasValue) wo.SetProperty(PropertyInt.GearDamage, drating.Value);
+                if (cdrating.HasValue) wo.SetProperty(PropertyInt.GearCritDamage, cdrating.Value);
+
+                // spell-suite cards: wards + life protections are wearer buffs — any piece
+                var isVodArmor = VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId);
+                if (ward)
+                    AddForgeSpells(wo, LegendaryWardSpells);
+                if (lifeprot)
+                    AddForgeSpells(wo, LifeProtectionSpells);
                 wo.ChangesDetected = true;
 
-                // VoD armor pieces: per-tier AL baseline (owner 2026-08-02: tier x 100 —
-                // 1100 at T11, 1200 at T12, ...) + one uniform protection value across all
-                // eight elements (the same equalize real T11+ drops get).
-                if (VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId))
+                // VoD armor pieces: per-tier AL baseline (tier x 100) + albonus card on top;
+                // protection = equalized to the mean (same as real T11+ drops), or the prot
+                // card's uniform override.
+                if (isVodArmor)
                 {
-                    wo.SetProperty(PropertyInt.ArmorLevel, tier * 100);
+                    wo.SetProperty(PropertyInt.ArmorLevel, tier * 100 + albonus);
                     ACE.Server.Factories.LootGenerationFactory.EqualizeT11ArmorResists(wo);
+                    if (protOverride.HasValue)
+                        foreach (var modProp in ForgeArmorModVsProps)
+                            wo.SetProperty(modProp, protOverride.Value);
                 }
 
                 var provenance = $"Created by: {player.Name}\nTier: {tier}";
@@ -1193,7 +1545,8 @@ namespace ACE.Server.Command.Handlers
             }
 
             Msg($"asforged: {minted} item(s) at tier {tier} (attuned + bonded"
-                + (tier >= 11 ? ", item-aug wield gate)" : ", basic set - no aug gate)"));
+                + (tier >= 11 ? ", item-aug wield gate" : ", basic set - no aug gate")
+                + (loadoutDesc.Length > 0 ? $") loadout: {loadoutDesc}" : ") bare"));
         }
 
         private static void SpawnCharms(Player player)
