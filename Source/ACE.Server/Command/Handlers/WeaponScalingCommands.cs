@@ -391,6 +391,11 @@ namespace ACE.Server.Command.Handlers
             // anchors above "Created by" the same way it does "Dropped by".
             wo.LongDesc = $"Created by: {player.Name}\nTier: {tier}";
 
+            // Everything the forge mints is Attuned + Bonded (owner 2026-08-02) — test gear
+            // can't be traded, vendored, or dropped on death. Same stamps as /asforge.
+            wo.Attuned = ACE.Entity.Enum.AttunedStatus.Attuned;
+            wo.Bonded = ACE.Entity.Enum.BondedStatus.Bonded;
+
             if (!player.TryCreateInInventoryWithNetworking(wo))
             {
                 wo.Destroy();

@@ -612,40 +612,86 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
+        // The VoD 9-piece Olthoi Shadow set — the ONE armor look for test gear (owner
+        // 2026-08-02). Shared by /testchar (full-set spawn below) and /asforge (any piece at
+        // any tier label): piece keys match the plugin's Armor Forge workbench.
+        private static readonly (string Key, uint Wcid, string Label)[] VodArmorPieces =
+        {
+            ("helm",      3110264, "Helm"),
+            ("coat",      3110308, "Coat (No Cloak)"),
+            ("pauldrons", 3110269, "Pauldrons"),
+            ("bracers",   3110272, "Bracers"),
+            ("gloves",    3110271, "Gloves"),
+            ("girth",     3110266, "Girth"),
+            ("tassets",   3110267, "Tassets"),
+            ("greaves",   3110268, "Greaves"),
+            ("sollerets", 3110270, "Sollerets"),
+        };
+
+        // The full Gear* rating set — /asforge strips these from every mint (owner 2026-08-02:
+        // bare pieces until the per-tier loadout is decided).
+        private static readonly PropertyInt[] ForgeStrippedRatings =
+        {
+            PropertyInt.GearDamage, PropertyInt.GearDamageResist, PropertyInt.GearCrit,
+            PropertyInt.GearCritResist, PropertyInt.GearCritDamage, PropertyInt.GearCritDamageResist,
+            PropertyInt.GearHealingBoost, PropertyInt.GearNetherResist, PropertyInt.GearLifeResist,
+            PropertyInt.GearMaxHealth, PropertyInt.GearPKDamageRating, PropertyInt.GearPKDamageResistRating,
+            PropertyInt.GearOverpower, PropertyInt.GearOverpowerResist,
+        };
+
+        private static WorldObject BuildVodArmorPiece(uint wcid, string label, string tier)
+        {
+            var item = WorldObjectFactory.CreateNewWorldObject(wcid);
+            if (item == null) return null;
+            var name = $"{tier} {label} (Test)";
+            item.Name = name;
+            item.SetProperty(PropertyString.Name, name);
+            item.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
+            return item;
+        }
+
         private static void SpawnOlthoiShadowArmor(Player player, string tier = "T11")
         {
-            var armorNames = new Dictionary<uint, string>()
+            foreach (var piece in VodArmorPieces)
             {
-                { 3110264, $"{tier} Helm (Test)" },
-                { 3110266, $"{tier} Girth (Test)" },
-                { 3110267, $"{tier} Tassets (Test)" },
-                { 3110268, $"{tier} Greaves (Test)" },
-                { 3110269, $"{tier} Pauldrons (Test)" },
-                { 3110270, $"{tier} Sollerets (Test)" },
-                { 3110271, $"{tier} Gloves (Test)" },
-                { 3110272, $"{tier} Bracers (Test)" },
-                { 3110308, $"{tier} Coat (No Cloak) (Test)" }
-            };
-
-            foreach (var kvp in armorNames)
-            {
-                if (HasItemNamed(player, kvp.Value)) continue;
-                var item = WorldObjectFactory.CreateNewWorldObject(kvp.Key);
+                if (HasItemNamed(player, $"{tier} {piece.Label} (Test)")) continue;
+                var item = BuildVodArmorPiece(piece.Wcid, piece.Label, tier);
                 if (item != null)
-                {
-                    item.Name = kvp.Value;
-                    item.SetProperty(PropertyString.Name, kvp.Value);
-                    item.SetProperty(PropertyInt.MaterialType, 0);
                     AddItemToInventory(player, item);
-                }
             }
         }
 
+        // Clothing + jewelry builders: each configures ONE piece exactly the way the /testchar
+        // gear has always been built (name from the tier label, props, spells) and returns it
+        // WITHOUT adding to inventory — /testchar's Spawn wrappers keep their has-item dedup,
+        // /asforge always mints. Do not fork these blocks; both commands share them.
         private static void SpawnCustomUndergarmentsAndCloak(Player player, string tier = "T11")
         {
-            var shirtName = $"{tier} Shirt";
-            if (!HasItemNamed(player, shirtName))
+            if (!HasItemNamed(player, $"{tier} Shirt"))
             {
+                var shirt = BuildTestShirt(tier);
+                if (shirt != null)
+                    AddItemToInventory(player, shirt);
+            }
+
+            if (!HasItemNamed(player, $"{tier} Pants"))
+            {
+                var pants = BuildTestPants(tier);
+                if (pants != null)
+                    AddItemToInventory(player, pants);
+            }
+
+            if (!HasItemNamed(player, $"{tier} Cloak"))
+            {
+                var cloak = BuildTestCloak(tier);
+                if (cloak != null)
+                    AddItemToInventory(player, cloak);
+            }
+        }
+
+        private static WorldObject BuildTestShirt(string tier)
+        {
+            var shirtName = $"{tier} Shirt";
             var shirt = WorldObjectFactory.CreateNewWorldObject(28607);
             if (shirt != null)
             {
@@ -678,14 +724,13 @@ namespace ACE.Server.Command.Handlers
                     shirt.Biota.GetOrAddKnownSpell((int)spellId, shirt.BiotaDatabaseLock, out _);
                 shirt.ChangesDetected = true;
                 shirt.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, shirt);
             }
-            }
- 
+            return shirt;
+        }
+
+        private static WorldObject BuildTestPants(string tier)
+        {
             var pantsName = $"{tier} Pants";
-            if (!HasItemNamed(player, pantsName))
-            {
             var pants = WorldObjectFactory.CreateNewWorldObject(2599);
             if (pants != null)
             {
@@ -718,14 +763,13 @@ namespace ACE.Server.Command.Handlers
                     pants.Biota.GetOrAddKnownSpell((int)spellId, pants.BiotaDatabaseLock, out _);
                 pants.ChangesDetected = true;
                 pants.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, pants);
             }
-            }
- 
+            return pants;
+        }
+
+        private static WorldObject BuildTestCloak(string tier)
+        {
             var cloakName = $"{tier} Cloak";
-            if (!HasItemNamed(player, cloakName))
-            {
             var cloak = WorldObjectFactory.CreateNewWorldObject(227190032);
             if (cloak != null)
             {
@@ -752,17 +796,47 @@ namespace ACE.Server.Command.Handlers
                 cloak.Biota.GetOrAddKnownSpell(5450, cloak.BiotaDatabaseLock, out _); // Towering Defense
                 cloak.ChangesDetected = true;
                 cloak.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, cloak);
             }
-            }
+            return cloak;
         }
- 
+
         private static void SpawnCustomJewelry(Player player, string tier = "T11")
         {
-            var leftBraceletName = $"{tier} Bracelet 1";
-            if (!HasItemNamed(player, leftBraceletName))
+            if (!HasItemNamed(player, $"{tier} Bracelet 1"))
             {
+                var b = BuildTestBracelet1(tier);
+                if (b != null) AddItemToInventory(player, b);
+            }
+            if (!HasItemNamed(player, $"{tier} Bracelet 2"))
+            {
+                var b = BuildTestBracelet2(tier);
+                if (b != null) AddItemToInventory(player, b);
+            }
+            if (!HasItemNamed(player, $"{tier} Ring 1"))
+            {
+                var r = BuildTestRing1(tier);
+                if (r != null) AddItemToInventory(player, r);
+            }
+            if (!HasItemNamed(player, $"{tier} Ring 2"))
+            {
+                var r = BuildTestRing2(tier);
+                if (r != null) AddItemToInventory(player, r);
+            }
+            if (!HasItemNamed(player, $"{tier} Necklace"))
+            {
+                var n = BuildTestNecklace(tier);
+                if (n != null) AddItemToInventory(player, n);
+            }
+            if (!HasItemNamed(player, $"{tier} Trinket"))
+            {
+                var t = BuildTestTrinket(tier);
+                if (t != null) AddItemToInventory(player, t);
+            }
+        }
+
+        private static WorldObject BuildTestBracelet1(string tier)
+        {
+            var leftBraceletName = $"{tier} Bracelet 1";
             var leftBracelet = WorldObjectFactory.CreateNewWorldObject(21392);
             if (leftBracelet != null)
             {
@@ -792,14 +866,13 @@ namespace ACE.Server.Command.Handlers
                     leftBracelet.Biota.GetOrAddKnownSpell((int)spellId, leftBracelet.BiotaDatabaseLock, out _);
                 leftBracelet.ChangesDetected = true;
                 leftBracelet.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, leftBracelet);
             }
-            }
- 
+            return leftBracelet;
+        }
+
+        private static WorldObject BuildTestBracelet2(string tier)
+        {
             var rightBraceletName = $"{tier} Bracelet 2";
-            if (!HasItemNamed(player, rightBraceletName))
-            {
             var rightBracelet = WorldObjectFactory.CreateNewWorldObject(21392);
             if (rightBracelet != null)
             {
@@ -829,14 +902,13 @@ namespace ACE.Server.Command.Handlers
                     rightBracelet.Biota.GetOrAddKnownSpell((int)spellId, rightBracelet.BiotaDatabaseLock, out _);
                 rightBracelet.ChangesDetected = true;
                 rightBracelet.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, rightBracelet);
             }
-            }
- 
+            return rightBracelet;
+        }
+
+        private static WorldObject BuildTestRing1(string tier)
+        {
             var leftRingName = $"{tier} Ring 1";
-            if (!HasItemNamed(player, leftRingName))
-            {
             var leftRing = WorldObjectFactory.CreateNewWorldObject(21394);
             if (leftRing != null)
             {
@@ -866,14 +938,13 @@ namespace ACE.Server.Command.Handlers
                     leftRing.Biota.GetOrAddKnownSpell((int)spellId, leftRing.BiotaDatabaseLock, out _);
                 leftRing.ChangesDetected = true;
                 leftRing.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, leftRing);
             }
-            }
- 
+            return leftRing;
+        }
+
+        private static WorldObject BuildTestRing2(string tier)
+        {
             var rightRingName = $"{tier} Ring 2";
-            if (!HasItemNamed(player, rightRingName))
-            {
             var rightRing = WorldObjectFactory.CreateNewWorldObject(21394);
             if (rightRing != null)
             {
@@ -903,14 +974,13 @@ namespace ACE.Server.Command.Handlers
                     rightRing.Biota.GetOrAddKnownSpell((int)spellId, rightRing.BiotaDatabaseLock, out _);
                 rightRing.ChangesDetected = true;
                 rightRing.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, rightRing);
             }
-            }
- 
+            return rightRing;
+        }
+
+        private static WorldObject BuildTestNecklace(string tier)
+        {
             var necklaceName = $"{tier} Necklace";
-            if (!HasItemNamed(player, necklaceName))
-            {
             var necklace = WorldObjectFactory.CreateNewWorldObject(27445);
             if (necklace != null)
             {
@@ -940,14 +1010,13 @@ namespace ACE.Server.Command.Handlers
                     necklace.Biota.GetOrAddKnownSpell((int)spellId, necklace.BiotaDatabaseLock, out _);
                 necklace.ChangesDetected = true;
                 necklace.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, necklace);
             }
-            }
- 
+            return necklace;
+        }
+
+        private static WorldObject BuildTestTrinket(string tier)
+        {
             var trinketName = $"{tier} Trinket";
-            if (!HasItemNamed(player, trinketName))
-            {
             var trinket = WorldObjectFactory.CreateNewWorldObject(41483);
             if (trinket != null)
             {
@@ -977,10 +1046,154 @@ namespace ACE.Server.Command.Handlers
                     trinket.Biota.GetOrAddKnownSpell((int)spellId, trinket.BiotaDatabaseLock, out _);
                 trinket.ChangesDetected = true;
                 trinket.UiEffects = UiEffects.Magical;
- 
-                AddItemToInventory(player, trinket);
             }
+            return trinket;
+        }
+
+        /// <summary>The Admin > Armor Forge subtab's backend (owner 2026-08-02,
+        /// ArmorForge_Plan_2026-08-02.md): mints the /testchar VoD gear at any tier label.
+        /// Same pipeline contract as /wsforge — normal item creation, never direct DB writes.
+        /// T10 = the basic set (no aug gate); T11+ carry the per-tier item-aug wield gate like
+        /// real drops. Everything forged is Attuned + Bonded (owner 2026-08-02).</summary>
+        [CommandHandler("asforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
+            "Forges VoD test armor/clothing/jewelry (the /testchar look) at a chosen tier. All pieces Attuned + Bonded.",
+            "<piece|suit|jewel|all> [tier 10-25, default 11]\n" +
+            "Pieces: helm coat pauldrons bracers gloves girth tassets greaves sollerets shirt pants cloak neck ring bracelet trinket\n" +
+            "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
+            "ring/bracelet mint the left + right pair.")]
+        public static void HandleAsForge(Session session, params string[] parameters)
+        {
+            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
+
+            var player = session.Player;
+            if (player == null)
+                return;
+
+            var key = parameters[0].ToLowerInvariant();
+
+            var tier = 11;
+            if (parameters.Length > 1 && int.TryParse(parameters[1], out var t))
+                tier = Math.Clamp(t, 10, 25);
+            var tierLabel = $"T{tier}";
+
+            var items = new List<WorldObject>();
+            bool AddPiece(string piece)
+            {
+                switch (piece)
+                {
+                    case "shirt": items.Add(BuildTestShirt(tierLabel)); return true;
+                    case "pants": items.Add(BuildTestPants(tierLabel)); return true;
+                    case "cloak": items.Add(BuildTestCloak(tierLabel)); return true;
+                    case "neck": items.Add(BuildTestNecklace(tierLabel)); return true;
+                    case "trinket": items.Add(BuildTestTrinket(tierLabel)); return true;
+                    case "ring":
+                        items.Add(BuildTestRing1(tierLabel));
+                        items.Add(BuildTestRing2(tierLabel));
+                        return true;
+                    case "bracelet":
+                        items.Add(BuildTestBracelet1(tierLabel));
+                        items.Add(BuildTestBracelet2(tierLabel));
+                        return true;
+                    default:
+                        foreach (var p in VodArmorPieces)
+                        {
+                            if (p.Key != piece) continue;
+                            items.Add(BuildVodArmorPiece(p.Wcid, p.Label, tierLabel));
+                            return true;
+                        }
+                        return false;
+                }
             }
+            void AddSuit()
+            {
+                foreach (var p in VodArmorPieces)
+                    items.Add(BuildVodArmorPiece(p.Wcid, p.Label, tierLabel));
+                AddPiece("shirt");
+                AddPiece("pants");
+                AddPiece("cloak");
+            }
+            void AddJewel()
+            {
+                AddPiece("neck");
+                AddPiece("ring");
+                AddPiece("bracelet");
+                AddPiece("trinket");
+            }
+
+            switch (key)
+            {
+                case "suit": AddSuit(); break;
+                case "jewel": AddJewel(); break;
+                case "all": AddSuit(); AddJewel(); break;
+                default:
+                    if (!AddPiece(key))
+                    {
+                        Msg("asforge: unknown piece. Pieces: suit jewel all "
+                            + string.Join(" ", VodArmorPieces.Select(p => p.Key))
+                            + " shirt pants cloak neck ring bracelet trinket");
+                        return;
+                    }
+                    break;
+            }
+
+            var minted = 0;
+            foreach (var wo in items)
+            {
+                if (wo == null)
+                {
+                    Msg("asforge: a piece failed to create (missing weenie?)");
+                    continue;
+                }
+
+                // T11+ carry the per-tier item-aug wield gate like real drops (replacing the
+                // piece's authored skill req, same as the Creature_Death sweep does); the gate
+                // helper appends armor/jewelry's "Wield requires" LongDesc line itself.
+                if (tier >= 11)
+                {
+                    ACE.Server.Factories.LootGenerationFactory.StripWieldRequirements(wo);
+                    ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
+                }
+
+                wo.Attuned = AttunedStatus.Attuned;
+                wo.Bonded = BondedStatus.Bonded;
+
+                // Bare pieces (owner 2026-08-02): no spells, no Gear* ratings, no equipment-set
+                // membership (Dexterous etc.) on forged gear — the per-tier loadout decision is
+                // still open; the coming Armor tab card system layers loadout back on. Strips
+                // the builders' loadout AND anything base-weenie-authored; /testchar keeps its
+                // spells and ratings (it is the regression yardstick), so this lives here and
+                // not in the shared builders.
+                wo.Biota.ClearSpells(wo.BiotaDatabaseLock);
+                foreach (var ratingProp in ForgeStrippedRatings)
+                    wo.RemoveProperty(ratingProp);
+                wo.RemoveProperty(PropertyInt.EquipmentSetId);
+                wo.ChangesDetected = true;
+
+                // VoD armor pieces: per-tier AL baseline (owner 2026-08-02: tier x 100 —
+                // 1100 at T11, 1200 at T12, ...) + one uniform protection value across all
+                // eight elements (the same equalize real T11+ drops get).
+                if (VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId))
+                {
+                    wo.SetProperty(PropertyInt.ArmorLevel, tier * 100);
+                    ACE.Server.Factories.LootGenerationFactory.EqualizeT11ArmorResists(wo);
+                }
+
+                var provenance = $"Created by: {player.Name}\nTier: {tier}";
+                wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? provenance : wo.LongDesc + "\n" + provenance;
+
+                if (player.TryCreateInInventoryWithNetworking(wo))
+                {
+                    minted++;
+                }
+                else
+                {
+                    Msg($"asforge: could not place {wo.Name} in inventory (full?)");
+                    wo.Destroy();
+                }
+            }
+
+            Msg($"asforged: {minted} item(s) at tier {tier} (attuned + bonded"
+                + (tier >= 11 ? ", item-aug wield gate)" : ", basic set - no aug gate)"));
         }
 
         private static void SpawnCharms(Player player)
