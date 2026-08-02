@@ -139,6 +139,7 @@ namespace ACE.Server.Entity
 
         /// <summary>Flat luminance melee/missile damage bonus added to base damage (for diagnostics).</summary>
         public long DebugLuminanceFlatDamageBonus;
+        public float WeaponScalingFlatBonus;
 
         /// <summary>Damage immediately before combat-pet-only physical mitigation multipliers (same as final for player defenders).</summary>
         public float DebugDamagePrePetPhysicalMitigation;
@@ -332,7 +333,10 @@ namespace ACE.Server.Entity
             // launcher DamageMod would multiply ~3.6-3.9x on atlatls (§6.1). 0 when the master
             // switch is off / weapon unstamped / attacker not a player.
             if (playerAttacker != null)
-                BaseDamage += Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(Weapon, playerAttacker);
+            {
+                WeaponScalingFlatBonus = Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(Weapon, playerAttacker);
+                BaseDamage += WeaponScalingFlatBonus;
+            }
 
             // get damage modifiers
             PowerMod = attacker.GetPowerMod(Weapon);
@@ -404,9 +408,17 @@ namespace ACE.Server.Entity
                         //Console.WriteLine($"[DEBUG] CriticalDamageMod After Mob Attacker Enrage Multiplier: {CriticalDamageMod}");
                     }
 
-                    // Calculate damage before mitigation
-                    DamageBeforeMitigation = BaseDamageMod.MaxDamage * AttributeMod * PowerMod * SlayerMod * DamageRatingMod * CriticalDamageMod;
+                    // Calculate damage before mitigation. Crit base = the weapon's max PLUS the
+                    // weapon-scaling term (owner 2026-08-01 "option 3": the WEAPON's damage crits
+                    // in full — for launchers the graded-mod slice already lives in MaxDamage and
+                    // the term is 0). The luminance aug flat stays crit-blind exactly as it always
+                    // has, so the historic aug economy is untouched.
+                    DamageBeforeMitigation = (BaseDamageMod.MaxDamage + WeaponScalingFlatBonus) * AttributeMod * PowerMod * SlayerMod * DamageRatingMod * CriticalDamageMod;
 
+                    // Cap reference — what a MAX normal hit (ALL flats included) deals under the
+                    // same non-crit rating chain; captured before the crit rating rebuild below.
+                    var maxNormalHit = (BaseDamageMod.MaxDamage + DebugLuminanceFlatDamageBonus + WeaponScalingFlatBonus)
+                                       * AttributeMod * PowerMod * SlayerMod * DamageRatingMod;
 
                     CriticalDamageRatingMod = Creature.GetPositiveRatingMod(attacker.GetCritDamageRating());
 
@@ -419,6 +431,12 @@ namespace ACE.Server.Entity
 
                     DamageBeforeMitigation *= Creature.AdditiveCombine(CriticalDamageRatingMod, 1.0f); // Apply only crit bonus
 
+                    // PLAYER crit cap (owner 2026-08-01: bows' multiplied slice made their crits
+                    // land ~7x a normal hit): total crit damage clamps to N x a max normal hit.
+                    // 0 = uncapped. Mob crits stay governed by the zone crit system, not this.
+                    var critCap = ServerConfig.player_crit_damage_cap.Value;
+                    if (playerAttacker != null && critCap > 0 && DamageBeforeMitigation > critCap * maxNormalHit)
+                        DamageBeforeMitigation = (float)(critCap * maxNormalHit);
                 }
             }
 
@@ -1014,6 +1032,14 @@ namespace ACE.Server.Entity
             {
                 log.Info(BuildCombatPetOutgoingDebugLine(petAttacker, defender));
             }
+
+            // Weapon-scaling tuning aid: player -> mob OUTGOING hits — the case the defender-side
+            // logger above deliberately excludes (defender must be Player/CombatPet there).
+            if (ServerConfig.damage_event_debug_player_vs_mob.Value
+                && attacker is Player && defender != null && !(defender is Player))
+            {
+                log.Info(BuildExtensiveDebugLog(attacker, defender));
+            }
         }
 
         private string BuildCombatPetOutgoingDebugLine(CombatPet pet, Creature defender)
@@ -1050,7 +1076,7 @@ namespace ACE.Server.Entity
                 sb.AppendLine("weapon: <none>");
 
             if (BaseDamageMod != null)
-                sb.AppendLine($"baseDamage: rolled={BaseDamage} range={BaseDamageMod.Range} lumFlatBonus={DebugLuminanceFlatDamageBonus} bonus={BaseDamageMod.DamageBonus} mod={BaseDamageMod.DamageMod:F4} elemental={BaseDamageMod.ElementalBonus}");
+                sb.AppendLine($"baseDamage: rolled={BaseDamage} range={BaseDamageMod.Range} lumFlatBonus={DebugLuminanceFlatDamageBonus} wsFlatBonus={WeaponScalingFlatBonus:F1} bonus={BaseDamageMod.DamageBonus} mod={BaseDamageMod.DamageMod:F4} elemental={BaseDamageMod.ElementalBonus}");
             else
                 sb.AppendLine($"baseDamage: rolled={BaseDamage} (no BaseDamageMod) lumFlatBonus={DebugLuminanceFlatDamageBonus}");
 

@@ -135,11 +135,19 @@ namespace ACE.Server.Managers.WeaponScaling
             // caster wire-in ships (parity audit pending — caster damage rides ElementalDamageMod).
             foreach (var single in new[] { "sword", "axe", "dagger", "mace", "spear", "staff", "unarmed",
                                            "cleaver", "two_handed_spear",
-                                           "bow", "crossbow", "atlatl",
                                            "caster_elemental", "caster_non_elemental" })
                 cfg.Scripts[single] = new WeaponScalingScript { KMin = 0.90, KMax = 1.15 };
             foreach (var ms in new[] { "sword_ms", "dagger_ms" })
                 cfg.Scripts[ms] = new WeaponScalingScript { KMin = 0.40, KMax = 0.51 };
+            // LAUNCHERS (owner 2026-08-01): kMin/kMax are REINTERPRETED as the EFFECTIVE DAMAGE
+            // MODIFIER band (replace semantics), not a flat-term coefficient — bows always scaled
+            // through their mod (it multiplies ammo + Blood Drinker + elemental, and BD is
+            // 0.5 x item augs, so the mod is already aug-coupled). No flat term (double-dip).
+            // Band: F = 3.00 just above the legacy T10 authored 2.92 (every T11 drop upgrades),
+            // S = 3.40 (~+10% felt over T10 at endgame BD); neutral-bar melee parity would be
+            // ~2.60 — deliberately NOT used, it would make T11 drops downgrades vs legacy T10s.
+            foreach (var launcher in new[] { "bow", "crossbow", "atlatl" })
+                cfg.Scripts[launcher] = new WeaponScalingScript { KMin = 3.00, KMax = 3.40 };
 
             return cfg;
         }
@@ -218,6 +226,21 @@ namespace ACE.Server.Managers.WeaponScaling
                 }
             }
             cfg.Scripts = scripts;
+
+            // 2026-08-01 semantics migration: launcher rows became the EFFECTIVE DAMAGE MODIFIER
+            // band (replace semantics — quality grades the mod, no flat term). A store written
+            // before the change still carries flat-term-era coefficients (~0.9-1.15); resolving
+            // those AS the modifier would ~quarter launcher damage. Any launcher row entirely
+            // below 2.0 is unmistakably pre-migration (real launcher mods are T10 2.92+) and is
+            // bumped to the current defaults; deliberate values >= 2.0 are always respected.
+            foreach (var launcherKey in new[] { "bow", "crossbow", "atlatl" })
+            {
+                if (cfg.Scripts.TryGetValue(launcherKey, out var row) && row.KMax < 2.0)
+                {
+                    row.KMin = 3.00;
+                    row.KMax = 3.40;
+                }
+            }
 
             cfg.KcMin = Math.Max(0, cfg.KcMin);
             cfg.KcMax = Math.Max(0, cfg.KcMax);

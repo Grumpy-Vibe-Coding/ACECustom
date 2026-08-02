@@ -110,17 +110,39 @@ namespace ACE.Server.Managers.WeaponScaling
         }
 
         /// <summary>The per-strike flat damage term: k(quality) x min(wielder's item augs, tier cap).
-        /// 0 when disabled, unstamped, casters (inert until the caster wire-in), unknown family,
-        /// or a non-player wielder. Added post-roll in DamageEvent alongside the melee/missile
-        /// aug flat — NOT via BaseDamageMod.DamageBonus, which launcher DamageMod would multiply
+        /// 0 when disabled, unstamped, casters (inert until the caster wire-in), LAUNCHERS (their
+        /// quality grades the damage modifier instead — owner 2026-08-01), unknown family, or a
+        /// non-player wielder. Added post-roll in DamageEvent alongside the melee/missile aug
+        /// flat — NOT via BaseDamageMod.DamageBonus, which launcher DamageMod would multiply
         /// ~3.6-3.9x on atlatls (plan §6.1 trap).</summary>
         public static float GetFlatBonus(WorldObject weapon, Player wielder)
         {
-            if (wielder == null || !TryResolve(weapon, out var k, out var tierRow))
+            if (wielder == null || weapon is MissileLauncher || !TryResolve(weapon, out var k, out var tierRow))
                 return 0f;
 
             var augs = wielder.LuminanceAugmentItemCount ?? 0;
             return (float)(k * Math.Min(augs, tierRow.Cap));
+        }
+
+        /// <summary>Launcher grading (owner 2026-08-01): bows have ALWAYS scaled through their
+        /// damage modifier — the multiplier applies to (ammo + Blood Drinker + elemental), and BD
+        /// is 0.5 x item augs, so the mod already couples the weapon to the wielder's augs. A flat
+        /// term on top double-dips, so launchers get NO flat term; instead the quality roll
+        /// RESOLVES the effective damage modifier directly: lerp(kMin, kMax, quality/1000) with
+        /// the launcher family's rows REINTERPRETED as the modifier band (T11 seed 3.00-3.40 —
+        /// grade F just above the legacy T10 authored 2.92, S ~+10% over it). REPLACE semantics:
+        /// the authored DamageMod property is the fallback whenever this returns false (system
+        /// disabled, unstamped legacy launcher, unknown family) — the kill switch restores
+        /// pre-system behavior exactly.</summary>
+        public static bool TryGetLauncherDamageMod(WorldObject weapon, out float damageMod)
+        {
+            damageMod = 0f;
+
+            if (!(weapon is MissileLauncher) || !TryResolve(weapon, out var k, out _))
+                return false;
+
+            damageMod = (float)k;
+            return true;
         }
 
         /// <summary>The GUARANTEED-at-equip term: k(quality) x the tier's wield floor (capped).
@@ -131,7 +153,7 @@ namespace ACE.Server.Managers.WeaponScaling
         /// retroactive re-pricing and the kill switch's full revert).</summary>
         public static float GetFloorBonus(WorldObject weapon)
         {
-            if (!TryResolve(weapon, out var k, out var tierRow))
+            if (weapon is MissileLauncher || !TryResolve(weapon, out var k, out var tierRow))
                 return 0f;
 
             return (float)(k * Math.Min(tierRow.MinWieldAugs, tierRow.Cap));

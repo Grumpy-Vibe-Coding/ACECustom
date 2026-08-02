@@ -296,5 +296,195 @@ namespace ACE.Server.Command.Handlers
         {
             return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v);
         }
+
+        /// <summary>Matched-quality test weapons for cross-family tuning (owner 2026-08-01): one
+        /// UA / bow / sword / wand from the live loot-table weenies, stamped at the SAME chosen
+        /// quality so families compare fairly. Goes through the normal item pipeline — never
+        /// direct DB writes (guid allocation + biota caching make hand-inserted rows unsafe).
+        /// The static damage stays the base weenie's (the scaling term dominates at T11); the
+        /// wield gate + stamps match what the Creature_Death T11 sweep gives real drops.</summary>
+        // ═════════════════ weapon forging (test items via the normal item pipeline) ═════════════════
+        // One representative base weenie per scaling family (all verified in the world DB 08-01:
+        // W_WeaponType + MultiStrike/thrust flags resolve to exactly the intended GetFamilyKey).
+        private static readonly (string Key, uint Wcid, string CleanName)[] ForgeClasses =
+        {
+            ("sword",     30566, "Sword"),      // swordsabra — single strike
+            ("sword_ms",   6853, "Rapier"),     // swordrapier — multi-strike
+            ("dagger",    30596, "Poniard"),    // daggerponiard — single strike
+            ("dagger_ms",  3779, "Dagger"),     // daggerelectric — multi-strike
+            ("axe",         301, "Axe"),        // axebattle
+            ("mace",        331, "Mace"),       // mace (jitte folds into this family)
+            ("spear",       348, "Spear"),      // spear
+            ("staff",       338, "Staff"),      // quarterstaff
+            ("ua",        30612, "Knuckles"),   // knuckleselectric — W_WeaponType Unarmed
+            ("cleaver",   40618, "Spadone"),    // spadone — 2H slash line
+            ("spear2h",   40818, "Corsesca"),   // corsesca — 2H thrust line
+            ("bow",       29243, "Bow"),        // bowpiercing
+            ("crossbow",  29250, "Crossbow"),   // crossbowpiercing
+            ("atlatl",    29254, "Atlatl"),     // atlatlelectric
+            ("wand",      29265, "Sceptre"),    // wandslashing (gets EDM 1.5)
+        };
+
+        private static DamageType? ParseElement(string s)
+        {
+            return s?.ToLowerInvariant() switch
+            {
+                "slash" => DamageType.Slash,
+                "pierce" => DamageType.Pierce,
+                "bludge" or "bludgeon" => DamageType.Bludgeon,
+                "acid" => DamageType.Acid,
+                "fire" => DamageType.Fire,
+                "cold" or "frost" => DamageType.Cold,
+                "electric" or "lightning" => DamageType.Electric,
+                "nether" => DamageType.Nether,
+                _ => (DamageType?)null
+            };
+        }
+
+        /// <summary>Mints one stamped test weapon into the player's pack through the normal item
+        /// pipeline (never direct DB writes — guid allocation + biota caching make hand-inserted
+        /// rows unsafe). Wield gate + stamps mirror the Creature_Death T11+ sweep; static damage
+        /// stays the base weenie's (the scaling term/mod dominates). Element override also
+        /// re-colors the icon underlay and renames coherently ("Nether Spadone (Test q800)").</summary>
+        private static string ForgeWeapon(ACE.Server.WorldObjects.Player player, uint wcid, string cleanName,
+            int quality, int tier, DamageType? element)
+        {
+            var wo = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(wcid);
+            if (wo == null)
+                return $"forge: could not create wcid {wcid}";
+
+            ACE.Server.Factories.LootGenerationFactory.StripWieldRequirements(wo);
+            ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
+
+            // representative caster: real T11 wands carry an elemental multiplier
+            if (wo is ACE.Server.WorldObjects.Caster)
+                wo.ElementalDamageMod = 1.5;
+
+            if (element != null)
+            {
+                wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.DamageType, (int)element.Value);
+
+                // icon underlay matches the element (the base weenie's stays otherwise)
+                var uiEffect = element.Value switch
+                {
+                    DamageType.Slash => UiEffects.Slashing,
+                    DamageType.Pierce => UiEffects.Piercing,
+                    DamageType.Bludgeon => UiEffects.Bludgeoning,
+                    DamageType.Acid => UiEffects.Acid,
+                    DamageType.Fire => UiEffects.Fire,
+                    DamageType.Cold => UiEffects.Frost,
+                    DamageType.Electric => UiEffects.Lightning,
+                    DamageType.Nether => UiEffects.Nether,
+                    _ => UiEffects.Undef
+                };
+                wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.UiEffects, (int)uiEffect);
+
+                wo.Name = $"{element.Value} {cleanName} (Test q{quality})";
+            }
+            else
+                wo.Name = $"{wo.Name} (Test q{quality})";
+
+            // Provenance, mirroring real drops' "Dropped by / Location" block (owner 2026-08-01):
+            // who forged it + the tier it was stamped at. AppraiseInfo's per-viewer bonus line
+            // anchors above "Created by" the same way it does "Dropped by".
+            wo.LongDesc = $"Created by: {player.Name}\nTier: {tier}";
+
+            if (!player.TryCreateInInventoryWithNetworking(wo))
+            {
+                wo.Destroy();
+                return $"forge: could not place {wo.Name} in inventory (full?)";
+            }
+
+            return $"forged: {wo.Name} -> family {WeaponScalingCombat.GetFamilyKey(wo) ?? "none"}, " +
+                   $"grade {WeaponScalingManager.GetQualityGrade(quality)} ({quality}/1000), tier {tier}";
+        }
+
+        [CommandHandler("wstestkit", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
+            "Grants weapon aug-scaling test weapons (UA, bow, sword, wand) stamped at a fixed quality.",
+            "[quality 0-1000, default 500] [element: slash|pierce|bludge|acid|fire|cold|electric|nether]")]
+        public static void HandleWsTestKit(Session session, params string[] parameters)
+        {
+            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
+
+            var player = session.Player;
+            if (player == null)
+                return;
+
+            var quality = 500;
+            if (parameters.Length > 0 && int.TryParse(parameters[0], out var q))
+                quality = Math.Clamp(q, 0, 1000);
+
+            DamageType? element = null;
+            if (parameters.Length > 1)
+            {
+                element = ParseElement(parameters[1]);
+                if (element == null)
+                {
+                    Msg("wstestkit: unknown element. Use slash|pierce|bludge|acid|fire|cold|electric|nether.");
+                    return;
+                }
+            }
+
+            foreach (var key in new[] { "ua", "bow", "sword", "wand" })
+            {
+                var cls = ForgeClasses.First(c => c.Key == key);
+                Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, 11, element));
+            }
+        }
+
+        /// <summary>The Admin > Forge subtab's backend (owner 2026-08-01): any single weapon
+        /// class at any quality/element/tier, minted live.</summary>
+        [CommandHandler("wsforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
+            "Forges one weapon aug-scaling test weapon of the given class (or a full set with 'all').",
+            "<class|all> [quality 0-1000, default 500] [element] [tier, default 11]\n" +
+            "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand")]
+        public static void HandleWsForge(Session session, params string[] parameters)
+        {
+            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
+
+            var player = session.Player;
+            if (player == null)
+                return;
+
+            var classKey = parameters[0].ToLowerInvariant();
+            var all = classKey == "all";
+            var cls = ForgeClasses.FirstOrDefault(c => c.Key == classKey);
+            if (!all && cls.Wcid == 0)
+            {
+                Msg("wsforge: unknown class. Classes: all " + string.Join(" ", ForgeClasses.Select(c => c.Key)));
+                return;
+            }
+
+            var quality = 500;
+            if (parameters.Length > 1 && int.TryParse(parameters[1], out var q))
+                quality = Math.Clamp(q, 0, 1000);
+
+            DamageType? element = null;
+            if (parameters.Length > 2 && !parameters[2].Equals("base", StringComparison.OrdinalIgnoreCase))
+            {
+                element = ParseElement(parameters[2]);
+                if (element == null)
+                {
+                    Msg("wsforge: unknown element. Use base|slash|pierce|bludge|acid|fire|cold|electric|nether.");
+                    return;
+                }
+            }
+
+            var tier = 11;
+            if (parameters.Length > 3 && int.TryParse(parameters[3], out var t))
+                tier = Math.Clamp(t, 11, 25);
+
+            if (all)
+            {
+                // one of every class at the same quality/element/tier (owner 2026-08-01)
+                foreach (var c in ForgeClasses)
+                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element));
+                return;
+            }
+
+            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element));
+        }
     }
 }

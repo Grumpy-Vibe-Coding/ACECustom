@@ -63,7 +63,10 @@ namespace ACE.Server.Tests
                 ("unarmed", 0.90, 1.15),
                 ("sword_ms", 0.40, 0.51), ("dagger_ms", 0.40, 0.51),
                 ("cleaver", 0.90, 1.15), ("two_handed_spear", 0.90, 1.15),
-                ("bow", 0.90, 1.15), ("crossbow", 0.90, 1.15), ("atlatl", 0.90, 1.15),
+                // Launchers: kMin/kMax = the EFFECTIVE DAMAGE MODIFIER band (replace semantics,
+                // owner 2026-08-01), not a flat-term coefficient. F 3.00 sits just above the
+                // legacy T10 authored 2.92 so every T11 drop upgrades; no flat term for launchers.
+                ("bow", 3.00, 3.40), ("crossbow", 3.00, 3.40), ("atlatl", 3.00, 3.40),
                 ("caster_elemental", 0.90, 1.15), ("caster_non_elemental", 0.90, 1.15),
             };
             foreach (var e in expected)
@@ -152,6 +155,31 @@ namespace ACE.Server.Tests
             Assert.AreEqual(11, cfg.Tiers[0].Tier, "tiers sort ascending");
             Assert.AreEqual(3000, cfg.Tiers.Single(t => t.Tier == 12).Cap, "first entry wins on dupes");
             Assert.IsTrue(cfg.Scripts.ContainsKey("HEAVY_SWORD"), "deserialized dictionary must regain case-insensitive lookup");
+        }
+
+        [TestMethod]
+        public void Normalize_MigratesFlatEraLauncherRowsToModifierBand()
+        {
+            // Pre-2026-08-01 stores carry launcher rows as flat-term coefficients (~0.9-1.15);
+            // under replace semantics those would resolve AS the damage modifier and ~quarter
+            // launcher damage. Normalize must bump any launcher row entirely below 2.0 to the
+            // modifier-band defaults, while respecting deliberate values >= 2.0.
+            var cfg = new WeaponScalingConfig();
+            cfg.Scripts["bow"] = new WeaponScalingScript { KMin = 0.90, KMax = 1.15 };
+            cfg.Scripts["crossbow"] = new WeaponScalingScript { KMin = 0.40, KMax = 0.51 };
+            cfg.Scripts["atlatl"] = new WeaponScalingScript { KMin = 2.80, KMax = 3.10 };
+            cfg.Scripts["sword"] = new WeaponScalingScript { KMin = 0.90, KMax = 1.15 };
+
+            WeaponScalingManager.Normalize(cfg);
+
+            Assert.AreEqual(3.00, cfg.Scripts["bow"].KMin, 1e-9);
+            Assert.AreEqual(3.40, cfg.Scripts["bow"].KMax, 1e-9);
+            Assert.AreEqual(3.00, cfg.Scripts["crossbow"].KMin, 1e-9);
+            Assert.AreEqual(3.40, cfg.Scripts["crossbow"].KMax, 1e-9);
+            Assert.AreEqual(2.80, cfg.Scripts["atlatl"].KMin, 1e-9, "deliberate >= 2.0 band must survive");
+            Assert.AreEqual(3.10, cfg.Scripts["atlatl"].KMax, 1e-9);
+            Assert.AreEqual(0.90, cfg.Scripts["sword"].KMin, 1e-9, "melee rows untouched");
+            Assert.AreEqual(1.15, cfg.Scripts["sword"].KMax, 1e-9);
         }
 
         // ── Store round-trip ──

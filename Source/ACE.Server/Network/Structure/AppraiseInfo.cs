@@ -286,6 +286,8 @@ namespace ACE.Server.Network.Structure
                         if (provIdx < 0)
                             provIdx = ldCur.IndexOf("Dropped in ", StringComparison.Ordinal);
                         if (provIdx < 0)
+                            provIdx = ldCur.IndexOf("Created by", StringComparison.Ordinal);   // forged test items
+                        if (provIdx < 0)
                             provIdx = ldCur.IndexOf("Location:", StringComparison.Ordinal);
                         if (provIdx >= 0)
                             PropertiesString[PropertyString.LongDesc] = ldCur.Insert(provIdx, $"{msg}\n\n");

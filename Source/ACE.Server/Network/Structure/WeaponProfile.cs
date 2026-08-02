@@ -121,7 +121,11 @@ namespace ACE.Server.Network.Structure
         /// </summary>
         public float GetDamageMultiplier(WorldObject weapon)
         {
-            var baseMultiplier = weapon.GetProperty(PropertyFloat.DamageMod) ?? 1.0f;
+            // Weapon aug-scaling: stamped T11+ launchers display the quality-GRADED damage
+            // modifier (same resolver combat uses — replace semantics, authored value fallback)
+            var baseMultiplier = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, out var gradedMod)
+                ? gradedMod
+                : weapon.GetProperty(PropertyFloat.DamageMod) ?? 1.0f;
             var damageMod = weapon.EnchantmentManager.GetDamageMod();
             var auraDamageMod = weapon.Wielder != null ? weapon.Wielder.EnchantmentManager.GetDamageMod() : 0.0f;
             Enchantment_DamageMod = weapon.IsEnchantable ? damageMod + auraDamageMod : damageMod;
