@@ -23,7 +23,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Boost character stats/gear/weapons to Tier 11 or Tier 10, or reset to Tier 0.",
             "Usage: /testchar <T11|T10|T0>  |  /testchar stats <T11|T10>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>  |  /testchar charms\n" +
-            "Granular (Character tab): /testchar set attrs|vitals|level|enl|augs|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar save")]
+            "Granular (Character tab): /testchar set attrs|vitals|level|enl|augs|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar extra <keys>  |  /testchar save")]
         public static void HandleTestChar(Session session, params string[] parameters)
         {
             var player = session.Player;
@@ -33,7 +33,7 @@ namespace ACE.Server.Command.Handlers
             // plugin applies a tier preset as a short batch of these. Dispatched BEFORE the
             // tier parsing below, which would reject them as bad tiers.
             var sub0 = parameters[0].ToLowerInvariant();
-            if (sub0 == "set" || sub0 == "apply" || sub0 == "save")
+            if (sub0 == "set" || sub0 == "apply" || sub0 == "save" || sub0 == "extra")
             {
                 HandleCharacterSetter(session, player, parameters);
                 return;
@@ -91,8 +91,9 @@ namespace ACE.Server.Command.Handlers
                 CreateCustomWand(player, DamageType.Bludgeon);
                 CreateCustomWand(player, DamageType.Nether);
 
-                // Spawn booster packs 7 down to 3 empty
-                for (int i = 7; i >= 3; i--)
+                // Spawn booster packs 7 down to 2 empty (Pack 2 used to hold hilts —
+                // hilt spawning removed 2026-08-03, owner)
+                for (int i = 7; i >= 2; i--)
                 {
                     var packName = $"Booster Pack {i}";
                     if (HasItemNamed(player, packName)) continue;
@@ -103,24 +104,6 @@ namespace ACE.Server.Command.Handlers
                         emptyBag.SetProperty(PropertyString.Name, packName);
                         player.TryCreateInInventoryWithNetworking(emptyBag);
                     }
-                }
-
-                // Spawn Booster Pack 2 containing hilts
-                var bag2 = player.GetAllPossessionsDeep().OfType<Container>().FirstOrDefault(c => c.Name == "Booster Pack 2");
-                if (bag2 == null)
-                {
-                    bag2 = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-                    if (bag2 != null)
-                    {
-                        bag2.Name = "Booster Pack 2";
-                        bag2.SetProperty(PropertyString.Name, "Booster Pack 2");
-                        SpawnHilts(player, bag2);
-                        player.TryCreateInInventoryWithNetworking(bag2);
-                    }
-                }
-                else
-                {
-                    SpawnHilts(player, bag2);
                 }
 
                 // Spawn Booster Pack 1 containing portal gems
@@ -680,6 +663,78 @@ namespace ACE.Server.Command.Handlers
                             return;
                     }
                 }
+                return;
+            }
+
+            // extra <keys csv> — utility-item minting (Admin > Extras tab, 2026-08-03). Same
+            // convention as the gems set: an item already possessed (deep check) is skipped.
+            if (sub == "extra")
+            {
+                if (parameters.Length < 2)
+                {
+                    Msg("usage: /testchar extra healkit,stamkit,manakit,lockpick,ivory,dispel,enlcoins,mmds,scarabs,aetheria");
+                    return;
+                }
+                var owned = player.GetAllPossessionsDeep();
+                var possessed = new HashSet<uint>(owned.Select(i => i.WeenieClassId));
+                void Mint(uint wcid, string label)
+                {
+                    if (possessed.Contains(wcid)) { Msg($"extra: {label} already in inventory - skipped"); return; }
+                    var wo = WorldObjectFactory.CreateNewWorldObject(wcid);
+                    if (wo == null) { Msg($"extra: {label} (wcid {wcid}) failed to create"); return; }
+                    if (player.TryCreateInInventoryWithNetworking(wo))
+                        Msg($"extra: {label} created");
+                    else
+                        Msg($"extra: {label} could not be added (inventory full?)");
+                }
+                // Stackables top up to the target: possessing 4500 of a 5000 target creates the missing 500.
+                void MintStack(uint wcid, string label, int target)
+                {
+                    var have = owned.Where(i => i.WeenieClassId == wcid).Sum(i => i.StackSize ?? 1);
+                    var missing = target - have;
+                    if (missing <= 0) { Msg($"extra: {label} already at {have} - skipped"); return; }
+                    var wo = WorldObjectFactory.CreateNewWorldObject(wcid);
+                    if (wo == null) { Msg($"extra: {label} (wcid {wcid}) failed to create"); return; }
+                    if (missing > 1)
+                        wo.SetStackSize(missing);
+                    if (player.TryCreateInInventoryWithNetworking(wo))
+                        Msg($"extra: {label} +{missing} (now {target})");
+                    else
+                        Msg($"extra: {label} could not be added (inventory full?)");
+                }
+                foreach (var key in parameters[1].ToLowerInvariant().Split(','))
+                {
+                    switch (key)
+                    {
+                        case "healkit":  Mint(30247, "Eternal Health Kit"); break;
+                        case "stamkit":  Mint(30249, "Eternal Stamina Kit"); break;
+                        case "manakit":  Mint(30248, "Eternal Mana Kit"); break;
+                        case "lockpick": Mint(30253, "Limitless Lockpick"); break;
+                        case "ivory":    Mint(30092, "Infinite Ivory"); break;
+                        case "dispel":   Mint(3110181, "Rune of Dispel"); break;   // ILT variant (sold in VoD), owner 08-03
+                        case "enlcoins": MintStack(300004, "Enlightened Coins", 25000); break;
+                        case "mmds":     MintStack(20630, "Trade Notes (250k)", 5000); break;
+                        case "scarabs":
+                            // 100 of each casting scarab, topped up (owner 08-03). Dark Scarab
+                            // (37117) excluded: its max stack is 1 here.
+                            MintStack(691, "Lead Scarabs", 100);
+                            MintStack(689, "Iron Scarabs", 100);
+                            MintStack(686, "Copper Scarabs", 100);
+                            MintStack(688, "Silver Scarabs", 100);
+                            MintStack(687, "Gold Scarabs", 100);
+                            MintStack(690, "Pyreal Scarabs", 100);
+                            MintStack(8897, "Platinum Scarabs", 100);
+                            MintStack(37155, "Mana Scarabs", 100);
+                            MintStack(7299, "Diamond Scarabs", 100);
+                            MintStack(20631, "Prismatic Tapers", 10000);   // max stack, owner 08-03
+                            break;
+                        case "aetheria": SpawnAetherias(player); Msg("extra: aetheria set spawned (skips owned pieces)"); break;
+                        default:
+                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|dispel|enlcoins|mmds|scarabs|aetheria)");
+                            return;
+                    }
+                }
+                player.SaveBiotaToDatabase();
                 return;
             }
 
@@ -1842,11 +1897,6 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
-            if (targetStyle == null || targetStyle.Equals("UA", StringComparison.OrdinalIgnoreCase))
-            {
-                SpawnHilts(player, rucksack);
-            }
-
             if (rucksack != null)
             {
                 player.TryCreateInInventoryWithNetworking(rucksack);
@@ -2176,25 +2226,6 @@ namespace ACE.Server.Command.Handlers
                 player.TryCreateInInventoryWithNetworking(wand);
         }
 
-        private static void SpawnHilts(Player player, Container destination = null)
-        {
-            var existingHiltCount = player.GetAllPossessionsDeep().Count(i => i.WeenieClassId == 719220045);
-            if (existingHiltCount >= 10) return;
-
-            int toSpawn = 10 - existingHiltCount;
-            for (int i = 0; i < toSpawn; i++)
-            {
-                var hilt = WorldObjectFactory.CreateNewWorldObject(719220045);
-                if (hilt != null)
-                {
-                    if (destination != null)
-                        destination.TryAddToInventory(hilt);
-                    else
-                        player.TryCreateInInventoryWithNetworking(hilt);
-                }
-            }
-        }
-
         private static string GetElementLabel(DamageType element)
         {
             return element switch
@@ -2232,14 +2263,6 @@ namespace ACE.Server.Command.Handlers
                 694200385,  // Defense of Zaikhal portal gem
                 694200389,  // Elysas Favor portal gem
 
-                // Quest Explorer Portal Gems
-                694200515,  // Quest Explorer Portal Gem Week2
-                694200518,  // Quest Explorer Portal Gem Week3
-                694200521,  // Quest Explorer Portal Gem Week4
-                694200524,  // Quest Explorer Portal Gem Week5
-                694200527,  // Quest Explorer Portal Gem Week6
-                694200530,  // Quest Explorer Portal Gem Week7
-
                 // Self-Teleport / Recall Gems
                 86753075,   // Marketplace Recall Gem
                 86753079,   // Lifestone Recall Gem
@@ -2250,25 +2273,14 @@ namespace ACE.Server.Command.Handlers
                 98760170,   // Zerivax Recall Gem
                 300101193,  // Thaelaryn Lassel Recall Gem
                 867530155,  // Penthouse Penthouse Recall Gem
-                867530100,  // Costco Recall Gem
                 64454319,   // Igmo's Retreat Recall Gem
                 98760065,   // Fraternity of QB Recall Gem
                 19851000,   // Halls of Introduction Gem
                 19860016,   // Prestige Palace Gem
                 500008972,  // Plateau of Agility Gem
                 300101097,  // Admin Bog Gem
+                730003019,  // Testing Area v11 Gem
 
-                // Housing Residence Hall Recalls
-                227190148,  // Alphus Court Recall Gem
-                227190149,  // Gajin Dwellings Recall Gem
-                227190154,  // Hasina Gardens Recall Gem
-                227190150,  // Heartland Yard Recall Gem
-                227190151,  // Ivory Gate Recall Gem
-                227190152,  // Lakespur Gardens Recall Gem
-                227190153,  // Mellas Court Recall Gem
-                227190155,  // Valorya Gate Recall Gem
-                227190156,  // Vesper Gate Recall Gem
-                227190157,  // Winthur Gate Recall Gem
                 777700029   // Tou Tou Prestige Portal Gem
             };
 
