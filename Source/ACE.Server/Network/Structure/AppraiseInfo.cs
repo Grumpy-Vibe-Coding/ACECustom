@@ -931,7 +931,7 @@ namespace ACE.Server.Network.Structure
             if (!Success)
                 return;
 
-            var weaponProfile = new WeaponProfile(weapon);
+            var weaponProfile = new WeaponProfile(weapon, examiner);
 
             //WeaponHighlight = WeaponMaskHelper.GetHighlightMask(weapon, wielder);
             //WeaponColor = WeaponMaskHelper.GetColorMask(weapon, wielder);
@@ -1119,7 +1119,10 @@ namespace ACE.Server.Network.Structure
             var wsQuality = weapon.GetProperty(PropertyInt.WeaponAugScaleQuality);
             if (wsQuality != null)
             {
-                var wsGrade = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetQualityGrade(wsQuality.Value);
+                // Sub-grade label (owner 2026-08-03): k and variance both resolve per SUB-grade
+                // now, so the label has to carry the same granularity — "B+" is a different
+                // weapon from "B-", and showing both as "B" would hide a real damage step.
+                var wsGrade = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetQualitySubGrade(wsQuality.Value);
                 effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade} ({wsQuality.Value / 10}% of max)");
             }
 

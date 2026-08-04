@@ -335,7 +335,22 @@ namespace ACE.Server.Entity
             if (playerAttacker != null)
             {
                 WeaponScalingFlatBonus = Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(Weapon, playerAttacker);
-                BaseDamage += WeaponScalingFlatBonus;
+
+                // Scheme C (2026-08-03): when the weapon has an authored family variance, the
+                // WHOLE envelope (weenie base + aug term) rolls down from max by the quality-
+                // tightened fraction — replacing the base-only roll + flat add, which made every
+                // endgame hit land within the weenie's few-point spread. The luminance aug flat
+                // (damageBonus, already in BaseDamage) stays flat and crit-blind as always.
+                // Crits are untouched: max-forced at the full envelope (below).
+                if (WeaponScalingFlatBonus > 0
+                    && Managers.WeaponScaling.WeaponScalingCombat.TryGetEffectiveVariance(Weapon, out var schemeCVariance))
+                {
+                    var envelopeMax = BaseDamageMod.MaxDamage + WeaponScalingFlatBonus;
+                    BaseDamage = damageBonus
+                        + envelopeMax * (float)ThreadSafeRandom.Next(1.0f - (float)schemeCVariance, 1.0f);
+                }
+                else
+                    BaseDamage += WeaponScalingFlatBonus;
             }
 
             // get damage modifiers

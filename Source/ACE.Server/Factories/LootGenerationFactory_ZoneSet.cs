@@ -178,7 +178,9 @@ namespace ACE.Server.Factories
             if (!(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
                 return;
 
-            var quality = ThreadSafeRandom.Next(0, ACE.Server.Managers.WeaponScaling.WeaponScalingManager.QualityMax);
+            // Weighted grade roll (owner 2026-08-02): grade from the config weights table
+            // (S ~1-in-1000, A 5 / B 10 / C 15 / D 25 / F 44.9 seeds), uniform within the band.
+            var quality = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.RollQuality();
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -25,6 +26,9 @@ namespace ACE.Server.Command.Handlers
         {
             public string LastPayload;
             public DateTime LastSentUtc;
+            /// <summary>Last [[ZCWK]] line sent per family — ladders are diffed individually so a
+            /// one-cell edit re-sends one family, not all eleven.</summary>
+            public readonly Dictionary<string, string> LastLadders = new(StringComparer.OrdinalIgnoreCase);
         }
 
         private static readonly ConcurrentDictionary<Session, SyncWatch> _pluginSessions = new();
@@ -44,6 +48,7 @@ namespace ACE.Server.Command.Handlers
             _pushTickRateLimiter.RegisterEvent();
 
             var payload = BuildPayload();
+            var ladders = BuildLadderPayloads();
             var now = DateTime.UtcNow;
 
             foreach (var kv in _pluginSessions)
@@ -56,29 +61,75 @@ namespace ACE.Server.Command.Handlers
                 }
 
                 var watch = kv.Value;
-                if (payload == watch.LastPayload && (now - watch.LastSentUtc).TotalSeconds < SyncKeepaliveSeconds)
+                var keepalive = (now - watch.LastSentUtc).TotalSeconds >= SyncKeepaliveSeconds;
+                if (payload == watch.LastPayload && !keepalive)
                     continue;
 
-                watch.LastPayload = payload;
                 watch.LastSentUtc = now;
-                ChatPacket.SendServerMessage(session, payload, ChatMessageType.Broadcast);
+
+                if (payload != watch.LastPayload || keepalive)
+                {
+                    watch.LastPayload = payload;
+                    ChatPacket.SendServerMessage(session, payload, ChatMessageType.Broadcast);
+                }
+
+                // Ladders ride their OWN per-family messages rather than the main payload: 11
+                // melee families x 16 rungs would roughly triple a payload that is already ~800
+                // chars, and a single cell edit only has to re-send its own ~150-char line.
+                foreach (var kvL in ladders)
+                {
+                    if (!keepalive && watch.LastLadders.TryGetValue(kvL.Key, out var prev) && prev == kvL.Value)
+                        continue;
+                    watch.LastLadders[kvL.Key] = kvL.Value;
+                    ChatPacket.SendServerMessage(session, kvL.Value, ChatMessageType.Broadcast);
+                }
+
+                // A family whose ladder was cleared stops appearing above; tell the plugin once
+                // so its editor drops back to the lerp view instead of showing a stale ladder.
+                foreach (var goneKey in watch.LastLadders.Keys.Where(k => !ladders.ContainsKey(k)).ToList())
+                {
+                    watch.LastLadders.Remove(goneKey);
+                    ChatPacket.SendServerMessage(session, $"[[ZCWK]]|s={goneKey}|k=", ChatMessageType.Broadcast);
+                }
             }
         }
 
         /// <summary>Pipe/tilde wire format (house style; the plugin has no JSON parser):
-        /// [[ZCW]]|enabled=1|kc=0.6~0.8|tiers=t~cap~minwield,...|scripts=name~kmin~kmax,...</summary>
+        /// [[ZCW]]|enabled=1|kc=0.6~0.8|tighten=0.7|tiers=t~cap~minwield,...|scripts=name~kmin~kmax~variance,...</summary>
         private static string BuildPayload()
         {
             var cfg = WeaponScalingManager.Current;
             var sb = new StringBuilder("[[ZCW]]");
             sb.Append("|enabled=").Append(cfg.Enabled ? '1' : '0');
             sb.Append("|kc=").Append(F(cfg.KcMin)).Append('~').Append(F(cfg.KcMax));
+            sb.Append("|tighten=").Append(F(cfg.TightenStrength));
+            sb.Append("|grades=").Append(string.Join(",",
+                Managers.WeaponScaling.WeaponScalingManager.GradeBands
+                    .Select(b => $"{b.Grade}~{F(cfg.GradeWeights != null && cfg.GradeWeights.TryGetValue(b.Grade, out var gw) ? gw : 0)}")));
             sb.Append("|tiers=").Append(string.Join(",",
                 cfg.Tiers.Select(t => $"{t.Tier}~{t.Cap}~{t.MinWieldAugs}")));
             sb.Append("|scripts=").Append(string.Join(",",
                 cfg.Scripts.OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase)
-                    .Select(s => $"{s.Key}~{F(s.Value.KMin)}~{F(s.Value.KMax)}")));
+                    .Select(s => $"{s.Key}~{F(s.Value.KMin)}~{F(s.Value.KMax)}~{F(s.Value.Variance)}")));
             return sb.ToString();
+        }
+
+        /// <summary>One message per family that has an authored grade ladder:
+        /// [[ZCWK]]|s=unarmed|k=&lt;16 values, tilde-separated, in SubGradeBands order&gt;
+        /// Sub-grade names are omitted — the order is the contract (plugin indexes by position).</summary>
+        private static Dictionary<string, string> BuildLadderPayloads()
+        {
+            var cfg = WeaponScalingManager.Current;
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in cfg.Scripts)
+            {
+                if (kv.Value == null || !kv.Value.HasLadder)
+                    continue;
+                var vals = WeaponScalingManager.SubGradeBands
+                    .Select(b => F(kv.Value.Grades.TryGetValue(b.Grade, out var k) ? k : 0));
+                result[kv.Key] = $"[[ZCWK]]|s={kv.Key}|k={string.Join("~", vals)}";
+            }
+            return result;
         }
 
         private static string F(double v) => v.ToString("0.####", CultureInfo.InvariantCulture);
@@ -100,9 +151,14 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /weaponscale tier <t> cap <n>    scaling stops growing at n item augs for tier-t weapons");
                 Msg("  /weaponscale tier <t> minwield <n>   item augs required to WIELD tier-t weapons (economy gate)");
                 Msg("  /weaponscale tier add <t> [cap] [minwield] | tier remove <t>");
-                Msg("  /weaponscale script <name> kmin <v> | kmax <v>   per-loot-script k roll range");
+                Msg("  /weaponscale script <name> kmin <v> | kmax <v> | variance <v>   per-loot-script k range + Scheme C family variance");
+                Msg("  /weaponscale script <name> ladder <anchorS> | ladder clear   seed/drop the 16-rung grade ladder (+18 pct per grade)");
+                Msg("  /weaponscale script <name> grade <S|A+|A|A-|..|F-> <k>   author ONE rung");
+                Msg("  /weaponscale ladder <name>       print a family's 16 rungs with step pct");
                 Msg("  /weaponscale script add <name> [kmin] [kmax] | script remove <name>");
                 Msg("  /weaponscale kc min <v> | kc max <v>   crit-channel coefficient range");
+                Msg("  /weaponscale tighten <v>         Scheme C: fraction of family variance a q1000 weapon sheds (0.7 = S keeps 30 pct)");
+                Msg("  /weaponscale grade <S|A|B|C|D|F> <weight>   drop-frequency weight (relative; quality rolls uniform inside the band)");
                 Msg("  /weaponscale reset               restore locked launch defaults (plan section 4)");
                 Msg("  /weaponscale reload              re-read the store from the shard DB");
                 return;
@@ -134,14 +190,63 @@ namespace ACE.Server.Command.Handlers
                 {
                     var cfg = WeaponScalingManager.Current;
                     var sb = new StringBuilder();
-                    sb.AppendLine($"Weapon aug-scaling: {(cfg.Enabled ? "ENABLED" : "DISABLED")} (kc {cfg.KcMin:0.###}-{cfg.KcMax:0.###})");
+                    sb.AppendLine($"Weapon aug-scaling: {(cfg.Enabled ? "ENABLED" : "DISABLED")} (kc {cfg.KcMin:0.###}-{cfg.KcMax:0.###}, tighten {cfg.TightenStrength:0.###})");
                     sb.AppendLine("  tier | cap | minwield");
                     foreach (var t in cfg.Tiers)
                         sb.AppendLine($"  T{t.Tier} | {t.Cap:N0} | {t.MinWieldAugs:N0}");
-                    sb.AppendLine("  script | kmin | kmax");
+                    sb.AppendLine("  script | kmin | kmax | variance | ladder");
                     foreach (var s in cfg.Scripts.OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase))
-                        sb.AppendLine($"  {s.Key} | {s.Value.KMin:0.###} | {s.Value.KMax:0.###}");
+                        sb.AppendLine($"  {s.Key} | {s.Value.KMin:0.###} | {s.Value.KMax:0.###} | {s.Value.Variance:0.###} | "
+                            + (s.Value.HasLadder
+                                ? $"S {s.Value.Grades[WeaponScalingManager.SubGradeBands[0].Grade]:0.####} .. "
+                                  + $"F- {s.Value.Grades[WeaponScalingManager.SubGradeBands[WeaponScalingManager.SubGradeBands.Length - 1].Grade]:0.####}"
+                                : "(lerp)"));
+                    var gwTotal = Managers.WeaponScaling.WeaponScalingManager.GradeBands
+                        .Sum(b => cfg.GradeWeights != null && cfg.GradeWeights.TryGetValue(b.Grade, out var w) && w > 0 ? w : 0);
+                    sb.AppendLine("  grade | weight | drop pct");
+                    foreach (var b in Managers.WeaponScaling.WeaponScalingManager.GradeBands)
+                    {
+                        var w = cfg.GradeWeights != null && cfg.GradeWeights.TryGetValue(b.Grade, out var gw) ? gw : 0;
+                        var pct = gwTotal > 0 ? w / gwTotal * 100.0 : 0;
+                        sb.AppendLine($"  {b.Grade} (q{b.QMin}-{b.QMax}) | {w:0.####} | {pct:0.###} pct");
+                    }
+                    if (gwTotal <= 0)
+                        sb.AppendLine("  (no grade weights authored - drops use the legacy uniform 0-1000 roll)");
                     Msg(sb.ToString().TrimEnd());
+                    return;
+                }
+
+                case "ladder":
+                {
+                    if (args.Length < 2)
+                    {
+                        Msg("Usage: /weaponscale ladder <script>   (prints the 16 authored rungs)");
+                        return;
+                    }
+                    var cfgL = WeaponScalingManager.Current;
+                    if (!cfgL.Scripts.TryGetValue(args[1], out var row))
+                    {
+                        Msg($"No script '{args[1]}'.");
+                        return;
+                    }
+                    if (!row.HasLadder)
+                    {
+                        Msg($"Script {args[1]} has no ladder - k lerps {row.KMin:0.###}..{row.KMax:0.###} across quality. "
+                            + $"Seed one with: /weaponscale script {args[1]} ladder <anchorS>");
+                        return;
+                    }
+                    var sbL = new StringBuilder();
+                    sbL.AppendLine($"{args[1]} grade ladder (variance {row.Variance:0.###}, tighten {cfgL.TightenStrength:0.###}):");
+                    sbL.AppendLine("  grade | q band | k | step");
+                    double? prevK = null;
+                    foreach (var b in WeaponScalingManager.SubGradeBands)
+                    {
+                        var k = row.Grades.TryGetValue(b.Grade, out var kv2) ? kv2 : 0;
+                        var step = prevK.HasValue && k > 0 ? $"{(prevK.Value / k - 1) * 100:+0.0;-0.0} pct" : "";
+                        sbL.AppendLine($"  {b.Grade,-2} | q{b.QMin}-{b.QMax} | {k:0.####} | {step}");
+                        prevK = k;
+                    }
+                    Msg(sbL.ToString().TrimEnd());
                     return;
                 }
 
@@ -224,16 +329,84 @@ namespace ACE.Server.Command.Handlers
                         Msg($"Script {name} removed.");
                         return;
                     }
+                    // Grade ladder verbs (owner 2026-08-03). "ladder <anchorS>" seeds all 16 from
+                    // the S anchor at +18 pct per full grade; "ladder clear" drops back to the
+                    // KMin/KMax lerp; "grade <sub> <k>" authors one rung.
+                    if (args.Length >= 3 && args[1].Equals("ladder", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Msg("Usage: /weaponscale script <name> ladder <anchorS> | ladder clear");
+                        return;
+                    }
+                    if (args.Length >= 4 && args[2].Equals("ladder", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var lname = args[1];
+                        var clearing = args[3].Equals("clear", StringComparison.OrdinalIgnoreCase);
+                        if (!clearing && !TryParseDouble(args[3], out _))
+                        {
+                            Msg("Usage: /weaponscale script <name> ladder <anchorS> | ladder clear");
+                            return;
+                        }
+                        TryParseDouble(args[3], out var anchor);
+                        var lfound = false;
+                        WeaponScalingManager.Mutate(cfg =>
+                        {
+                            if (!cfg.Scripts.TryGetValue(lname, out var s)) return;
+                            lfound = true;
+                            // Family-specific by necessity: the rungs divide out EV normalization,
+                            // which depends on this family's variance (see BuildLadder).
+                            s.Grades = clearing
+                                ? null
+                                : WeaponScalingManager.BuildLadder(anchor, s.Variance, cfg.TightenStrength);
+                        });
+                        Msg(!lfound ? $"Script {lname} not found (use script add)."
+                            : clearing ? $"Script {lname} ladder cleared - back to the kmin/kmax lerp."
+                            : $"Script {lname} ladder seeded from S = {anchor:0.####} (+18 pct per grade, 16 rungs).");
+                        return;
+                    }
+                    if (args.Length >= 5 && args[2].Equals("grade", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var gname = args[1];
+                        var subGrade = args[3];
+                        if (!TryParseDouble(args[4], out var gk) || gk < 0)
+                        {
+                            Msg("Usage: /weaponscale script <name> grade <S|A+|A|A-|...|F-> <k>");
+                            return;
+                        }
+                        var band = WeaponScalingManager.SubGradeBands
+                            .FirstOrDefault(b => b.Grade.Equals(subGrade, StringComparison.OrdinalIgnoreCase));
+                        if (band.Grade == null)
+                        {
+                            Msg("script grade: unknown sub-grade. Use " +
+                                string.Join(" ", WeaponScalingManager.SubGradeBands.Select(b => b.Grade)));
+                            return;
+                        }
+                        var gfound = false;
+                        WeaponScalingManager.Mutate(cfg =>
+                        {
+                            if (!cfg.Scripts.TryGetValue(gname, out var s)) return;
+                            gfound = true;
+                            // Authoring one rung on a lerp-only family promotes it to a ladder,
+                            // seeded from the lerp so the other 15 rungs keep their current values
+                            // (Normalize completes partials the same way).
+                            s.Grades ??= new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                            s.Grades[band.Grade] = gk;
+                        });
+                        Msg(gfound ? $"Script {gname} grade {band.Grade} k = {gk:0.####}."
+                                   : $"Script {gname} not found (use script add).");
+                        return;
+                    }
+
                     if (args.Length < 4 || !TryParseDouble(args[3], out var v))
                     {
-                        Msg("Usage: /weaponscale script <name> kmin|kmax <v>  |  script add <name> [kmin] [kmax]  |  script remove <name>");
+                        Msg("Usage: /weaponscale script <name> kmin|kmax|variance <v>  |  script <name> ladder <anchorS>  |  "
+                            + "script <name> grade <sub> <k>  |  script add <name> [kmin] [kmax]  |  script remove <name>");
                         return;
                     }
                     var scriptName = args[1];
                     var kField = args[2].ToLowerInvariant();
-                    if (kField != "kmin" && kField != "kmax")
+                    if (kField != "kmin" && kField != "kmax" && kField != "variance")
                     {
-                        Msg("script: field must be kmin or kmax.");
+                        Msg("script: field must be kmin, kmax or variance.");
                         return;
                     }
                     var scriptFound = false;
@@ -242,7 +415,16 @@ namespace ACE.Server.Command.Handlers
                         if (!cfg.Scripts.TryGetValue(scriptName, out var s)) return;
                         scriptFound = true;
                         if (kField == "kmin") s.KMin = v;
-                        else s.KMax = v;
+                        else if (kField == "kmax") s.KMax = v;
+                        else
+                        {
+                            // Keep dealt damage flat across a variance edit — the ladder stores k
+                            // with EV normalization divided out, so it has to be re-priced.
+                            var oldVar = s.Variance;
+                            s.Variance = Math.Max(0.0, Math.Min(0.95, v));
+                            WeaponScalingManager.RebaseLadder(s, oldVar, cfg.TightenStrength,
+                                                              s.Variance, cfg.TightenStrength);
+                        }
                     });
                     Msg(scriptFound ? $"Script {scriptName} {kField} = {v:0.###}." : $"Script {scriptName} not found (use script add).");
                     return;
@@ -264,6 +446,50 @@ namespace ACE.Server.Command.Handlers
                     return;
                 }
 
+                case "grade":
+                {
+                    if (args.Length < 3 || !TryParseDouble(args[2], out var gw))
+                    {
+                        Msg("Usage: /weaponscale grade <S|A|B|C|D|F> <weight>  (relative weight, >= 0; 0 = that grade never drops)");
+                        return;
+                    }
+                    var gradeKey = args[1].ToUpperInvariant();
+                    if (!Managers.WeaponScaling.WeaponScalingManager.GradeBands.Any(b => b.Grade == gradeKey))
+                    {
+                        Msg("grade: must be one of S A B C D F.");
+                        return;
+                    }
+                    var gClamped = Math.Max(0.0, gw);
+                    WeaponScalingManager.Mutate(cfg =>
+                    {
+                        cfg.GradeWeights ??= new System.Collections.Generic.Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                        cfg.GradeWeights[gradeKey] = gClamped;
+                    });
+                    Msg($"grade {gradeKey} weight = {gClamped:0.####}.");
+                    return;
+                }
+
+                case "tighten":
+                {
+                    if (args.Length < 2 || !TryParseDouble(args[1], out var v))
+                    {
+                        Msg("Usage: /weaponscale tighten <v>  (0-1; 0.7 = a q1000 weapon sheds 70 pct of its family variance)");
+                        return;
+                    }
+                    var clamped = Math.Max(0.0, Math.Min(1.0, v));
+                    WeaponScalingManager.Mutate(cfg =>
+                    {
+                        // Tighten is global, so EVERY authored ladder needs re-pricing — same
+                        // EV-neutrality rule as a per-family variance edit.
+                        var oldTighten = cfg.TightenStrength;
+                        cfg.TightenStrength = clamped;
+                        foreach (var s in cfg.Scripts.Values)
+                            WeaponScalingManager.RebaseLadder(s, s.Variance, oldTighten, s.Variance, clamped);
+                    });
+                    Msg($"tighten = {clamped:0.###}. (Authored ladders re-priced to hold dealt damage flat.)");
+                    return;
+                }
+
                 case "reset":
                 {
                     WeaponScalingManager.Mutate(cfg =>
@@ -274,6 +500,8 @@ namespace ACE.Server.Command.Handlers
                         cfg.Scripts = d.Scripts;
                         cfg.KcMin = d.KcMin;
                         cfg.KcMax = d.KcMax;
+                        cfg.TightenStrength = d.TightenStrength;
+                        cfg.GradeWeights = d.GradeWeights;
                     });
                     Msg("Weapon aug-scaling config reset to locked launch defaults (system DISABLED).");
                     return;

@@ -35,7 +35,7 @@ namespace ACE.Server.Network.Structure
 
         public double Enchantment_WeaponDefense;    // gets sent elsewhere, calculating here for consistency
 
-        public WeaponProfile(WorldObject weapon)
+        public WeaponProfile(WorldObject weapon, Player examiner = null)
         {
             Weapon = weapon;
 
@@ -54,21 +54,35 @@ namespace ACE.Server.Network.Structure
             DamageVariance = GetDamageVariance(weapon);
 
             // Weapon aug-scaling: fold the scaling term into the displayed range. WIELDED = the
-            // wielder's live value; UNWIELDED = the wield-FLOOR value (k x min-wield augs) — an
-            // honest minimum for any possible hands, so drops read like real weapons instead of
-            // a bare static range (owner 2026-08-01). In combat the term is a flat post-roll add
-            // (variance never touches it), so the reported variance is re-derived to keep the
-            // displayed MIN true: min = staticMin + term, max = staticMax + term — without this
-            // the client applies the weapon's variance to the whole and understates min ~2x.
+            // wielder's live value; UNWIELDED = the EXAMINER's own value (owner 2026-08-03), so a
+            // drop in a corpse or pack reads as what it would do in YOUR hands — floored at the
+            // tier's wield-floor value, which no real wielder can be below. (Superseded: showing
+            // every examiner the tier floor, owner 2026-08-01 — honest, but it made two drops
+            // looted at different aug counts read identically and confused the owner repeatedly.)
+            // In combat the term is a flat post-roll add (variance never touches it), so the
+            // reported variance is re-derived to keep the displayed MIN true: min = staticMin +
+            // term, max = staticMax + term — without this the client applies the weapon's
+            // variance to the whole and understates min ~2x.
             var augTerm = weapon.Wielder is Player wielderPlayer
                 ? (int)ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(weapon, wielderPlayer)
-                : (int)ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFloorBonus(weapon);
+                : (int)ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetExamineBonus(weapon, examiner);
             if (augTerm > 0)
             {
-                var trueMin = Damage * (1.0 - DamageVariance) + augTerm;
-                Damage = (uint)(Damage + augTerm);
-                Enchantment_Damage += augTerm;   // green "buffed" coloring client-side
-                DamageVariance = Damage > 0 ? Math.Max(0.0, 1.0 - trueMin / Damage) : 0.0;
+                if (ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetEffectiveVariance(weapon, out var vEff))
+                {
+                    // Scheme C: combat rolls the WHOLE envelope down from max by the quality-
+                    // tightened family variance — display exactly that so examine = what you roll.
+                    Damage = (uint)(Damage + augTerm);
+                    Enchantment_Damage += augTerm;   // green "buffed" coloring client-side
+                    DamageVariance = vEff;
+                }
+                else
+                {
+                    var trueMin = Damage * (1.0 - DamageVariance) + augTerm;
+                    Damage = (uint)(Damage + augTerm);
+                    Enchantment_Damage += augTerm;   // green "buffed" coloring client-side
+                    DamageVariance = Damage > 0 ? Math.Max(0.0, 1.0 - trueMin / Damage) : 0.0;
+                }
             }
             DamageMod = GetDamageMultiplier(weapon);
             WeaponLength = weapon.GetProperty(PropertyFloat.WeaponLength) ?? 1.0f;

@@ -105,8 +105,40 @@ namespace ACE.Server.Managers.WeaponScaling
             if (tierRow == null)
                 return false;
 
-            k = WeaponScalingManager.ResolveFromQuality(script.KMin, script.KMax, quality.Value);
+            k = WeaponScalingManager.ResolveScriptK(script, quality.Value);
             return true;
+        }
+
+        /// <summary>Scheme C (2026-08-03): the quality-tightened per-hit variance for a stamped
+        /// melee weapon. Non-crit hits roll the WHOLE envelope (base + term) down from max by
+        /// this fraction: v_eff = family Variance x (1 - TightenStrength x quality/1000).
+        /// False = old flat-hit behavior (launchers, casters, unstamped, disabled, or a store
+        /// without the Scheme C fields — Variance/TightenStrength default 0).
+        ///
+        /// SUB-GRADE SNAP (owner 2026-08-03): on a family with an authored grade ladder, quality
+        /// snaps to its sub-grade MIDPOINT first, so a B+ is fully determined by its label — same
+        /// max AND same min on every B+ of that family. Without the snap, k would step per
+        /// sub-grade while variance kept sliding continuously, and two identically-labelled
+        /// weapons would roll different floors. Ladder-less families (launchers, casters, legacy
+        /// stores) keep the continuous read — exactly their previous behavior.</summary>
+        public static bool TryGetEffectiveVariance(WorldObject weapon, out double vEff)
+        {
+            vEff = 0;
+
+            if (weapon is MissileLauncher || !TryResolve(weapon, out _, out _))
+                return false;
+
+            var cfg = WeaponScalingManager.Current;
+            var family = GetFamilyKey(weapon);
+            if (family == null || !cfg.Scripts.TryGetValue(family, out var script) || script.Variance <= 0)
+                return false;
+
+            var quality = weapon.GetProperty(PropertyInt.WeaponAugScaleQuality) ?? 0;
+            if (script.HasLadder)
+                quality = WeaponScalingManager.GetSubGradeBand(quality).QMid;
+
+            vEff = WeaponScalingManager.EffectiveVariance(script.Variance, cfg.TightenStrength, quality);
+            return vEff > 0;
         }
 
         /// <summary>The per-strike flat damage term: k(quality) x min(wielder's item augs, tier cap).
@@ -121,7 +153,20 @@ namespace ACE.Server.Managers.WeaponScaling
                 return 0f;
 
             var augs = wielder.LuminanceAugmentItemCount ?? 0;
-            return (float)(k * Math.Min(augs, tierRow.Cap));
+            return (float)(k * Math.Min(augs, tierRow.Cap)) * EvNormalization(weapon);
+        }
+
+        /// <summary>LIVE EV normalization (owner 2026-08-03): editing a family's Variance
+        /// auto-rebalances its flat term, so wilder families never fall behind steady ones —
+        /// families all author the SAME k and stay equal in total expected damage at the
+        /// CB+CS reference build (p = 0.5 crit chance from the 400-skill imbue cap, M = 3.0
+        /// = player_crit_damage_cap): m = [(1-p)+pM] / [(1-p)(1-v_eff/2)+pM] = 2/(2-0.25v).
+        /// 1.0 for zero-variance weapons (launchers/casters/legacy) = exact old behavior.</summary>
+        private static float EvNormalization(WorldObject weapon)
+        {
+            if (!TryGetEffectiveVariance(weapon, out var vEff))
+                return 1f;
+            return (float)WeaponScalingManager.EvNormalization(vEff);
         }
 
         /// <summary>Launcher grading (owner 2026-08-01): bows have ALWAYS scaled through their
@@ -156,7 +201,24 @@ namespace ACE.Server.Managers.WeaponScaling
             if (weapon is MissileLauncher || !TryResolve(weapon, out var k, out var tierRow))
                 return 0f;
 
-            return (float)(k * Math.Min(tierRow.MinWieldAugs, tierRow.Cap));
+            return (float)(k * Math.Min(tierRow.MinWieldAugs, tierRow.Cap)) * EvNormalization(weapon);
+        }
+
+        /// <summary>The UNWIELDED examine value (owner 2026-08-03): read the term off the
+        /// EXAMINER's own item augs, so a drop sitting in a corpse or pack reads as what it would
+        /// do in THAT player's hands rather than a stranger's. Never below
+        /// <see cref="GetFloorBonus"/> — the wield gate guarantees no real wielder has fewer augs
+        /// than the tier floor, so a sub-floor examiner would otherwise be shown a number this
+        /// weapon can never actually produce for anyone. Supersedes the 2026-08-01
+        /// tier-floor-for-every-examiner display.</summary>
+        public static float GetExamineBonus(WorldObject weapon, Player examiner)
+        {
+            var floor = GetFloorBonus(weapon);
+
+            if (examiner == null)
+                return floor;
+
+            return Math.Max(floor, GetFlatBonus(weapon, examiner));
         }
 
         /// <summary>The crit-damage term: kc(quality) x melee_missile_aug_crit_modifier x
