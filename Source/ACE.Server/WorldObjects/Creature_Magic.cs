@@ -182,7 +182,8 @@ namespace ACE.Server.WorldObjects
             // non-endgame/no-match -> normal calc below).
             var zoneMd = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
             if (zoneMd != null && zoneMd.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicDefense))
-                return (uint)Math.Round(zoneMd.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicDefense));
+                // floor at 0: a negative authored value would wrap through the uint cast to ~4B
+                return (uint)Math.Round(Math.Max(0.0, zoneMd.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicDefense)));
 
             var current = GetCreatureSkill(Skill.MagicDefense).Current;
             var lumAug = this.LuminanceAugmentMagicDefenseCount ?? 0;

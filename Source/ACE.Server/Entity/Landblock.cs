@@ -527,8 +527,11 @@ namespace ACE.Server.Entity
                 CreateWorldObjectsCompleted = true;
 
                 if (ServerConfig.landblock_lifecycle_diag_verbose.Value)
+                    // pendingAdditions included: AddWorldObject always stages new objects there
+                    // (they merge into worldObjects NEXT tick), so worldObjects.Count alone reads
+                    // 0 on a healthy fresh spawn — a false void-block alarm (owner 2026-08-02).
                     log.Warn($"[LbLife] SPAWN-COMPLETE {Id.Landblock:X4} v={VariationId?.ToString() ?? "null"} " +
-                             $"attempt={initSpawnAttempts} objects={worldObjects.Count}");
+                             $"attempt={initSpawnAttempts} objects={worldObjects.Count + pendingAdditions.Count}");
 
                 // Spawn boundary markers after normal objects (two independent systems, each self-gating)
                 SpawnPrestigeBoundaryMarkers();

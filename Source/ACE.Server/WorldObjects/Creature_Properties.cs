@@ -186,26 +186,18 @@ namespace ACE.Server.WorldObjects
 
             // v11+ monster damage-taken mitigation: scale ALL incoming damage against endgame mobs by a flat factor so they are
             // hard to kill via mitigation (not evasion). Applied after armor/resist, so it is rending-proof. Bosses (IsEmpowerSource)
-            // take even less. Per-tier ramp is 0 by default (flat). Player defenders never hit this (Player overrides GetResistanceMod).
+            // take even less. Player defenders never hit this (Player overrides GetResistanceMod). Prestige-gated -> dormant while
+            // prestige is off. The zone damage_taken_mult stat that used to override this was REMOVED 2026-08-03 (owner):
+            // redundant with damage_resist_rating.
             if (ServerConfig.v11_mob_dmg_taken_enabled.Value && !(this is Player)
-                && ((zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult))
-                    || (ACE.Server.Managers.PrestigeManager.SystemsEnabled
-                        && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)))
+                && ACE.Server.Managers.PrestigeManager.SystemsEnabled
+                && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)
             {
-                double dmgMult;
-                if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult))
-                {
-                    // Zone profile value is resolved per-variant (boss/minion) and per-tier already, so don't
-                    // re-apply the boss factor or per-tier reduction on top of it.
-                    dmgMult = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageTakenMult);
-                }
-                else
-                {
-                    dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.v11_mob_dmg_taken_mult.Value;
+                var dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.v11_mob_dmg_taken_mult.Value;
 
-                    if (GetProperty(PropertyBool.IsEmpowerSource) == true)
-                        dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
-                }
+                if (GetProperty(PropertyBool.IsEmpowerSource) == true)
+                    dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
+
                 dmgMult = Math.Clamp(dmgMult, ServerConfig.v11_mob_dmg_taken_floor.Value, 1.0);
 
                 resistMod *= (float)dmgMult;

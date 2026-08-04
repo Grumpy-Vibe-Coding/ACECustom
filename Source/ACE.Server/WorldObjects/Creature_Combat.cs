@@ -516,7 +516,8 @@ namespace ACE.Server.WorldObjects
             // non-endgame/no-match -> falls through to normal skill). The v11 attack-skill floor still applies on top.
             var zoneAtk = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
             if (zoneAtk != null && zoneAtk.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackSkill))
-                return (uint)Math.Round(zoneAtk.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackSkill));
+                // floor at 0: a negative authored value would wrap through the uint cast to ~4B
+                return (uint)Math.Round(Math.Max(0.0, zoneAtk.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.AttackSkill)));
 
             var attackSkill = GetCreatureSkill(GetCurrentAttackSkill()).Current;
 
@@ -544,7 +545,8 @@ namespace ACE.Server.WorldObjects
                     ? ACE.Server.Managers.ZoneScaling.ZoneStat.MissileDefense
                     : ACE.Server.Managers.ZoneScaling.ZoneStat.MeleeDefense;
                 if (zoneDef.Has(defStat))
-                    return IsExhausted ? 0u : (uint)Math.Round(zoneDef.Get(defStat));
+                    // floor at 0: a negative authored value would wrap through the uint cast to ~4B
+                    return IsExhausted ? 0u : (uint)Math.Round(Math.Max(0.0, zoneDef.Get(defStat)));
             }
 
             var defenseSkill = combatType == CombatType.Missile ? Skill.MissileDefense : Skill.MeleeDefense;

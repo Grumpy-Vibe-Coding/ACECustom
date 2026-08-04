@@ -2107,7 +2107,7 @@ namespace ACE.Server.Command.Handlers
         /// "bigger number = stronger" and a blanket value like 1100 is meaningful.
         ///
         /// Deliberately EXCLUDED, because a blanket value there is meaningless or destructive:
-        ///   * multipliers/fractions — damage_taken_mult, vuln_cap, percent_hp_base, attack_variance,
+        ///   * multipliers/fractions — vuln_cap, percent_hp_base, attack_variance,
         ///     spell_variance, spell_damage_mult, resist_*, armor_vs_*, crit_* (1100 would one-shot everything)
         ///   * relief_* curve anchors — they are (x,y) points on a progression curve, not magnitudes
         ///   * *_chance rolls — probabilities in 0..1

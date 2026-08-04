@@ -51,7 +51,9 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string DamageRating = "damage_rating";
         public const string DamageResistRating = "damage_resist_rating";
         public const string ArmorLevel = "armor_level";
-        public const string DamageTakenMult = "damage_taken_mult";
+        // damage_taken_mult REMOVED 2026-08-03 (owner): redundant with damage_resist_rating's
+        // replace (and server-clamped to <= 1.0 anyway). The prestige-gated v11_mob_dmg_taken_*
+        // config path still exists independently.
         public const string VulnCap = "vuln_cap";
         public const string PercentHpBase = "percent_hp_base";
 
@@ -247,7 +249,7 @@ namespace ACE.Server.Managers.ZoneScaling
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
             AttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
-            DamageResistRating, ArmorLevel, DamageTakenMult, VulnCap, PercentHpBase,
+            DamageResistRating, ArmorLevel, VulnCap, PercentHpBase,
             CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
             AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,
             ReliefAugStart, ReliefAugMax, ReliefAugCap, ReliefAugBend,
