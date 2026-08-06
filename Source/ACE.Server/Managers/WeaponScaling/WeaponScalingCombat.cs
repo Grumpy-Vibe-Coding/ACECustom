@@ -190,6 +190,52 @@ namespace ACE.Server.Managers.WeaponScaling
             return true;
         }
 
+        /// <summary>The over-cap Blood Drinker damage a stamped launcher must give back, so missile
+        /// gains the same tier-gated upgrade economy melee has (owner 2026-08-06: "missile weapons
+        /// will grow at the same rate as melee"; map =
+        /// C:\AI\ZoneControl\MissileLane_Map_2026-08-06.md §4).
+        ///
+        /// The asymmetry this closes: melee's graded term is min(item augs, tier cap) and FREEZES at
+        /// the cap, so the next tier's weapon is what resumes growth. A launcher had no such gate —
+        /// its graded piece is mod x Blood Drinker, BD is 0.5 x item augs with NO cap, and the mod
+        /// multiplies all of it. A T25 bow was therefore mechanically identical to a T11 bow forever
+        /// (T25/T11 = 1.00x, vs melee's 1.61x). Capping here takes that to 2.63x and lands per-tier
+        /// growth within 0.5pp of melee at every tier without tuning a single number.
+        ///
+        /// Applied in the MISSILE PATH, deliberately NOT to the Blood Drinker buff itself — melee
+        /// shares that buff and must keep its uncapped BD, which is the only channel melee has left
+        /// once its own term caps.
+        ///
+        /// Bounded by the aura damage actually present so it can never invent a negative bonus: when
+        /// the aug term IS there (self-cast BD, the endgame norm) aura >= 0.5 x augs > the excess, so
+        /// the excess subtracts exactly; when it is NOT (a BD that missed selfCastEligible, so no aug
+        /// term was ever granted) the clamp bites and only the small base value is removed. Fails
+        /// safe rather than exact, on a case that costs a few points.
+        ///
+        /// 0 under every existing gate — unstamped legacy launcher, unknown family, non-player
+        /// wielder, or the master switch off, so the kill switch still restores pre-system behavior
+        /// exactly.</summary>
+        public static float GetLauncherAugExcess(WorldObject weapon, Creature wielder)
+        {
+            if (!(weapon is MissileLauncher) || !(wielder is Player player))
+                return 0f;
+
+            if (!TryResolve(weapon, out _, out var tierRow))
+                return 0f;
+
+            var over = (player.LuminanceAugmentItemCount ?? 0) - tierRow.Cap;
+            if (over <= 0)
+                return 0f;
+
+            var aura = weapon.EnchantmentManager.GetAdditiveMod(PropertyInt.WeaponAuraDamage);
+            if (weapon.IsEnchantable)
+                aura += wielder.EnchantmentManager.GetAdditiveMod(PropertyInt.WeaponAuraDamage);
+            if (aura <= 0)
+                return 0f;
+
+            return (float)Math.Min(0.5 * over, aura);
+        }
+
         /// <summary>The GUARANTEED-at-equip term: k(quality) x the tier's wield floor (capped).
         /// Because the item-aug wield req means no possible wielder has fewer augs than the floor,
         /// this is an honest minimum for ANY hands — shown as the weapon's "natural" damage to

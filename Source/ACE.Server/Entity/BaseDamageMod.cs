@@ -67,6 +67,12 @@ namespace ACE.Server.Entity
 
                 DamageMod += wielder.EnchantmentManager.GetDamageMod();
             }
+
+            // Missile tier cap (owner 2026-08-06): a stamped launcher gives back the Blood Drinker
+            // damage earned ABOVE its tier's aug cap, so bows gain the upgrade economy melee already
+            // has. Runs LAST, after both DamageBonus contributions are in, so the clamp inside sees
+            // the wielder's full aura. Melee is untouched — it keeps uncapped BD by design.
+            DamageBonus -= Managers.WeaponScaling.WeaponScalingCombat.GetLauncherAugExcess(weapon, wielder);
         }
     }
 }
