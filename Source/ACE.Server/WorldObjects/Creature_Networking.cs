@@ -155,6 +155,19 @@ namespace ACE.Server.WorldObjects
                 {
                     if (!w.ClothingBase.HasValue || !DatManager.PortalDat.TryReadClothingTable((uint)w.ClothingBase, out item))
                     {
+                        // AddSetupAsClothingBase maps the ITEM's setup parts onto the CHARACTER's
+                        // animation parts by POSITIONAL INDEX. That is only meaningful for pieces
+                        // authored as body-part overlays (armour/clothing), where index i means the
+                        // same slot on both. A cloak is a standalone object with its own model
+                        // space, so index i is NOT the character's part i - the mesh lands on the
+                        // wrong slot with the wrong orientation (owner 2026-08-04: the T11 Cloak
+                        // rendered "horizontal not vertical").
+                        // Draw nothing rather than something mangled. This is damage control only:
+                        // the real fix is the missing ClothingBase entry - see
+                        // ClothingBase_Missing_2026-08-04.md.
+                        if ((w.CurrentWieldedLocation & EquipMask.Cloak) != 0)
+                            continue;
+
                         objDesc = AddSetupAsClothingBase(objDesc, w);
                         // Add any potentially added parts back into the coverage list
                         foreach(var a in objDesc.AnimPartChanges)

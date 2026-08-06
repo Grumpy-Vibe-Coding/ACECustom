@@ -95,7 +95,8 @@ namespace ACE.Server.Command.Handlers
         }
 
         /// <summary>Pipe/tilde wire format (house style; the plugin has no JSON parser):
-        /// [[ZCW]]|enabled=1|kc=0.6~0.8|tighten=0.7|tiers=t~cap~minwield,...|scripts=name~kmin~kmax~variance,...</summary>
+        /// [[ZCW]]|enabled=1|kc=0.6~0.8|tighten=0.7|critcap=3|grades=...|tiers=t~cap~minwield,...
+        /// |scripts=name~kmin~kmax~variance,...   (grade LADDERS ride separate [[ZCWK]] messages)</summary>
         private static string BuildPayload()
         {
             var cfg = WeaponScalingManager.Current;
@@ -103,6 +104,10 @@ namespace ACE.Server.Command.Handlers
             sb.Append("|enabled=").Append(cfg.Enabled ? '1' : '0');
             sb.Append("|kc=").Append(F(cfg.KcMin)).Append('~').Append(F(cfg.KcMax));
             sb.Append("|tighten=").Append(F(cfg.TightenStrength));
+            // player_crit_damage_cap rides the payload so the plugin's Damage Chart crit row is the
+            // SERVER's number. A manually-typed cap that drifts from the config is exactly the kind
+            // of quietly-wrong figure the chart exists to eliminate.
+            sb.Append("|critcap=").Append(F(Managers.ServerConfig.player_crit_damage_cap.Value));
             sb.Append("|grades=").Append(string.Join(",",
                 Managers.WeaponScaling.WeaponScalingManager.GradeBands
                     .Select(b => $"{b.Grade}~{F(cfg.GradeWeights != null && cfg.GradeWeights.TryGetValue(b.Grade, out var gw) ? gw : 0)}")));
