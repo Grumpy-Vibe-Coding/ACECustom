@@ -67,6 +67,52 @@ namespace ACE.Server.Managers.WeaponScaling
         // the family's wildness, F keeps ~83 pct. 0 (old stores) = no tightening.
         public double TightenStrength { get; set; }
 
+        // Launcher tier scaling (owner 2026-08-06). A launcher's damage modifier gains this
+        // fraction per TIER STEP the wielder's item augs have actually unlocked, gated on
+        // min(augs, the weapon tier's Cap). Bows therefore inherit melee's dead zone: once a
+        // tier's cap climbs past what the player owns, a higher-tier bow gives nothing —
+        // exactly as a higher-tier melee weapon already gives nothing (owner: "Bows should
+        // track min(augs, cap) like melee does").
+        //
+        // T11 is the baseline and higher tiers only ADD. Nothing is ever subtracted, so item
+        // augs always pay and Blood Drinker is never touched.
+        //
+        // REPLACES the missile aug cap shipped and reverted the same day, which produced tier
+        // growth by clawing BACK over-cap Blood Drinker. That froze a T11 bow user's BD
+        // contribution at 1,250 no matter how many augs they bought (owner: "Everything
+        // dealing with Blood Drinker is supposed to stay uncapped. Capping BD destroys the
+        // purpose of increasing Item Augs completely"). Do not reintroduce a subtractive form.
+        //
+        // STRAIGHT step, deliberately not compounding — G^steps snowballs over 14 tiers
+        // (G=1.09 matches melee's upgrade feel but lands bows at 2.41x melee by T25).
+        //
+        // SIZED AT 0.06 for the tiers players are actually in. Owner 2026-08-06: melee should be
+        // "about 20-25 pct ahead starting out... Melee has to get close to mobs, missile shoots
+        // from distance so the 20 pct difference is fine", and on the far end, "T25 is years away
+        // — don't need to plan around that". So this is tuned on T11-T15, not on the asymptote.
+        //
+        // Melee sits 26 pct ahead at T11, which is the owner's target and is fixed by kMin/kMax:
+        // steps is 0 at T11 by construction, so this value CANNOT move the starting gap. Raising
+        // the bow's floor means editing the family's k range instead.
+        //
+        // Buys +4.0 pct per unlocked step at fixed augs against melee's +6.1 pct. The remaining
+        // gap matters less than it reads: the WIELD FLOOR means augs cannot be held fixed across
+        // many tiers anyway (at 3,500 augs only T11-T14 are wieldable), so the upgrade players
+        // actually experience is "bought augs, can now wield a better bow" — where bows already
+        // gain +11.6 pct per tier before this term exists at all.
+        //
+        // Far out this does cross over (bow ~38 pct ahead by T25 at full augs). Deliberately not
+        // designed around — revisit if the live ladder ever reaches those tiers.
+        //
+        // Bows also SHOULD have a smaller fixed-aug step than melee. Melee's +6.1 pct is
+        // recovering waste — a T11 melee user at 3,500 augs draws value from only 2,500 of
+        // them and the upgrade unlocks the rest. A bow user has no waste; BD is uncapped and
+        // fully multiplied, so all 3,500 already count. There is less there to hand back.
+        //
+        // INITIALIZED rather than defaulted to 0 so stores written before this field still get
+        // the scaling; an explicit 0 disables it.
+        public double LauncherTierStep { get; set; } = 0.06;
+
         // Grade drop weights (owner 2026-08-02): the quality roll picks a GRADE from these
         // weights, then rolls uniform INSIDE that grade's quality band — frequency decoupled
         // from what a grade MEANS (the band cutoffs stay fixed; S is always the single perfect
@@ -424,6 +470,8 @@ namespace ACE.Server.Managers.WeaponScaling
         /// values can arrive inverted or negative — repair rather than reject.</summary>
         public static WeaponScalingConfig Normalize(WeaponScalingConfig cfg)
         {
+            cfg.LauncherTierStep = Math.Max(0, cfg.LauncherTierStep);
+
             cfg.Tiers ??= new List<WeaponScalingTier>();
             cfg.Tiers.RemoveAll(t => t == null);
             cfg.Tiers = cfg.Tiers.GroupBy(t => t.Tier).Select(g => g.First()).OrderBy(t => t.Tier).ToList();
@@ -547,16 +595,88 @@ namespace ACE.Server.Managers.WeaponScaling
             return "F";
         }
 
-        /// <summary>k for a script row + quality roll. Authored LADDER when the family has one
-        /// (flat per sub-grade — NO interpolation, owner 2026-08-03: 16 authored values were the
-        /// whole point, and lerping between them hands control back to the band geometry that
-        /// caused the bunching); otherwise the legacy KMin/KMax lerp, which is what launchers
-        /// (mod band) and casters (inert) and any pre-ladder store still use.</summary>
+        /// <summary>k for a script row + quality roll. On a family with an authored LADDER, k
+        /// INTERPOLATES BETWEEN the two nearest rungs — rungs are anchored at their sub-grade
+        /// midpoints, and a roll between two midpoints prices between their k values.
+        ///
+        /// REVISED 2026-08-06 (owner: "those 2 weapons should not be identical damage"), replacing
+        /// the 08-03 flat-per-sub-grade resolution. The defect the ladder was built to fix was never
+        /// interpolation itself — it was interpolating across RAW QUALITY, whose grade bands are
+        /// wildly uneven (S->A spans 50 quality points, D->F spans 325), which bunched S/A/B within
+        /// +7.5 pct of each other. Interpolating between EVENLY-SPACED RUNGS keeps that fix intact:
+        /// the rungs still sit +5.67 pct apart in dealt damage and S->F- is still 2.288x, but every
+        /// distinct roll now yields distinct damage, so the appraisal percent means something.
+        ///
+        /// Lerp is in k-space, which keeps every rung's authored value EXACT at its midpoint and
+        /// leaves only a second-order ripple in dealt damage between midpoints (EvNormalization
+        /// varies slightly across the gap). Rung fidelity matters more than perfect linearity
+        /// between them — the rungs are what is authored and what the Damage Chart displays.
+        ///
+        /// Ladder-less families (launchers' mod band, casters, pre-ladder stores) keep the legacy
+        /// KMin/KMax lerp across the full quality range.</summary>
         public static double ResolveScriptK(WeaponScalingScript s, int quality)
         {
-            if (s.HasLadder && s.Grades.TryGetValue(GetQualitySubGrade(quality), out var k))
-                return k;
-            return ResolveFromQuality(s.KMin, s.KMax, quality);
+            if (!s.HasLadder)
+                return ResolveFromQuality(s.KMin, s.KMax, quality);
+
+            var q = Math.Clamp(quality, 0, QualityMax);
+
+            // SubGradeBands is ordered best -> worst, so midpoints DESCEND. Walk to the first rung
+            // whose midpoint the roll is at or above, then lerp against the rung one better.
+            for (var i = 0; i < SubGradeBands.Length; i++)
+            {
+                if (q < SubGradeBands[i].QMid)
+                    continue;
+
+                if (!s.Grades.TryGetValue(SubGradeBands[i].Grade, out var kLow))
+                    break;
+
+                if (i == 0)                       // at or above the S midpoint (q1000) — no rung above
+                    return kLow;
+
+                if (!s.Grades.TryGetValue(SubGradeBands[i - 1].Grade, out var kHigh))
+                    return kLow;
+
+                var span = SubGradeBands[i - 1].QMid - SubGradeBands[i].QMid;
+                if (span <= 0)
+                    return kLow;
+
+                var t = (q - SubGradeBands[i].QMid) / (double)span;
+                return kLow + (kHigh - kLow) * t;
+            }
+
+            // Below the worst rung's midpoint (F- sits at q83): F- is the floor, nothing beneath it.
+            return s.Grades.TryGetValue(SubGradeBands[SubGradeBands.Length - 1].Grade, out var kFloor)
+                ? kFloor
+                : ResolveFromQuality(s.KMin, s.KMax, q);
+        }
+
+        /// <summary>The weapon-term damage a roll actually produces, in the same units the combat
+        /// path deals it: k(quality) x EvNormalization(v_eff(quality)). Augs and tier cap are
+        /// deliberately excluded — they are wielder-side and identical for any two weapons being
+        /// compared, so this is the pure weapon contribution.</summary>
+        public static double DealtWeaponTerm(WeaponScalingScript s, double tighten, int quality)
+        {
+            if (s == null)
+                return 0;
+            var k = ResolveScriptK(s, quality);
+            if (s.Variance <= 0)
+                return k;                          // launchers/casters: no variance, no normalization
+            return k * EvNormalization(EffectiveVariance(s.Variance, tighten, quality));
+        }
+
+        /// <summary>Percent of a PERFECT roll's damage this quality delivers — the appraisal's
+        /// "pct of max" (owner 2026-08-06: "everyone really likes the percent and it needs to be
+        /// accurate"). Measures DAMAGE, not the quality percentile: the old display printed
+        /// quality/10, so an F- weapon read "0 pct of max" while dealing 41.7 pct of an S weapon's
+        /// damage, and — before the inter-rung lerp landed — two identical B+ weapons read 86 pct
+        /// and 88 pct. Range is therefore ~42-100 pct on a laddered family, not 0-100.</summary>
+        public static int RelativeDamagePercent(WeaponScalingScript s, double tighten, int quality)
+        {
+            var max = DealtWeaponTerm(s, tighten, QualityMax);
+            if (max <= 0)
+                return 0;
+            return (int)Math.Round(DealtWeaponTerm(s, tighten, quality) / max * 100.0);
         }
 
         /// <summary>The wielder-facing k for a script + quality roll, or null when the script is unknown

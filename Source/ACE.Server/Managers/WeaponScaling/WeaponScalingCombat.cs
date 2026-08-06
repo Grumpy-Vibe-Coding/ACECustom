@@ -115,12 +115,12 @@ namespace ACE.Server.Managers.WeaponScaling
         /// False = old flat-hit behavior (launchers, casters, unstamped, disabled, or a store
         /// without the Scheme C fields — Variance/TightenStrength default 0).
         ///
-        /// SUB-GRADE SNAP (owner 2026-08-03): on a family with an authored grade ladder, quality
-        /// snaps to its sub-grade MIDPOINT first, so a B+ is fully determined by its label — same
-        /// max AND same min on every B+ of that family. Without the snap, k would step per
-        /// sub-grade while variance kept sliding continuously, and two identically-labelled
-        /// weapons would roll different floors. Ladder-less families (launchers, casters, legacy
-        /// stores) keep the continuous read — exactly their previous behavior.</summary>
+        /// SUB-GRADE SNAP REMOVED 2026-08-06 (owner: "those 2 weapons should not be identical
+        /// damage"). The 08-03 snap rounded quality to its sub-grade midpoint so every B+ rolled
+        /// the same floor as well as the same max. It existed to keep variance in step with k,
+        /// which back then resolved flat per sub-grade — now that k interpolates BETWEEN rungs
+        /// (see WeaponScalingManager.ResolveScriptK), a snapped variance would be the thing out of
+        /// step instead, freezing the min while the max slid. Continuous on every family again.</summary>
         public static bool TryGetEffectiveVariance(WorldObject weapon, out double vEff)
         {
             vEff = 0;
@@ -134,8 +134,6 @@ namespace ACE.Server.Managers.WeaponScaling
                 return false;
 
             var quality = weapon.GetProperty(PropertyInt.WeaponAugScaleQuality) ?? 0;
-            if (script.HasLadder)
-                quality = WeaponScalingManager.GetSubGradeBand(quality).QMid;
 
             vEff = WeaponScalingManager.EffectiveVariance(script.Variance, cfg.TightenStrength, quality);
             return vEff > 0;
@@ -179,61 +177,55 @@ namespace ACE.Server.Managers.WeaponScaling
         /// the authored DamageMod property is the fallback whenever this returns false (system
         /// disabled, unstamped legacy launcher, unknown family) — the kill switch restores
         /// pre-system behavior exactly.</summary>
-        public static bool TryGetLauncherDamageMod(WorldObject weapon, out float damageMod)
+        public static bool TryGetLauncherDamageMod(WorldObject weapon, Player holder, out float damageMod)
         {
             damageMod = 0f;
 
-            if (!(weapon is MissileLauncher) || !TryResolve(weapon, out var k, out _))
+            if (!(weapon is MissileLauncher) || !TryResolve(weapon, out var k, out var tierRow))
                 return false;
+
+            var cfg = WeaponScalingManager.Current;
+            if (cfg.LauncherTierStep > 0)
+            {
+                // Floored at the tier's wield floor for the same reason GetExamineBonus is: the
+                // wield gate guarantees no real wielder is below it, so an unwielded examine
+                // (holder null, or a viewer short of the requirement) reads the honest minimum for
+                // any hands rather than a modifier this weapon can never actually produce. A no-op
+                // for a genuine wielder, who by definition already clears the floor.
+                var augs = Math.Max(tierRow.MinWieldAugs, holder?.LuminanceAugmentItemCount ?? 0);
+                k *= 1.0 + cfg.LauncherTierStep * LauncherTierSteps(cfg, tierRow, augs);
+            }
 
             damageMod = (float)k;
             return true;
         }
 
-        /// <summary>The over-cap Blood Drinker damage a stamped launcher must give back, so missile
-        /// gains the same tier-gated upgrade economy melee has (owner 2026-08-06: "missile weapons
-        /// will grow at the same rate as melee"; map =
-        /// C:\AI\ZoneControl\MissileLane_Map_2026-08-06.md §4).
+        /// <summary>How many TIER STEPS this launcher's holder has actually unlocked (owner
+        /// 2026-08-06: "Bows should track min(augs, cap) like melee does").
         ///
-        /// The asymmetry this closes: melee's graded term is min(item augs, tier cap) and FREEZES at
-        /// the cap, so the next tier's weapon is what resumes growth. A launcher had no such gate —
-        /// its graded piece is mod x Blood Drinker, BD is 0.5 x item augs with NO cap, and the mod
-        /// multiplies all of it. A T25 bow was therefore mechanically identical to a T11 bow forever
-        /// (T25/T11 = 1.00x, vs melee's 1.61x). Capping here takes that to 2.63x and lands per-tier
-        /// growth within 0.5pp of melee at every tier without tuning a single number.
+        /// Gated by the WEAPON's own cap, so augs past it belong to a tier this weapon is not —
+        /// which reproduces melee's dead zone exactly: at 3,500 augs a T13 bow and a T25 bow
+        /// return the same step count, just as a T13 and T25 melee weapon already share the same
+        /// min(augs, cap). A higher tier you cannot fill is worth nothing in either lane.
         ///
-        /// Applied in the MISSILE PATH, deliberately NOT to the Blood Drinker buff itself — melee
-        /// shares that buff and must keep its uncapped BD, which is the only channel melee has left
-        /// once its own term caps.
+        /// Counted off the AUTHORED tier rows rather than assuming the code seed's 500 spacing.
+        /// Caps are hand-authored and the store is authoritative — the live grade weights already
+        /// differ from the seed (A 3 / B 5 / F 50 vs A 5 / B 10 / F 44.9), so nothing here may
+        /// assume seed values.
         ///
-        /// Bounded by the aura damage actually present so it can never invent a negative bonus: when
-        /// the aug term IS there (self-cast BD, the endgame norm) aura >= 0.5 x augs > the excess, so
-        /// the excess subtracts exactly; when it is NOT (a BD that missed selfCastEligible, so no aug
-        /// term was ever granted) the clamp bites and only the small base value is removed. Fails
-        /// safe rather than exact, on a case that costs a few points.
-        ///
-        /// 0 under every existing gate — unstamped legacy launcher, unknown family, non-player
-        /// wielder, or the master switch off, so the kill switch still restores pre-system behavior
-        /// exactly.</summary>
-        public static float GetLauncherAugExcess(WorldObject weapon, Creature wielder)
+        /// Takes a raw aug count rather than a Player so the whole rule is unit-testable without a
+        /// live world object; callers apply the wield floor.</summary>
+        public static int LauncherTierSteps(WeaponScalingConfig cfg, WeaponScalingTier tierRow, long augs)
         {
-            if (!(weapon is MissileLauncher) || !(wielder is Player player))
-                return 0f;
+            var effective = Math.Min(augs, tierRow.Cap);
 
-            if (!TryResolve(weapon, out _, out var tierRow))
-                return 0f;
+            var unlocked = 0;
+            foreach (var t in cfg.Tiers)
+                if (t.Cap <= effective)
+                    unlocked++;
 
-            var over = (player.LuminanceAugmentItemCount ?? 0) - tierRow.Cap;
-            if (over <= 0)
-                return 0f;
-
-            var aura = weapon.EnchantmentManager.GetAdditiveMod(PropertyInt.WeaponAuraDamage);
-            if (weapon.IsEnchantable)
-                aura += wielder.EnchantmentManager.GetAdditiveMod(PropertyInt.WeaponAuraDamage);
-            if (aura <= 0)
-                return 0f;
-
-            return (float)Math.Min(0.5 * over, aura);
+            // The lowest tier is the baseline and adds nothing — T11 is 1.0x by construction.
+            return Math.Max(0, unlocked - 1);
         }
 
         /// <summary>The GUARANTEED-at-equip term: k(quality) x the tier's wield floor (capped).

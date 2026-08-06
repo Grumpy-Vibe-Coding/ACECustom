@@ -96,6 +96,94 @@ namespace ACE.Server.Tests
                 Assert.IsFalse(cfg.Scripts[lerp].HasLadder, $"{lerp} must stay on the lerp for now.");
         }
 
+        // ── Launcher tier scaling (owner 2026-08-06, LauncherTierMod_Plan) ──
+        //
+        // Replaced the missile aug cap, which produced bow tier growth by clawing BACK over-cap
+        // Blood Drinker and so froze a T11 bow user's BD contribution no matter how many item
+        // augs they bought. BD is never touched now; T11 is the baseline and tiers only ADD.
+
+        [TestMethod]
+        public void LauncherTierSteps_TrackMinAugsAndCap_InheritingMeleesDeadZone()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            WeaponScalingTier Row(int t) => cfg.Tiers.Single(x => x.Tier == t);
+
+            // A 3,500-aug player. Each tier whose cap they can actually FILL adds a step, and the
+            // count freezes the moment a tier's cap climbs past their augs.
+            Assert.AreEqual(0, WeaponScalingCombat.LauncherTierSteps(cfg, Row(11), 3500));
+            Assert.AreEqual(1, WeaponScalingCombat.LauncherTierSteps(cfg, Row(12), 3500));
+            Assert.AreEqual(2, WeaponScalingCombat.LauncherTierSteps(cfg, Row(13), 3500));
+            Assert.AreEqual(2, WeaponScalingCombat.LauncherTierSteps(cfg, Row(14), 3500));
+            Assert.AreEqual(2, WeaponScalingCombat.LauncherTierSteps(cfg, Row(25), 3500),
+                "A T25 bow in 3,500-aug hands must be worth exactly what a T13 is — the same way a "
+                + "T25 melee weapon already is, both sharing min(augs, cap). A tier you cannot fill "
+                + "is worth nothing in either lane (owner: 'Bows should track min(augs, cap) like "
+                + "melee does').");
+        }
+
+        [TestMethod]
+        public void LauncherTierSteps_BaselineTierNeverAdds_AtAnyAugCount()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            var t11 = cfg.Tiers.Single(x => x.Tier == 11);
+
+            foreach (var augs in new[] { 0, 2000, 2500, 9500, 100000 })
+                Assert.AreEqual(0, WeaponScalingCombat.LauncherTierSteps(cfg, t11, augs),
+                    "T11 is the baseline and must stay 1.0x at every aug count. This is WHY the "
+                    + "bow/melee gap at T11 (melee ~20-25 pct ahead, the owner's stated target) "
+                    + "cannot be tuned with LauncherTierStep — that needs a kMin/kMax edit.");
+        }
+
+        [TestMethod]
+        public void LauncherTierSteps_AtOwnCap_IsDistanceFromBaselineTier()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+
+            // The progression case: a player whose augs sit at their tier's cap unlocks every step.
+            foreach (var row in cfg.Tiers)
+                Assert.AreEqual(row.Tier - 11, WeaponScalingCombat.LauncherTierSteps(cfg, row, row.Cap),
+                    $"T{row.Tier} at its own cap");
+        }
+
+        [TestMethod]
+        public void LauncherTierSteps_CountsAuthoredCaps_NotTheSeeds500Spacing()
+        {
+            // Caps are hand-authored and the store is authoritative — the live grade weights
+            // already differ from the code seed — so the step count must follow the rows AS
+            // WRITTEN. Deliberately irregular spacing here.
+            var json = @"{""Enabled"":true,
+                ""Tiers"":[{""Tier"":11,""Cap"":2500,""MinWieldAugs"":2000},
+                           {""Tier"":12,""Cap"":9000,""MinWieldAugs"":2500},
+                           {""Tier"":13,""Cap"":9400,""MinWieldAugs"":9000}],
+                ""Scripts"":{""bow"":{""KMin"":3.13,""KMax"":4.00}},
+                ""KcMin"":0.6,""KcMax"":0.8}";
+            var cfg = WeaponScalingManager.Normalize(JsonConvert.DeserializeObject<WeaponScalingConfig>(json));
+            var t13 = cfg.Tiers.Single(t => t.Tier == 13);
+
+            Assert.AreEqual(0, WeaponScalingCombat.LauncherTierSteps(cfg, t13, 8999));
+            Assert.AreEqual(1, WeaponScalingCombat.LauncherTierSteps(cfg, t13, 9000));
+            Assert.AreEqual(2, WeaponScalingCombat.LauncherTierSteps(cfg, t13, 9400));
+        }
+
+        [TestMethod]
+        public void LauncherTierStep_DefaultsOnOlderStores_ButAnExplicitZeroDisablesIt()
+        {
+            // Tuned on T11-T15, the tiers players are actually in — NOT on the T25 asymptote
+            // (owner 2026-08-06: "T25 is years away, don't need to plan around that").
+            Assert.AreEqual(0.06, WeaponScalingManager.BuildDefaults().LauncherTierStep, 1e-9);
+
+            var legacy = @"{""Enabled"":true,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.06, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(legacy)).LauncherTierStep, 1e-9,
+                "A store written before this field existed must still get launcher tier scaling — "
+                + "the live store predates it and would otherwise leave bows with no tier term.");
+
+            var off = @"{""Enabled"":true,""LauncherTierStep"":0,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.0, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(off)).LauncherTierStep, 1e-9,
+                "An explicit 0 is the off switch.");
+        }
+
         [TestMethod]
         public void Ladder_EveryStepIsEvenInDEALTDamage()
         {
@@ -142,20 +230,68 @@ namespace ACE.Server.Tests
         }
 
         [TestMethod]
-        public void Ladder_ResolvesFlatPerSubGrade_NoInterpolation()
+        public void Ladder_InterpolatesBetweenRungs_RungsStayExact()
         {
             var cfg = WeaponScalingManager.BuildDefaults();
             var s = cfg.Scripts["unarmed"];
 
-            // Every quality inside the B+ band (867-899) must give the SAME k — the owner chose
-            // 16 authored values precisely so the label fully determines the weapon.
-            var atLow = WeaponScalingManager.ResolveScriptK(s, 867);
-            var atHigh = WeaponScalingManager.ResolveScriptK(s, 899);
-            Assert.AreEqual(atLow, atHigh, 1e-12, "B+ must not interpolate across its band.");
-            Assert.AreEqual(s.Grades["B+"], atLow, 1e-12);
+            // REPLACES Ladder_ResolvesFlatPerSubGrade_NoInterpolation (owner 2026-08-06: "those 2
+            // weapons should not be identical damage"). k now interpolates BETWEEN rungs so every
+            // distinct roll deals distinct damage and the appraisal percent means something.
 
-            // ...and the neighbouring band must differ.
-            Assert.AreNotEqual(atLow, WeaponScalingManager.ResolveScriptK(s, 900), 1e-6);
+            // 1. Each rung is still EXACT at its own sub-grade midpoint — the authored values are
+            //    what the Damage Chart shows and what the owner tuned.
+            foreach (var b in WeaponScalingManager.SubGradeBands)
+                Assert.AreEqual(s.Grades[b.Grade], WeaponScalingManager.ResolveScriptK(s, b.QMid), 1e-12,
+                    $"rung {b.Grade} must be exact at its midpoint");
+
+            // 2. Inside a band, k now VARIES — this is the reversal.
+            var atLow = WeaponScalingManager.ResolveScriptK(s, 867);
+            var atMid = WeaponScalingManager.ResolveScriptK(s, 883);
+            Assert.IsTrue(atMid > atLow, "a higher roll inside B+ must deal more than a lower one");
+
+            // 3. ...and it is MONOTONIC across the whole range, with no discontinuity at any band
+            //    edge (a jump there would let one quality point be worth a whole sub-grade).
+            var prev = -1.0;
+            for (var q = 0; q <= WeaponScalingManager.QualityMax; q++)
+            {
+                var k = WeaponScalingManager.ResolveScriptK(s, q);
+                Assert.IsTrue(k >= prev - 1e-12, $"k must never decrease as quality rises (q{q})");
+                prev = k;
+            }
+
+            // 4. Endpoints clamp to the S and F- rungs rather than running off the ladder.
+            Assert.AreEqual(s.Grades["S"], WeaponScalingManager.ResolveScriptK(s, 1000), 1e-12);
+            Assert.AreEqual(s.Grades["F-"], WeaponScalingManager.ResolveScriptK(s, 0), 1e-12);
+        }
+
+        [TestMethod]
+        public void RelativeDamagePercent_MeasuresDamageNotQualityPercentile()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            var s = cfg.Scripts["unarmed"];
+
+            int Pct(int q) => WeaponScalingManager.RelativeDamagePercent(s, cfg.TightenStrength, q);
+
+            // A perfect roll is by definition 100 pct of max.
+            Assert.AreEqual(100, Pct(1000));
+
+            // The old display printed quality/10, so F- (q0) read "0 pct of max" while dealing a
+            // large share of an S weapon's damage. The number must reflect DAMAGE.
+            Assert.IsTrue(Pct(0) > 35 && Pct(0) < 50, $"F- deals a real share of max, got {Pct(0)} pct");
+
+            // The two weapons that started this: q867 and q883 are both B+ and must now differ.
+            Assert.AreNotEqual(Pct(867), Pct(883), "identical-looking B+ rolls must read differently");
+
+            // Monotonic, and never above 100.
+            var prev = -1;
+            for (var q = 0; q <= WeaponScalingManager.QualityMax; q++)
+            {
+                var p = Pct(q);
+                Assert.IsTrue(p >= prev, $"percent must not decrease as quality rises (q{q})");
+                Assert.IsTrue(p <= 100, $"percent must never exceed 100 (q{q})");
+                prev = p;
+            }
         }
 
         [TestMethod]

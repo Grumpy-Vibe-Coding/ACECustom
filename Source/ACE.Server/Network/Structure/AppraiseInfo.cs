@@ -1123,7 +1123,22 @@ namespace ACE.Server.Network.Structure
                 // now, so the label has to carry the same granularity — "B+" is a different
                 // weapon from "B-", and showing both as "B" would hide a real damage step.
                 var wsGrade = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetQualitySubGrade(wsQuality.Value);
-                effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade} ({wsQuality.Value / 10}% of max)");
+
+                // The percent is DAMAGE relative to a perfect roll, not the quality percentile
+                // (owner 2026-08-06). quality/10 was wrong twice over: an F- read "0 pct of max"
+                // while dealing 41.7 pct of an S weapon's damage, and two mechanically identical
+                // B+ weapons read 86 pct and 88 pct. Resolved off the SAME config the combat path
+                // reads, so the number cannot drift from what the weapon actually hits for.
+                var wsFamily = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFamilyKey(weapon);
+                var wsCfg = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.Current;
+                if (wsFamily != null && wsCfg.Scripts.TryGetValue(wsFamily, out var wsScript))
+                {
+                    var wsPct = ACE.Server.Managers.WeaponScaling.WeaponScalingManager
+                        .RelativeDamagePercent(wsScript, wsCfg.TightenStrength, wsQuality.Value);
+                    effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade} ({wsPct}% of max)");
+                }
+                else
+                    effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade}");
             }
 
             effectDescriptions.Add($"- Effective Melee Defense: {emdVal}");

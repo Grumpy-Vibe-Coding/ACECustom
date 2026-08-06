@@ -50,10 +50,11 @@ namespace ACE.Server.Entity
             VarianceMod *= weapon.EnchantmentManager.GetVarianceMod();
 
             // Weapon aug-scaling: a stamped T11+ launcher's quality roll GRADES the damage
-            // modifier (replace semantics — launchers scale through the mod, never a flat term);
-            // authored DamageMod is the fallback whenever the system is off or the launcher is
-            // unstamped legacy.
-            var baseDamageMod = Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, out var gradedMod)
+            // modifier, then the weapon's TIER scales it by however many tier steps the wielder's
+            // item augs have actually unlocked (replace semantics — launchers scale through the
+            // mod, never a flat term); authored DamageMod is the fallback whenever the system is
+            // off or the launcher is unstamped legacy.
+            var baseDamageMod = Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, wielder as Player, out var gradedMod)
                 ? gradedMod
                 : (float)(weapon.GetProperty(PropertyFloat.DamageMod) ?? 1.0f);
 
@@ -68,11 +69,6 @@ namespace ACE.Server.Entity
                 DamageMod += wielder.EnchantmentManager.GetDamageMod();
             }
 
-            // Missile tier cap (owner 2026-08-06): a stamped launcher gives back the Blood Drinker
-            // damage earned ABOVE its tier's aug cap, so bows gain the upgrade economy melee already
-            // has. Runs LAST, after both DamageBonus contributions are in, so the clamp inside sees
-            // the wielder's full aura. Melee is untouched — it keeps uncapped BD by design.
-            DamageBonus -= Managers.WeaponScaling.WeaponScalingCombat.GetLauncherAugExcess(weapon, wielder);
         }
     }
 }

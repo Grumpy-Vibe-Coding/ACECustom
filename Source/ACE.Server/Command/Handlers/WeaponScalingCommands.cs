@@ -140,7 +140,7 @@ namespace ACE.Server.Command.Handlers
         private static string F(double v) => v.ToString("0.####", CultureInfo.InvariantCulture);
 
         [CommandHandler("weaponscale", AccessLevel.Developer, CommandHandlerFlag.None, 0,
-            "Weapon aug-scaling config (plugin fallback).",
+            "Weapon Scaling config (plugin fallback).",
             "show | enable on|off | tier <t> cap|minwield <n> | tier add <t> [cap] [minwield] | tier remove <t> | "
             + "script <name> kmin|kmax <v> | script add <name> [kmin] [kmax] | script remove <name> | "
             + "kc min|max <v> | sync on|off | reset | reload")]
@@ -150,7 +150,7 @@ namespace ACE.Server.Command.Handlers
 
             if (parameters.Length == 0 || parameters[0].Equals("help", StringComparison.OrdinalIgnoreCase))
             {
-                Msg("Weapon aug-scaling config (items store quality; these knobs give it meaning at swing time):");
+                Msg("Weapon Scaling config (items store quality; these knobs give it meaning at swing time):");
                 Msg("  /weaponscale show");
                 Msg("  /weaponscale enable on|off       master switch; off = static-base-only combat (current behavior)");
                 Msg("  /weaponscale tier <t> cap <n>    scaling stops growing at n item augs for tier-t weapons");
@@ -195,7 +195,7 @@ namespace ACE.Server.Command.Handlers
                 {
                     var cfg = WeaponScalingManager.Current;
                     var sb = new StringBuilder();
-                    sb.AppendLine($"Weapon aug-scaling: {(cfg.Enabled ? "ENABLED" : "DISABLED")} (kc {cfg.KcMin:0.###}-{cfg.KcMax:0.###}, tighten {cfg.TightenStrength:0.###})");
+                    sb.AppendLine($"Weapon Scaling: {(cfg.Enabled ? "Enabled" : "Disabled")} (kc {cfg.KcMin:0.###}-{cfg.KcMax:0.###}, tighten {cfg.TightenStrength:0.###})");
                     sb.AppendLine("  tier | cap | minwield");
                     foreach (var t in cfg.Tiers)
                         sb.AppendLine($"  T{t.Tier} | {t.Cap:N0} | {t.MinWieldAugs:N0}");
@@ -242,15 +242,25 @@ namespace ACE.Server.Command.Handlers
                     }
                     var sbL = new StringBuilder();
                     sbL.AppendLine($"{args[1]} grade ladder (variance {row.Variance:0.###}, tighten {cfgL.TightenStrength:0.###}):");
-                    sbL.AppendLine("  grade | q band | k | step");
-                    double? prevK = null;
+                    // Two step columns on purpose. Raw k steps UNEVENLY by design — rungs are stored
+                    // with EV normalization divided out, and v_eff rises as grade falls, so k has to
+                    // slope to keep DEALT damage even. The dmg column is the one carrying the
+                    // invariant (+5.7 pct per sub-grade); without it the only number on screen was
+                    // the one nobody is tuning, which is how a three-day-old verify step ended up
+                    // unrunnable (2026-08-06).
+                    sbL.AppendLine("  grade | q band | k | k step | dmg step");
+                    double? prevK = null, prevD = null;
                     foreach (var b in WeaponScalingManager.SubGradeBands)
                     {
                         var k = row.Grades.TryGetValue(b.Grade, out var kv2) ? kv2 : 0;
+                        var dealt = WeaponScalingManager.DealtWeaponTerm(row, cfgL.TightenStrength, b.QMid);
                         var step = prevK.HasValue && k > 0 ? $"{(prevK.Value / k - 1) * 100:+0.0;-0.0} pct" : "";
-                        sbL.AppendLine($"  {b.Grade,-2} | q{b.QMin}-{b.QMax} | {k:0.####} | {step}");
+                        var dStep = prevD.HasValue && dealt > 0 ? $"{(prevD.Value / dealt - 1) * 100:+0.0;-0.0} pct" : "";
+                        sbL.AppendLine($"  {b.Grade,-2} | q{b.QMin}-{b.QMax} | {k:0.####} | {step} | {dStep}");
                         prevK = k;
+                        prevD = dealt;
                     }
+                    sbL.AppendLine($"  S -> F- spread: {WeaponScalingManager.DealtWeaponTerm(row, cfgL.TightenStrength, 1000) / Math.Max(1e-9, WeaponScalingManager.DealtWeaponTerm(row, cfgL.TightenStrength, 83)):0.###}x dealt damage");
                     Msg(sbL.ToString().TrimEnd());
                     return;
                 }
@@ -264,7 +274,7 @@ namespace ACE.Server.Command.Handlers
                     }
                     var on = args[1].Equals("on", StringComparison.OrdinalIgnoreCase);
                     WeaponScalingManager.Mutate(cfg => cfg.Enabled = on);
-                    Msg($"Weapon aug-scaling {(on ? "ENABLED" : "DISABLED")}.");
+                    Msg($"Weapon Scaling: {(on ? "Enabled" : "Disabled")}.");
                     return;
                 }
 
@@ -508,14 +518,14 @@ namespace ACE.Server.Command.Handlers
                         cfg.TightenStrength = d.TightenStrength;
                         cfg.GradeWeights = d.GradeWeights;
                     });
-                    Msg("Weapon aug-scaling config reset to locked launch defaults (system DISABLED).");
+                    Msg("Weapon Scaling config reset to locked launch defaults (system Disabled).");
                     return;
                 }
 
                 case "reload":
                 {
                     WeaponScalingManager.Reload();
-                    Msg("Weapon aug-scaling config reloaded from store.");
+                    Msg("Weapon Scaling config reloaded from store.");
                     return;
                 }
 
@@ -640,7 +650,7 @@ namespace ACE.Server.Command.Handlers
         }
 
         [CommandHandler("wstestkit", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
-            "Grants weapon aug-scaling test weapons (UA, bow, sword, wand) stamped at a fixed quality.",
+            "Grants Weapon Scaling test weapons (UA, bow, sword, wand) stamped at a fixed quality.",
             "[quality 0-1000, default 500] [element: slash|pierce|bludge|acid|fire|cold|electric|nether]")]
         public static void HandleWsTestKit(Session session, params string[] parameters)
         {
@@ -675,7 +685,7 @@ namespace ACE.Server.Command.Handlers
         /// <summary>The Admin > Forge subtab's backend (owner 2026-08-01): any single weapon
         /// class at any quality/element/tier, minted live.</summary>
         [CommandHandler("wsforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
-            "Forges one weapon aug-scaling test weapon of the given class (or a full set with 'all').",
+            "Forges one Weapon Scaling test weapon of the given class (or a full set with 'all').",
             "<class|all> [quality 0-1000, default 500] [element] [tier, default 11]\n" +
             "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand")]
         public static void HandleWsForge(Session session, params string[] parameters)

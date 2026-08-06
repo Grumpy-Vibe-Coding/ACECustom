@@ -84,7 +84,7 @@ namespace ACE.Server.Network.Structure
                     DamageVariance = Damage > 0 ? Math.Max(0.0, 1.0 - trueMin / Damage) : 0.0;
                 }
             }
-            DamageMod = GetDamageMultiplier(weapon);
+            DamageMod = GetDamageMultiplier(weapon, examiner);
             WeaponLength = weapon.GetProperty(PropertyFloat.WeaponLength) ?? 1.0f;
             MaxVelocity = weapon.MaximumVelocity ?? 1.0f;
             WeaponOffense = GetWeaponOffense(weapon);
@@ -133,11 +133,16 @@ namespace ACE.Server.Network.Structure
         /// <summary>
         /// Returns the weapon damage multiplier, with enchantments factored in
         /// </summary>
-        public float GetDamageMultiplier(WorldObject weapon)
+        public float GetDamageMultiplier(WorldObject weapon, Player examiner = null)
         {
-            // Weapon aug-scaling: stamped T11+ launchers display the quality-GRADED damage
-            // modifier (same resolver combat uses — replace semantics, authored value fallback)
-            var baseMultiplier = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, out var gradedMod)
+            // Weapon aug-scaling: stamped T11+ launchers display the quality-GRADED, TIER-SCALED
+            // damage modifier (same resolver combat uses — replace semantics, authored value
+            // fallback). WIELDED reads the wielder's augs; UNWIELDED reads the examiner's, which
+            // is what finally makes two different-tier bows appraise differently — on 2026-08-06
+            // the owner compared a T11 and a T13 bow, saw identical +300% panels, and reasonably
+            // concluded the weapons were identical.
+            var holder = (weapon.Wielder as Player) ?? examiner;
+            var baseMultiplier = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, holder, out var gradedMod)
                 ? gradedMod
                 : weapon.GetProperty(PropertyFloat.DamageMod) ?? 1.0f;
             var damageMod = weapon.EnchantmentManager.GetDamageMod();
