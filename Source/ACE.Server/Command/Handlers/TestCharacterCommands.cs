@@ -672,7 +672,7 @@ namespace ACE.Server.Command.Handlers
             {
                 if (parameters.Length < 2)
                 {
-                    Msg("usage: /testchar extra healkit,stamkit,manakit,lockpick,ivory,dispel,enlcoins,mmds,scarabs,aetheria");
+                    Msg("usage: /testchar extra healkit,stamkit,manakit,lockpick,ivory,arrow,dispel,enlcoins,mmds,scarabs,aetheria");
                     return;
                 }
                 var owned = player.GetAllPossessionsDeep();
@@ -711,6 +711,10 @@ namespace ACE.Server.Command.Handlers
                         case "manakit":  Mint(30248, "Eternal Mana Kit"); break;
                         case "lockpick": Mint(30253, "Limitless Lockpick"); break;
                         case "ivory":    Mint(30092, "Infinite Ivory"); break;
+                        // The never-depleting ammo the /testchar T10/T11 package already
+                        // auto-grants (owner 2026-08-06) — now mintable on its own, so a bow
+                        // test char can get ammo without re-running the whole tier package.
+                        case "arrow":    Mint(4395100, "Infinite Deadly Prismatic Arrow"); break;
                         case "dispel":   Mint(3110181, "Rune of Dispel"); break;   // ILT variant (sold in VoD), owner 08-03
                         case "enlcoins": MintStack(300004, "Enlightened Coins", 25000); break;
                         case "mmds":     MintStack(20630, "Trade Notes (250k)", 5000); break;
@@ -730,7 +734,7 @@ namespace ACE.Server.Command.Handlers
                             break;
                         case "aetheria": SpawnAetherias(player); Msg("extra: aetheria set spawned (skips owned pieces)"); break;
                         default:
-                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|dispel|enlcoins|mmds|scarabs|aetheria)");
+                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|arrow|dispel|enlcoins|mmds|scarabs|aetheria)");
                             return;
                     }
                 }
