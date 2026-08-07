@@ -68,7 +68,12 @@ namespace ACE.Server.Tests
                 // (owner pick), KMin = 4.00 x (0.90/1.15) = 3.13 so grades ladder at the same
                 // F->S ratio as melee; floor still clears the real T10 roll ceiling (3.08).
                 ("bow", 3.13, 4.00), ("crossbow", 3.13, 4.00), ("atlatl", 3.13, 4.00),
-                ("caster_elemental", 0.90, 1.15), ("caster_non_elemental", 0.90, 1.15),
+                // Casters: same reinterpretation, on ELEMENTAL damage mod (owner 2026-08-06,
+                // "keep bow and caster weapons scaling identical"). S = 1.58 = the real T10
+                // ceiling 1.22 x the launcher's own +29.9 pct bump; KMin = 1.58 x (0.90/1.15).
+                // NON-elemental stays on the old band ON PURPOSE — a plain caster has no element
+                // to match, so its modifier is pinned at 1.0 and nothing there can scale.
+                ("caster_elemental", 1.24, 1.58), ("caster_non_elemental", 0.90, 1.15),
             };
             foreach (var e in expected)
             {
@@ -182,6 +187,100 @@ namespace ACE.Server.Tests
             Assert.AreEqual(0.0, WeaponScalingManager.Normalize(
                     JsonConvert.DeserializeObject<WeaponScalingConfig>(off)).LauncherTierStep, 1e-9,
                 "An explicit 0 is the off switch.");
+        }
+
+        // ── Caster scaling (owner 2026-08-06, CasterScaling_Plan) ──
+        //
+        // "Lets keep bow and caster weapons scaling identical. We will tune vs magic on mobs."
+        // Same mechanism on ElementalDamageMod instead of DamageMod, own step knob so the two
+        // lanes CAN be parted later without a code change.
+
+        [TestMethod]
+        public void CasterTierStep_DefaultsEqualToTheLauncherStep_SoBothLanesStartIdentical()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+
+            Assert.AreEqual(cfg.LauncherTierStep, cfg.CasterTierStep, 1e-9,
+                "The lanes must START identical (owner: 'keep bow and caster weapons scaling "
+                + "identical'). The knob exists only so they can be parted DELIBERATELY later "
+                + "('incase we want to tune caster different later') — never by drift.");
+            Assert.AreEqual(0.06, cfg.CasterTierStep, 1e-9);
+        }
+
+        [TestMethod]
+        public void CasterTierStep_DefaultsOnOlderStores_ButAnExplicitZeroDisablesIt()
+        {
+            // Same legacy-store contract the launcher step has: the LIVE store predates this
+            // field, so a missing value must inherit the default rather than silently zero out.
+            var legacy = @"{""Enabled"":true,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.06, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(legacy)).CasterTierStep, 1e-9,
+                "The live store was written before this field existed and would otherwise leave "
+                + "casters with no tier term at all.");
+
+            var off = @"{""Enabled"":true,""CasterTierStep"":0,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.0, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(off)).CasterTierStep, 1e-9,
+                "An explicit 0 is the off switch, independently of the launcher lane.");
+
+            var negative = @"{""Enabled"":true,""CasterTierStep"":-5,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.0, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(negative)).CasterTierStep, 1e-9,
+                "Hand-edited negatives are repaired, not honored — a negative step would SHRINK "
+                + "the mod as tiers rise.");
+        }
+
+        [TestMethod]
+        public void CasterBand_PortsTheLauncherConstruction_OverTheRealT10Ceiling()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            var caster = cfg.Scripts["caster_elemental"];
+
+            // Real T10 casters roll 1.20-1.22: every wield >= 500 falls through to
+            // RollElementalDamageMod's "// 550" default, so T9/T10/T11 all roll the SAME value —
+            // casters had no generational scaling whatsoever before this wire-in.
+            const double t10CasterCeiling = 1.22;
+            const double t10BowCeiling = 3.08;   // launcher reference, Handoff_2026-08-03
+            const double bowKMax = 4.00;
+
+            Assert.AreEqual(bowKMax / t10BowCeiling, caster.KMax / t10CasterCeiling, 5e-3,
+                "S grade must clear the T10 ceiling by the SAME percentage in both lanes — that is "
+                + "what 'identical scaling' means when the two lanes drive different properties "
+                + "off different baselines. Both mods multiply their lane's whole damage "
+                + "expression, so equal percentages ARE equal damage.");
+
+            Assert.IsTrue(caster.KMin > t10CasterCeiling,
+                $"Even the WORST T11 caster ({caster.KMin}) must beat the BEST T10 roll "
+                + $"({t10CasterCeiling}) — the launcher floor 3.13 clears its 3.08 ceiling the "
+                + "same way. Otherwise a T11 drop can be a downgrade.");
+        }
+
+        [TestMethod]
+        public void CasterBand_KeepsTheSameFtoSSpreadAsEveryOtherFamily()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            var caster = cfg.Scripts["caster_elemental"];
+
+            // The house ratio: kMin = kMax x 0.90/1.15, the melee F->S spread (+27.8 pct),
+            // which the launcher band also follows.
+            Assert.AreEqual(0.90 / 1.15, caster.KMin / caster.KMax, 5e-3,
+                "A caster's grade must be worth the same relative jump as a bow's or a sword's.");
+        }
+
+        [TestMethod]
+        public void CasterNonElemental_StaysInert_BecauseItHasNoLeverToScale()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+
+            // A plain Orb/Sceptre/Staff/Wand (the wield==0 loot branch) has no element, so
+            // GetCasterElementalDamageModifier's damage-type match gate returns a flat 1.0 no
+            // matter what we resolve. Scaling it would be theatre. Documented as inert here so a
+            // future reader does not "fix" the band and expect an effect.
+            Assert.AreNotEqual(cfg.Scripts["caster_elemental"].KMax,
+                               cfg.Scripts["caster_non_elemental"].KMax,
+                "caster_non_elemental is deliberately NOT on the tuned band — it cannot scale. "
+                + "If plain casters should stop dropping, that is a LOOT change (they are 25 pct "
+                + "of T10/T11 caster drops), not a scaling one.");
         }
 
         [TestMethod]

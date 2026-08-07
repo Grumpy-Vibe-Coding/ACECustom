@@ -77,7 +77,7 @@ namespace ACE.Server.Network.Structure
             //Console.WriteLine("Appraise: " + wo.Guid);
             Success = success;
 
-            BuildProperties(wo);
+            BuildProperties(wo, examiner);
             BuildSpells(wo);
 
             // Help us make sure the item identify properly
@@ -590,7 +590,7 @@ namespace ACE.Server.Network.Structure
             BuildFlags();
         }
 
-        private void BuildProperties(WorldObject wo)
+        private void BuildProperties(WorldObject wo, Player examiner = null)
         {
             PropertiesInt = wo.GetAllPropertyInt().Where(x => AssessmentProperties.PropertiesInt.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value);
             PropertiesInt64 = wo.GetAllPropertyInt64().Where(x => AssessmentProperties.PropertiesInt64.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value);
@@ -665,10 +665,10 @@ namespace ACE.Server.Network.Structure
                     PropertiesString[PropertyString.Fellowship] = player.Fellowship.FellowshipName;
             }
 
-            AddPropertyEnchantments(wo);
+            AddPropertyEnchantments(wo, examiner);
         }
 
-        private void AddPropertyEnchantments(WorldObject wo)
+        private void AddPropertyEnchantments(WorldObject wo, Player examiner = null)
         {
             if (wo == null) return;
 
@@ -711,6 +711,17 @@ namespace ACE.Server.Network.Structure
 
             if (PropertiesFloat.ContainsKey(PropertyFloat.ElementalDamageMod))
             {
+                // Weapon aug-scaling: show the RESOLVED elemental modifier, not the authored one —
+                // the same resolver combat uses, with the same replace semantics. WIELDED reads
+                // the wielder's augs; UNWIELDED reads the examiner's, so a drop in a pack reads as
+                // what it would do in YOUR hands. Without this the panel would show every tier of
+                // caster the same number, which is exactly the confusion the launcher lane hit on
+                // 2026-08-06 (two different-tier bows appraising identically, reasonably read as
+                // "these weapons are identical").
+                var casterHolder = (wo.Wielder as Player) ?? examiner;
+                if (ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(wo, casterHolder, out var gradedElemMod))
+                    PropertiesFloat[PropertyFloat.ElementalDamageMod] = gradedElemMod;
+
                 var enchantmentBonus = ResistMaskHelper.GetElementalDamageBonus(wo);
 
                 if (enchantmentBonus != 0)

@@ -113,6 +113,20 @@ namespace ACE.Server.Managers.WeaponScaling
         // the scaling; an explicit 0 disables it.
         public double LauncherTierStep { get; set; } = 0.06;
 
+        // The caster twin of LauncherTierStep (owner 2026-08-06: "Lets keep bow and caster
+        // weapons scaling identical. We will tune vs magic on mobs. This keeps weapons simple").
+        // Casters run the SAME mechanism as launchers — quality resolves the mod, the tier term
+        // multiplies it, min(augs, cap) gates it — driving ElementalDamageMod instead of
+        // DamageMod. It gets its OWN knob rather than sharing the launcher's (owner, same day:
+        // "Do the CasterTierStep - incase we want to tune caster different later"), defaulted
+        // EQUAL so the two lanes are identical until someone deliberately parts them.
+        //
+        // The physical-vs-magic balance is NOT tuned here — owner ruled it belongs on the mob
+        // side (magic defense/resists), because monster defenses differ between spell and
+        // physical and no weapon band can express that. Do not re-derive this from a
+        // caster-vs-bow damage ratio.
+        public double CasterTierStep { get; set; } = 0.06;
+
         // Grade drop weights (owner 2026-08-02): the quality roll picks a GRADE from these
         // weights, then rolls uniform INSIDE that grade's quality band — frequency decoupled
         // from what a grade MEANS (the band cutoffs stay fixed; S is always the single perfect
@@ -289,9 +303,27 @@ namespace ACE.Server.Managers.WeaponScaling
             Melee("axe", 0.70);
             Melee("sword_ms", 0.40, anchorS: 0.40, kMin: 0.40, kMax: 0.51);
             Melee("dagger_ms", 0.55, anchorS: 0.40, kMin: 0.40, kMax: 0.51);
-            // casters stay on the pre-C band, variance inert until the caster wire-in
-            foreach (var caster in new[] { "caster_elemental", "caster_non_elemental" })
-                cfg.Scripts[caster] = new WeaponScalingScript { KMin = 0.90, KMax = 1.15 };
+            // CASTERS (owner 2026-08-06, wire-in): the elemental family's rows are REINTERPRETED
+            // as the ElementalDamageMod band, exactly as launchers reinterpret theirs as the
+            // DamageMod band. Band ported from the launcher construction so the two lanes scale
+            // IDENTICALLY:
+            //   real T10 casters roll 1.20-1.22   (every wield >= 500 falls to RollElementalDamageMod's
+            //                                      "// 550" default — T9/T10/T11 all roll the same,
+            //                                      i.e. casters had NO generational scaling at all)
+            //   S  = 1.22 x 1.299 = 1.58          (+29.9 pct over the T10 ceiling, bow's exact bump)
+            //   F- = 1.58 x 0.90/1.15 = 1.24      (same F->S ratio as melee, +27.8 pct)
+            // The 1.24 floor clears the 1.22 T10 ceiling by +1.6 pct — the same margin by which
+            // the launcher floor 3.13 clears its T10 ceiling 3.08. Both properties multiply their
+            // lane's WHOLE damage expression, so +29.9 pct on the mod is +29.9 pct on damage in
+            // both lanes; the parity is real, not just numerically parallel.
+            cfg.Scripts["caster_elemental"] = new WeaponScalingScript { KMin = 1.24, KMax = 1.58 };
+
+            // NON-elemental casters (a plain Orb/Sceptre/Staff/Wand from the wield==0 loot branch)
+            // carry NO element and NO ElementalDamageMod, and GetCasterElementalDamageModifier
+            // returns a flat 1.0 whenever the caster's damage type does not match the spell's — so
+            // there is nothing on this path to scale. Left on the old band deliberately: it is
+            // INERT, not tuned. These items do not scale by construction.
+            cfg.Scripts["caster_non_elemental"] = new WeaponScalingScript { KMin = 0.90, KMax = 1.15 };
 
             // Grade drop weights (owner 2026-08-02): S stays ~1-in-1000; A 5 / B 10 / C 15
             // owner-picked, D/F fill per the "gentle ladder" option.
@@ -471,6 +503,7 @@ namespace ACE.Server.Managers.WeaponScaling
         public static WeaponScalingConfig Normalize(WeaponScalingConfig cfg)
         {
             cfg.LauncherTierStep = Math.Max(0, cfg.LauncherTierStep);
+            cfg.CasterTierStep = Math.Max(0, cfg.CasterTierStep);
 
             cfg.Tiers ??= new List<WeaponScalingTier>();
             cfg.Tiers.RemoveAll(t => t == null);

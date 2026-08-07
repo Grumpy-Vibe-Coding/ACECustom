@@ -72,8 +72,15 @@ namespace ACE.Server.Managers.WeaponScaling
         }
 
         /// <summary>Resolve a stamped weapon's k coefficient + tier row under all the system gates
-        /// (enabled, stamped, non-caster, known family, known tier). False = the weapon has no
-        /// scaling identity and every term is 0.</summary>
+        /// (enabled, stamped, known family, known tier). False = the weapon has no scaling
+        /// identity and every term is 0.
+        ///
+        /// TYPE-NEUTRAL as of the caster wire-in (2026-08-06). It used to reject casters outright,
+        /// which was fine while they were inert but would now block the very path they need. Each
+        /// TERM enforces its own exclusions instead — the pattern launchers already followed —
+        /// so the rule stays readable at the point it matters: flat/floor/variance/crit all
+        /// exclude BOTH launchers and casters, because those two lanes scale through a MOD
+        /// instead.</summary>
         private static bool TryResolve(WorldObject weapon, out double k, out WeaponScalingTier tierRow)
         {
             k = 0;
@@ -94,7 +101,7 @@ namespace ACE.Server.Managers.WeaponScaling
                 return false;
 
             var family = GetFamilyKey(weapon);
-            if (family == null || weapon is Caster)
+            if (family == null)
                 return false;
 
             if (!cfg.Scripts.TryGetValue(family, out var script))
@@ -125,7 +132,7 @@ namespace ACE.Server.Managers.WeaponScaling
         {
             vEff = 0;
 
-            if (weapon is MissileLauncher || !TryResolve(weapon, out _, out _))
+            if (weapon is MissileLauncher || weapon is Caster || !TryResolve(weapon, out _, out _))
                 return false;
 
             var cfg = WeaponScalingManager.Current;
@@ -147,7 +154,8 @@ namespace ACE.Server.Managers.WeaponScaling
         /// ~3.6-3.9x on atlatls (plan §6.1 trap).</summary>
         public static float GetFlatBonus(WorldObject weapon, Player wielder)
         {
-            if (wielder == null || weapon is MissileLauncher || !TryResolve(weapon, out var k, out var tierRow))
+            if (wielder == null || weapon is MissileLauncher || weapon is Caster
+                || !TryResolve(weapon, out var k, out var tierRow))
                 return 0f;
 
             var augs = wielder.LuminanceAugmentItemCount ?? 0;
@@ -181,11 +189,49 @@ namespace ACE.Server.Managers.WeaponScaling
         {
             damageMod = 0f;
 
-            if (!(weapon is MissileLauncher) || !TryResolve(weapon, out var k, out var tierRow))
+            if (!(weapon is MissileLauncher))
                 return false;
 
-            var cfg = WeaponScalingManager.Current;
-            if (cfg.LauncherTierStep > 0)
+            return TryGetScaledMod(weapon, holder, WeaponScalingManager.Current.LauncherTierStep, out damageMod);
+        }
+
+        /// <summary>Caster grading (owner 2026-08-06: "Lets keep bow and caster weapons scaling
+        /// identical"). The exact launcher mechanism pointed at a different property: the quality
+        /// roll RESOLVES the effective ElementalDamageMod, which multiplies the whole spell damage
+        /// expression (SpellProjectile life :652 and war/void :767) just as the launcher's
+        /// DamageMod multiplies its own. Same REPLACE semantics — the authored ElementalDamageMod
+        /// is the fallback whenever this returns false, so the kill switch restores pre-system
+        /// behavior exactly.
+        ///
+        /// TWO THINGS THIS DOES NOT DO, both deliberate:
+        /// - It does NOT touch the damage-type match gate in GetCasterElementalDamageModifier
+        ///   (WorldObject_Weapon.cs:491). A caster still only boosts spells of its OWN element;
+        ///   scaling a mod that the gate zeroes out would change nothing.
+        /// - It therefore does NOTHING for caster_non_elemental — a plain Orb/Sceptre/Staff/Wand
+        ///   has no element to match, so its modifier is pinned at 1.0 forever. Those items do not
+        ///   scale BY CONSTRUCTION; that is a loot question, not a scaling one.</summary>
+        public static bool TryGetCasterElementalMod(WorldObject weapon, Player holder, out float elementalMod)
+        {
+            elementalMod = 0f;
+
+            if (!(weapon is Caster))
+                return false;
+
+            return TryGetScaledMod(weapon, holder, WeaponScalingManager.Current.CasterTierStep, out elementalMod);
+        }
+
+        /// <summary>The shared mod resolver behind both mod-scaled lanes: lerp(quality) x the tier
+        /// term. ONE path so the two lanes cannot drift apart (owner 2026-08-06: "This keeps
+        /// weapons simple"); they differ only in which step knob they pass and which property the
+        /// caller writes the result to.</summary>
+        private static bool TryGetScaledMod(WorldObject weapon, Player holder, double tierStep, out float mod)
+        {
+            mod = 0f;
+
+            if (!TryResolve(weapon, out var k, out var tierRow))
+                return false;
+
+            if (tierStep > 0)
             {
                 // Floored at the tier's wield floor for the same reason GetExamineBonus is: the
                 // wield gate guarantees no real wielder is below it, so an unwielded examine
@@ -193,10 +239,10 @@ namespace ACE.Server.Managers.WeaponScaling
                 // any hands rather than a modifier this weapon can never actually produce. A no-op
                 // for a genuine wielder, who by definition already clears the floor.
                 var augs = Math.Max(tierRow.MinWieldAugs, holder?.LuminanceAugmentItemCount ?? 0);
-                k *= 1.0 + cfg.LauncherTierStep * LauncherTierSteps(cfg, tierRow, augs);
+                k *= 1.0 + tierStep * LauncherTierSteps(WeaponScalingManager.Current, tierRow, augs);
             }
 
-            damageMod = (float)k;
+            mod = (float)k;
             return true;
         }
 
@@ -236,7 +282,7 @@ namespace ACE.Server.Managers.WeaponScaling
         /// retroactive re-pricing and the kill switch's full revert).</summary>
         public static float GetFloorBonus(WorldObject weapon)
         {
-            if (weapon is MissileLauncher || !TryResolve(weapon, out var k, out var tierRow))
+            if (weapon is MissileLauncher || weapon is Caster || !TryResolve(weapon, out var k, out var tierRow))
                 return 0f;
 
             return (float)(k * Math.Min(tierRow.MinWieldAugs, tierRow.Cap)) * EvNormalization(weapon);

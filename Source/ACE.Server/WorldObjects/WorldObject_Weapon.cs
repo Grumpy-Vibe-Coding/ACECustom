@@ -491,7 +491,16 @@ namespace ACE.Server.WorldObjects
             if (wielder == null || !(weapon is Caster) || weapon.W_DamageType != damageType)
                 return 1.0f;
 
-            var elementalDamageMod = weapon.ElementalDamageMod ?? 1.0f;
+            // Weapon aug-scaling: a stamped T11+ caster's quality roll GRADES its elemental
+            // modifier, then the weapon's TIER scales it by however many tier steps the wielder's
+            // item augs have actually unlocked — the identical mechanism launchers use on
+            // DamageMod (owner 2026-08-06: "keep bow and caster weapons scaling identical").
+            // Replace semantics: the authored property is the fallback whenever the system is off
+            // or the caster is unstamped legacy.
+            var elementalDamageMod =
+                ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(weapon, wielder as Player, out var gradedMod)
+                    ? gradedMod
+                    : weapon.ElementalDamageMod ?? 1.0f;
 
             // additive to base multiplier
             var wielderEnchantments = wielder.EnchantmentManager.GetElementalDamageMod();
