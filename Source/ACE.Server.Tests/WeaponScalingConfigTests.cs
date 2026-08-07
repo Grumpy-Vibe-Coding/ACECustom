@@ -267,6 +267,86 @@ namespace ACE.Server.Tests
                 "A caster's grade must be worth the same relative jump as a bow's or a sword's.");
         }
 
+        // ── Caster damage share (owner GO 2026-08-06, CasterDamageShare_Plan) ──
+        //
+        // "The plan needs to solve the same thing we solved for melee and bow. Making the
+        // weapon itself contribute roughly 25-35% of total damage." Composition change:
+        // modifier = wandMod x (1 + rescale x enchantments), replacing stock wandMod + ench.
+
+        [TestMethod]
+        public void CasterAuraRescale_IsTheReciprocalOfTheBandTop_SoSGradeAnchorsExactly()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+
+            Assert.AreEqual(1.0 / cfg.Scripts["caster_elemental"].KMax, cfg.CasterAuraRescale, 1e-3,
+                "r = 1/kMax is the anchor derivation: kMax x (1 + r x A) = kMax + A for EVERY "
+                + "aura size A, so an S-grade wand's total is unchanged from the old additive "
+                + "math at every aug count. Retune this only in step with kMax or the anchor "
+                + "property breaks.");
+        }
+
+        [TestMethod]
+        public void ComposeCasterModifier_SGradeMatchesTheOldAdditiveMath_AtEveryAuraSize()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            var kMax = cfg.Scripts["caster_elemental"].KMax;   // 1.58, the S-grade resolve at T11
+
+            // Spirit Drinker at 3,500 / 2,000 / 0 item augs (+0.005 per aug), plus a no-buff case.
+            foreach (var aura in new[] { 17.5, 10.0, 2.5, 0.0 })
+            {
+                var composed = WeaponScalingCombat.ComposeCasterModifier(kMax, aura, cfg.CasterAuraRescale);
+                var stockAdditive = kMax + aura;
+                Assert.AreEqual(stockAdditive, composed, 0.005,
+                    $"aura={aura}: the migration must be INVISIBLE to the reference build (S "
+                    + "grade, matching element). Everyone else re-grades around this anchor.");
+            }
+        }
+
+        [TestMethod]
+        public void ComposeCasterModifier_MakesTiersAndGradesFinallyMoveTheTotal()
+        {
+            var cfg = WeaponScalingManager.BuildDefaults();
+            var s = cfg.Scripts["caster_elemental"].KMax;      // 1.58
+            var fMinus = cfg.Scripts["caster_elemental"].KMin; // 1.24
+            const double aura = 17.5;                          // 3,500-aug Spirit Drinker
+            var r = cfg.CasterAuraRescale;
+
+            // Under multiplicative composition the wandMod ratio IS the damage ratio.
+            var t14 = WeaponScalingCombat.ComposeCasterModifier(s * 1.12, aura, r);   // 2 steps at 0.06
+            var t11 = WeaponScalingCombat.ComposeCasterModifier(s, aura, r);
+            Assert.AreEqual(1.12, t14 / t11, 1e-6,
+                "T11 vs T14 measured ~1 pct apart in game under additive composition — the "
+                + "owner's original complaint. Multiplicative composition must restore the full "
+                + "+12 pct the tier steps grant.");
+
+            Assert.AreEqual(s / fMinus, t11 / WeaponScalingCombat.ComposeCasterModifier(fMinus, aura, r), 1e-6,
+                "S vs F- was +1.8 pct under additive (melee's same spread is 2.288x); now it is "
+                + "the full band ratio 1.27x.");
+
+            // The owner's stated target: the weapon carries 25-35 pct of total damage. Share =
+            // what you lose dropping to a wandless/mod-1.0 baseline. S lands just above the
+            // window (36.7 pct), F- just below (19.4) — same shape as melee, where better
+            // weapons carry more.
+            var share = 1.0 - WeaponScalingCombat.ComposeCasterModifier(1.0, aura, r) / t11;
+            Assert.IsTrue(share > 0.30 && share < 0.40, $"S-grade weapon share {share:F3}");
+        }
+
+        [TestMethod]
+        public void CasterAuraRescale_DefaultsOnOlderStores_AndNegativesAreRepaired()
+        {
+            // Same legacy-store contract as both tier steps: the live store predates the field.
+            var legacy = @"{""Enabled"":true,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.6329, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(legacy)).CasterAuraRescale, 1e-9);
+
+            var negative = @"{""Enabled"":true,""CasterAuraRescale"":-1,""Tiers"":[],""Scripts"":{},""KcMin"":0.6,""KcMax"":0.8}";
+            Assert.AreEqual(0.0, WeaponScalingManager.Normalize(
+                    JsonConvert.DeserializeObject<WeaponScalingConfig>(negative)).CasterAuraRescale, 1e-9,
+                "A negative rescale would turn buffs into damage PENALTIES; repaired to 0 "
+                + "(= enchantments contribute nothing while the system is on — wrong, but "
+                + "visibly wrong instead of subtly inverted).");
+        }
+
         [TestMethod]
         public void CasterNonElemental_StaysInert_BecauseItHasNoLeverToScale()
         {

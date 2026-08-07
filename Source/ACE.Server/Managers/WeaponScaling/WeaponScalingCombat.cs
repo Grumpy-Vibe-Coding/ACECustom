@@ -220,6 +220,25 @@ namespace ACE.Server.Managers.WeaponScaling
             return TryGetScaledMod(weapon, holder, WeaponScalingManager.Current.CasterTierStep, out elementalMod);
         }
 
+        /// <summary>Multiplicative caster composition (owner GO 2026-08-06,
+        /// CasterDamageShare_Plan): the wand's resolved mod MULTIPLIES the enchantment sum the
+        /// way the bow's DamageMod multiplies Blood Drinker, instead of sitting beside it as an
+        /// additive peer ~11x its size. modifier = wandMod x (1 + rescale x enchantments).
+        ///
+        /// The rescale (default 1/kMax = 0.6329) anchors S grade: an S wand's total is identical
+        /// to the old additive math at every aug count, and every other grade/tier re-grades
+        /// around that anchor — which is what finally makes the wand carry the owner's 25-35 pct
+        /// of total damage (it was ~3 pct under additive composition; T11 vs T14 measured ~1 pct
+        /// apart in game 2026-08-06).
+        ///
+        /// Pure math, no world state — the caller (WorldObject_Weapon) resolves the mod, gathers
+        /// the enchantment sum, and passes cfg.CasterAuraRescale; this exists as its own method
+        /// so the anchor property is unit-testable against plain configs.</summary>
+        public static float ComposeCasterModifier(double wandMod, double enchantments, double auraRescale)
+        {
+            return (float)(wandMod * (1.0 + auraRescale * enchantments));
+        }
+
         /// <summary>The shared mod resolver behind both mod-scaled lanes: lerp(quality) x the tier
         /// term. ONE path so the two lanes cannot drift apart (owner 2026-08-06: "This keeps
         /// weapons simple"); they differ only in which step knob they pass and which property the

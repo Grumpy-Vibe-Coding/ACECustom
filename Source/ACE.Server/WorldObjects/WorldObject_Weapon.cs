@@ -491,24 +491,31 @@ namespace ACE.Server.WorldObjects
             if (wielder == null || !(weapon is Caster) || weapon.W_DamageType != damageType)
                 return 1.0f;
 
-            // Weapon aug-scaling: a stamped T11+ caster's quality roll GRADES its elemental
-            // modifier, then the weapon's TIER scales it by however many tier steps the wielder's
-            // item augs have actually unlocked — the identical mechanism launchers use on
-            // DamageMod (owner 2026-08-06: "keep bow and caster weapons scaling identical").
-            // Replace semantics: the authored property is the fallback whenever the system is off
-            // or the caster is unstamped legacy.
-            var elementalDamageMod =
-                ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(weapon, wielder as Player, out var gradedMod)
-                    ? gradedMod
-                    : weapon.ElementalDamageMod ?? 1.0f;
-
-            // additive to base multiplier
             var wielderEnchantments = wielder.EnchantmentManager.GetElementalDamageMod();
             var weaponEnchantments = weapon.EnchantmentManager.GetElementalDamageMod();
 
             var enchantments = wielderEnchantments + weaponEnchantments;
 
-            var modifier = (float)(elementalDamageMod + enchantments);
+            // Weapon aug-scaling: a stamped T11+ caster's quality roll GRADES its elemental
+            // modifier and the weapon's TIER scales it — the launcher mechanism on a different
+            // property (owner 2026-08-06: "keep bow and caster weapons scaling identical").
+            //
+            // COMPOSITION (owner GO 2026-08-06, CasterDamageShare_Plan): the resolved mod
+            // MULTIPLIES the enchantment sum, the way the bow's DamageMod multiplies Blood
+            // Drinker. Stock math added them, which made Spirit Drinker (+17.50 at 3,500 augs)
+            // an additive peer ~11x the wand — the wand was ~8 pct of its own multiplier and a
+            // T11 vs T14 wand measured ~1 pct apart. The rescale anchors S grade to the old
+            // totals exactly (r = 1/kMax); see CasterAuraRescale in WeaponScalingManager.
+            //
+            // Replace semantics: the STOCK ADDITIVE path is the fallback whenever the system is
+            // off or the caster is unstamped legacy — bit-for-bit pre-system behavior, so the
+            // kill switch has a clean prediction.
+            float modifier;
+            if (ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(weapon, wielder as Player, out var gradedMod))
+                modifier = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.ComposeCasterModifier(
+                    gradedMod, enchantments, ACE.Server.Managers.WeaponScaling.WeaponScalingManager.Current.CasterAuraRescale);
+            else
+                modifier = (float)((weapon.ElementalDamageMod ?? 1.0f) + enchantments);
 
             if (modifier > 1.0f && target is Player)
                 modifier = 1.0f + (modifier - 1.0f) * ElementalDamageBonusPvPReduction;

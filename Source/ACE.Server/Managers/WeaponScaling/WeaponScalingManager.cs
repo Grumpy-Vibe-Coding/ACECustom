@@ -127,6 +127,21 @@ namespace ACE.Server.Managers.WeaponScaling
         // caster-vs-bow damage ratio.
         public double CasterTierStep { get; set; } = 0.06;
 
+        // Multiplicative composition rescale (owner GO 2026-08-06, CasterDamageShare_Plan):
+        // the caster modifier is wandMod x (1 + THIS x enchantmentSum) instead of the stock
+        // wandMod + enchantmentSum. Without it Spirit Drinker (+0.005/itemAug, +17.50 at the
+        // 3,500-aug reference) is an additive PEER ~11x the wand's own 1.24-1.58, making the
+        // wand ~8 pct of its own multiplier — T11 vs T14 measured ~1 pct apart in game, S vs
+        // F- +1.8 pct, when the owner's target is the weapon carrying 25-35 pct of total
+        // damage like melee's flat term and the bow's mod both do.
+        //
+        // 0.6329 = 1/kMax (1/1.58): solving kMax x (1 + r x A) = kMax + A gives r = 1/kMax
+        // INDEPENDENT of A — so an S-grade wand's total damage is bit-identical to the old
+        // additive math at EVERY aug count, and the change strictly re-grades everyone else
+        // around that anchor (lower grades lose, higher tiers finally gain their +6 pct/step).
+        // Retune this only in step with the caster band's kMax or the anchor property breaks.
+        public double CasterAuraRescale { get; set; } = 0.6329;
+
         // Grade drop weights (owner 2026-08-02): the quality roll picks a GRADE from these
         // weights, then rolls uniform INSIDE that grade's quality band — frequency decoupled
         // from what a grade MEANS (the band cutoffs stay fixed; S is always the single perfect
@@ -504,6 +519,7 @@ namespace ACE.Server.Managers.WeaponScaling
         {
             cfg.LauncherTierStep = Math.Max(0, cfg.LauncherTierStep);
             cfg.CasterTierStep = Math.Max(0, cfg.CasterTierStep);
+            cfg.CasterAuraRescale = Math.Max(0, cfg.CasterAuraRescale);
 
             cfg.Tiers ??= new List<WeaponScalingTier>();
             cfg.Tiers.RemoveAll(t => t == null);
