@@ -149,12 +149,10 @@ namespace ACE.Server.Command.Handlers
         // ─────────────────────────────────────────────────────────────
         //  /dev powerball  — developer test commands
         // ─────────────────────────────────────────────────────────────
-        [CommandHandler("dev", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
-            "Developer utility commands — use 'powerball' or 'pb' subcommand for Powerball testing.",
-            "/dev pb testdraw  - force a test draw (no payouts; adds the simulated NPC test pool first)\n" +
-            "/dev pb test      - add the simulated NPC test pool\n" +
-            "/dev pb clear     - clear all test tickets\n" +
-            "/dev pb status    - show current pool status")]
+        // NOTE: This previously registered its own [CommandHandler("dev", ...)], which collided with
+        // the invasion system's /dev handler — ACE keys handlers by command name, so only one "dev"
+        // survived and Powerball's won, swallowing /dev invasion. It is now invoked from
+        // DevCommands.HandleDev's "pb"/"powerball" branch so both features share a single /dev verb.
         public static void HandleDevPowerball(Session session, params string[] parameters)
         {
             // Only intercept if first param is "powerball" or "pb"

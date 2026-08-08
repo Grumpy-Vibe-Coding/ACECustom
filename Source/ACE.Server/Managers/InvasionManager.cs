@@ -724,8 +724,10 @@ namespace ACE.Server.Managers
             {
                 if (IsActive) return;
 
-                var town = Towns[ThreadSafeRandom.Next(0, Towns.Count)];
-                var species = SpeciesList[ThreadSafeRandom.Next(0, SpeciesList.Count)];
+                // ThreadSafeRandom.Next is INCLUSIVE of the upper bound, so use Count - 1
+                // (Next(0, Count) could return Count and index one past the end).
+                var town = Towns[ThreadSafeRandom.Next(0, Towns.Count - 1)];
+                var species = SpeciesList[ThreadSafeRandom.Next(0, SpeciesList.Count - 1)];
 
                 StartInvasion(town, species);
             }

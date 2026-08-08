@@ -16,7 +16,7 @@ namespace ACE.Server.Command.Handlers
     {
         [CommandHandler("dev", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
             "Developer administration commands.",
-            "Usage: /dev [invasion|invasions]")]
+            "Usage: /dev [invasion|invasions|pb]")]
         public static void HandleDev(Session session, params string[] parameters)
         {
             var player = session?.Player;
@@ -28,6 +28,14 @@ namespace ACE.Server.Command.Handlers
             {
                 HandleInvasionSubcommand(session, parameters.Skip(1).ToArray());
             }
+            else if (sub == "pb" || sub == "powerball")
+            {
+                // Powerball dev tools share the /dev verb. We forward the FULL args (its body
+                // re-checks parameters[0] for "pb"/"powerball"). Keeping a single "dev" handler
+                // here avoids the duplicate-command collision that swallowed /dev invasion after
+                // the master merge (see PowerballCommands.HandleDevPowerball).
+                PowerballCommands.HandleDevPowerball(session, parameters);
+            }
             else
             {
                 // Show main developer help menu
@@ -38,7 +46,8 @@ namespace ACE.Server.Command.Handlers
         private static void ShowMainHelp(Session session)
         {
             var msg = "=== Developer Commands ===\n" +
-                      "  /dev invasion(s) - Administer the random town invasion system.";
+                      "  /dev invasion(s) - Administer the random town invasion system.\n" +
+                      "  /dev pb          - Powerball developer/test commands.";
             session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.System));
         }
 

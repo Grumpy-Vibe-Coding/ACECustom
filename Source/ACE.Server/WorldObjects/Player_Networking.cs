@@ -392,6 +392,15 @@ namespace ACE.Server.WorldObjects
         {
             RequestedLocation = pos;
             RequestedLocationBroadcast = broadcast;
+
+            // ── NAV DEBUG ──────────────────────────────────────────────────────
+            if (Name.Contains(NavDebugLogger.TargetPlayer) && pos != null)
+            {
+                double ns = NavDebugLogger.ToNS(pos.LandblockY, pos.PositionY);
+                double ew = NavDebugLogger.ToEW(pos.LandblockX, pos.PositionX);
+                NavDebugLogger.Log("CLI_POS", ns, ew, 0f, pos.Cell, $"broadcast:{broadcast}");
+            }
+            // ── END NAV DEBUG ──────────────────────────────────────────────────
         }
 
         public MotionCommand LastSoulEmote;
@@ -454,6 +463,19 @@ namespace ACE.Server.WorldObjects
 
             var movementEvent = new GameMessageUpdateMotion(this, movementData);
             EnqueueBroadcast(true, movementEvent);    // shouldn't need to go to originating player?
+
+            // ── NAV DEBUG ──────────────────────────────────────────────────────
+            if (Name.Contains(NavDebugLogger.TargetPlayer))
+            {
+                double ns = NavDebugLogger.ToNS(Location.LandblockY, Location.PositionY);
+                double ew = NavDebugLogger.ToEW(Location.LandblockX, Location.PositionX);
+                float  hdg = PhysicsObj?.get_heading() ?? 0f;
+                var fwd  = movementData.Invalid.State.ForwardCommand;
+                var turn = movementData.Invalid.State.TurnCommand;
+                NavDebugLogger.Log("MOV_STATE", ns, ew, hdg, Location.Cell,
+                    $"fwd:{fwd} turn:{turn} fwdSpd:{movementData.Invalid.State.ForwardSpeed:F2}");
+            }
+            // ── END NAV DEBUG ──────────────────────────────────────────────────
 
             // TODO: use real motion / animation system from physics
             //CurrentMotionCommand = movementData.Invalid.State.ForwardCommand;

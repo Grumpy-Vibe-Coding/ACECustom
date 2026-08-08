@@ -416,6 +416,17 @@ namespace ACE.Server.WorldObjects
             // sync ace position?
             Location.Rotation = PhysicsObj.Position.Frame.Orientation;
 
+            // ── NAV DEBUG ──────────────────────────────────────────────────────
+            if (Name == NavDebugLogger.TargetPlayer)
+            {
+                double ns  = NavDebugLogger.ToNS(Location.LandblockY, Location.PositionY);
+                double ew  = NavDebugLogger.ToEW(Location.LandblockX, Location.PositionX);
+                float  hdg = PhysicsObj.get_heading();
+                NavDebugLogger.Log("PHYS_TICK", ns, ew, hdg, Location.Cell,
+                    $"moving:{PhysicsObj.IsMovingOrAnimating} vel:{PhysicsObj.Velocity.X:F2},{PhysicsObj.Velocity.Y:F2},{PhysicsObj.Velocity.Z:F2}");
+            }
+            // ── END NAV DEBUG ──────────────────────────────────────────────────
+
             if (!FastTick) return;
 
             // ensure PKLogout position is synced up for other players
