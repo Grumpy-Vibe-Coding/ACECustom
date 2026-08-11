@@ -144,6 +144,39 @@ namespace ACE.Server.WorldObjects.Managers
             }
         }
 
+        /// <summary>
+        /// Hard caps on purchasable luminance augmentations, per school. Specialize's 266 is exact:
+        /// specializing every skill that counts toward the 70-credit limit costs 336 credits for all
+        /// heritages (portal.dat SkillTable, incl. the universal Arcane Lore 6->2 adjustment) - 70 base.
+        /// </summary>
+        private static readonly Dictionary<string, long> AugmentationCaps = new Dictionary<string, long>
+        {
+            { "Creature", 6000 },
+            { "Item", 4000 },
+            { "Life", 4000 },
+            { "War", 4000 },
+            { "Void", 4000 },
+            { "Melee", 4000 },
+            { "Missile", 4000 },
+            { "Duration", 4000 },
+            { "Summon", 4000 },
+            { "Specialize", 266 },
+        };
+
+        /// <summary>
+        /// Checked both when the gem is used and again inside the confirmation callback (before any
+        /// luminance is spent), because the count can change between prompt and confirm.
+        /// </summary>
+        private static bool CheckAugmentationCap(Player player, string school, long currentCount, int augCount)
+        {
+            var cap = AugmentationCaps[school];
+            if (currentCount + augCount <= cap)
+                return true;
+
+            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You cannot use this gem: adding {augCount} would take you past the {school} augmentation cap of {cap:N0}. You currently have {currentCount:N0}.", ChatMessageType.Broadcast));
+            return false;
+        }
+
         private static void GetPromptAddAugmentEconomy(WorldObject augmentGem, PropertiesEmoteAction emoteFromBiota, out double baseCost, out double percentIncrease)
         {
             baseCost = emoteFromBiota.Amount.HasValue ? emoteFromBiota.Amount.Value : 0;
@@ -2377,6 +2410,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Creature50" ? 50 :
                                                    emote.Message == "Creature100" ? 100 : 0;
 
+                                    if (!CheckAugmentationCap(player, "Creature", creatureAugs, augCount))
+                                        break;
+
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
                                     double totalCost = 0;
@@ -2419,6 +2455,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Creature", player.LuminanceAugmentCreatureCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2462,6 +2500,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Item50" ? 50 :
                                                    emote.Message == "Item100" ? 100 : 0;
 
+                                    if (!CheckAugmentationCap(player, "Item", itemAugs, augCount))
+                                        break;
+
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
                                     double totalCost = 0;
@@ -2504,6 +2545,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Item", player.LuminanceAugmentItemCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2545,6 +2588,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Life10" ? 10 :
                                                    emote.Message == "Life50" ? 50 :
                                                    emote.Message == "Life100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Life", lifeAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -2588,6 +2634,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Life", player.LuminanceAugmentLifeCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2629,6 +2677,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "War10" ? 10 :
                                                    emote.Message == "War50" ? 50 :
                                                    emote.Message == "War100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "War", warAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -2672,6 +2723,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "War", player.LuminanceAugmentWarCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2712,6 +2765,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Void10" ? 10 :
                                                    emote.Message == "Void50" ? 50 :
                                                    emote.Message == "Void100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Void", voidAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -2755,6 +2811,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Void", player.LuminanceAugmentVoidCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2795,6 +2853,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Melee10" ? 10 :
                                                    emote.Message == "Melee50" ? 50 :
                                                    emote.Message == "Melee100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Melee", meleeAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -2838,6 +2899,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Melee", player.LuminanceAugmentMeleeCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2878,6 +2941,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Missile10" ? 10 :
                                                    emote.Message == "Missile50" ? 50 :
                                                    emote.Message == "Missile100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Missile", missileAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -2921,6 +2987,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Missile", player.LuminanceAugmentMissileCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -2961,6 +3029,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Duration10" ? 10 :
                                                    emote.Message == "Duration50" ? 50 :
                                                    emote.Message == "Duration100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Duration", durationAugs, augCount))
+                                        break;
 
                                     // Calculate total duration increase (e.g., 5% per augmentation)
                                     double durationIncreasePercent = augCount * 5.0;
@@ -3007,6 +3078,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Duration", player.LuminanceAugmentSpellDurationCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -3047,6 +3120,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Specialize10" ? 10 :
                                                    emote.Message == "Specialize50" ? 50 :
                                                    emote.Message == "Specialize100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Specialize", specAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -3090,6 +3166,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Specialize", player.LuminanceAugmentSpecializeCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
@@ -3130,6 +3208,9 @@ namespace ACE.Server.WorldObjects.Managers
                                                    emote.Message == "Summon10" ? 10 :
                                                    emote.Message == "Summon50" ? 50 :
                                                    emote.Message == "Summon100" ? 100 : 0;
+
+                                    if (!CheckAugmentationCap(player, "Summon", summonAugs, augCount))
+                                        break;
 
                                     // Base cost per augmentation (prefers live cached weenie over biota snapshot)
                                     GetPromptAddAugmentEconomy(WorldObject, emote, out double baseCost, out double percentIncrease);
@@ -3173,6 +3254,8 @@ namespace ACE.Server.WorldObjects.Managers
                                         player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
                                         {
                                             if (!response) return;
+                                            if (!CheckAugmentationCap(player, "Summon", player.LuminanceAugmentSummonCount ?? 0, augCount))
+                                                return;
                                             if (player.BankedLuminance < totalCost)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You do not have enough luminance to use this gem. This will require {totalCost:N0} luminance.", ChatMessageType.Broadcast));
