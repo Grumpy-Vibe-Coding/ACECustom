@@ -883,7 +883,25 @@ namespace ACE.Server.WorldObjects
 
             if (curLb != null && curLb.Id.Landblock == locLb &&
                 VariationManager.SameVariationForVisibility(curLb.VariationId, Location.Variation))
+            {
+                // Liveness check (2026-08-10, F35A v11 void with THIS guard silent): the id+variation
+                // match above trusts CurrentLandblock, but says nothing about the MANAGER still
+                // holding that instance. A block unloaded (or replaced) out from under the player
+                // passes it while the world it represents is gone - an unhealable void until a manual
+                // /reload-landblock. Verify by reference against the manager's loaded instance; on
+                // mismatch, relocate (which creates/reattaches to the live instance).
+                var live = LandblockManager.GetLoadedLandblock(curLb.Id, curLb.VariationId);
+                if (ReferenceEquals(live, curLb))
+                    return;
+
+                log.Warn($"[VoidHeal] {Name} (0x{Guid}) CurrentLandblock {curLb.Id.Landblock:X4} v={curLb.VariationId?.ToString() ?? "null"} " +
+                         $"matches Location lb={locLb:X4} v={Location.Variation?.ToString() ?? "null"} but is " +
+                         $"{(live == null ? "NOT LOADED in the manager (unloaded out from under the player?)" : "a STALE instance (the manager holds a different one)")} - " +
+                         "forcing relocation (creates/reattaches the landblock).");
+
+                LandblockManager.RelocateObjectForPhysics(this, true);
                 return;
+            }
 
             log.Warn($"[VoidHeal] {Name} (0x{Guid}) Location lb={locLb:X4} v={Location.Variation?.ToString() ?? "null"} " +
                      $"but CurrentLandblock={(curLb == null ? "null" : $"{curLb.Id.Landblock:X4} v={curLb.VariationId?.ToString() ?? "null"}")} - " +

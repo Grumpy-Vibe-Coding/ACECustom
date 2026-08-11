@@ -464,6 +464,14 @@ namespace ACE.Server.Managers
             return GetLandblock(new VariantCacheId() {Landblock = landblockId.Landblock, Variant = variationId }) != null;
         }
 
+        /// <summary>No-create lookup of the LOADED landblock instance for (landblock, variation) -
+        /// null when not loaded. Lets callers verify a held Landblock reference is still the live
+        /// one (see Player.ValidateCurrentLandblockTick's stale-instance void heal, 2026-08-10).</summary>
+        public static Landblock GetLoadedLandblock(LandblockId landblockId, int? variationId)
+        {
+            return GetLandblock(new VariantCacheId() { Landblock = landblockId.Landblock, Variant = variationId });
+        }
+
         /// <summary>
         /// Enqueues <see cref="Landblock.RefreshPrestigeBoundaryMarkers"/> on each matching loaded landblock (async per landblock queue); does not wait for completion.
         /// </summary>
