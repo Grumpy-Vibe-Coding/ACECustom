@@ -549,15 +549,15 @@ namespace ACE.Server.WorldObjects
                     tryBoost = boost = reduced;
                 }
             }
-            // Normally, LuminanceAugmentLifeCount adds a flat bonus to all Boost spell damage/healing.
+            // Normally, life augs (gem count + Triune Weave) add a flat bonus to all Boost spell damage/healing.
             // When useHarmCap is active, we skip this so the damage stays within the spell's fixed raw range.
-            if (!useHarmCap && player != null && player.LuminanceAugmentLifeCount.HasValue && tryBoost > 0)
+            if (!useHarmCap && player != null && tryBoost > 0)
             {
-                tryBoost += (int)player.LuminanceAugmentLifeCount;
+                tryBoost += (int)player.EffectiveLifeAugCount;
             }
-            if (!useHarmCap && player != null && player.LuminanceAugmentLifeCount.HasValue && tryBoost < 0)
+            if (!useHarmCap && player != null && tryBoost < 0)
             {
-                tryBoost -= (int)player.LuminanceAugmentLifeCount;
+                tryBoost -= (int)player.EffectiveLifeAugCount;
             }
 
             string srcVital;
@@ -646,7 +646,7 @@ namespace ACE.Server.WorldObjects
 
             if (player != null && minBoostValue < 0 && spell.VitalDamageType == DamageType.Health)
             {
-                var lumBonus = !useHarmCap && player.LuminanceAugmentLifeCount.HasValue ? (int)player.LuminanceAugmentLifeCount.Value : 0;
+                var lumBonus = !useHarmCap ? (int)player.EffectiveLifeAugCount : 0;
                 log.Debug($"[HARM_CAP] {player.Name} -> {targetCreature.Name} | spell: {spell.Name} | lumBonus: {lumBonus} | tryBoost: {tryBoostAfterAugment} | finalBoost: {boost} | targetHP: {targetCreature.Health.Current}/{targetCreature.Health.MaxValue}");
             }
 
@@ -896,24 +896,24 @@ namespace ACE.Server.WorldObjects
                 }
             }
 
-            if (player != null && player.LuminanceAugmentLifeCount.HasValue)
+            if (player != null)
             {
                 if (srcVitalChange > 0)
                 {
-                    srcVitalChange += (uint)player.LuminanceAugmentLifeCount;
+                    srcVitalChange += (uint)player.EffectiveLifeAugCount;
                 }
                 else
                 {
-                    srcVitalChange -= (uint)player.LuminanceAugmentLifeCount;
+                    srcVitalChange -= (uint)player.EffectiveLifeAugCount;
                 }
 
                 if (destVitalChange > 0)
                 {
-                    destVitalChange += (uint)player.LuminanceAugmentLifeCount;
+                    destVitalChange += (uint)player.EffectiveLifeAugCount;
                 }
                 else
                 {
-                    destVitalChange -= (uint)player.LuminanceAugmentLifeCount;
+                    destVitalChange -= (uint)player.EffectiveLifeAugCount;
                 }
 
             }
@@ -2272,7 +2272,7 @@ namespace ACE.Server.WorldObjects
                 }
                 if (spell.School == MagicSchool.LifeMagic)
                 {
-                    lumAug += player.LuminanceAugmentLifeCount ?? 0f;
+                    lumAug += player.EffectiveLifeAugCount;
                 }
                 lumAug *= 0.01f;
             }

@@ -319,6 +319,43 @@ namespace ACE.Server.Network.Structure
                 }
             }
 
+            // Charm of the Triune Weave - progress lives on the examiner's character, so a
+            // replacement charm always shows the true totals. Appraisal output only, never persisted.
+            if (wo.WeenieClassId == 777700030 && examiner != null)
+            {
+                var weave = examiner.GetProperty(PropertyInt64.TriuneWeaveCount) ?? 0;
+                var msg = weave > 0
+                    ? $"The weave has been empowered {weave:N0} times:\n   +{weave:N0} Creature Augmentations\n   +{weave:N0} Item Augmentations\n   +{weave:N0} Life Augmentations\n\nFeed it Motes of the Triune Weave to empower it further."
+                    : "The weave is dormant. Feed it Motes of the Triune Weave to empower it, granting +1 Creature, Item, and Life augmentation per point.";
+
+                if (PropertiesString.ContainsKey(PropertyString.LongDesc))
+                    PropertiesString[PropertyString.LongDesc] += $"\n\n{msg}";
+                else
+                    PropertiesString[PropertyString.LongDesc] = msg;
+            }
+
+            // School charms (War/Void/Melee/Missile) - counters accumulate toward future ability
+            // unlocks; like the Triune Weave, progress lives on the examiner's character.
+            PropertyInt64? schoolCharmProp =
+                wo.WeenieClassId == 777700051 ? PropertyInt64.TempestCharmCount :
+                wo.WeenieClassId == 777700056 ? PropertyInt64.NetherVeilCharmCount :
+                wo.WeenieClassId == 777700061 ? PropertyInt64.CrashingSteelCharmCount :
+                wo.WeenieClassId == 777700066 ? PropertyInt64.TrueShotCharmCount :
+                (PropertyInt64?)null;
+
+            if (schoolCharmProp != null && examiner != null)
+            {
+                var count = examiner.GetProperty(schoolCharmProp.Value) ?? 0;
+                var msg = count > 0
+                    ? $"The charm has been empowered {count:N0} times. Its deeper powers remain sealed."
+                    : "The charm is dormant. Feed it its Motes to empower it.";
+
+                if (PropertiesString.ContainsKey(PropertyString.LongDesc))
+                    PropertiesString[PropertyString.LongDesc] += $"\n\n{msg}";
+                else
+                    PropertiesString[PropertyString.LongDesc] = msg;
+            }
+
             if (wo is SlumLord slumLord)
             {                
                 PropertiesBool.Clear();

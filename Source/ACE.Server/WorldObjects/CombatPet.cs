@@ -401,7 +401,7 @@ namespace ACE.Server.WorldObjects
             }
 
             // Store item augmentation bonuses directly (not as enchantments), capped by summoning aug count.
-            var itemAugCount = (long)(player.LuminanceAugmentItemCount ?? 0);
+            var itemAugCount = player.EffectiveItemAugCount;
             var itemAugEffective = Math.Min(summonAugCount, itemAugCount);
             if (itemAugEffective > 0)
             {
@@ -439,7 +439,7 @@ namespace ACE.Server.WorldObjects
             }
 
             // Store life augmentation protection rating directly (not as enchantments), capped by summoning aug count.
-            var lifeAugCount = (long)(player.LuminanceAugmentLifeCount ?? 0);
+            var lifeAugCount = player.EffectiveLifeAugCount;
             var lifeAugEffective = Math.Min(summonAugCount, lifeAugCount);
             if (lifeAugEffective > 0)
             {

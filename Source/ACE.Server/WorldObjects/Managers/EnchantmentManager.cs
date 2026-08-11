@@ -262,13 +262,13 @@ namespace ACE.Server.WorldObjects.Managers
                 var player = caster as Creature;
                 if (spell.School == MagicSchool.CreatureEnchantment && !spell.IsFellowshipSpell && spell.Id != 5753 && spell.IsBeneficial && spell.IsSelfTargeted)
                 {
-                    entry.StatModValue += player.LuminanceAugmentCreatureCount ?? 0.0f;
-                    entry.AugmentationLevelWhenCast = player.LuminanceAugmentCreatureCount ?? 0;
+                    entry.StatModValue += player.EffectiveCreatureAugCount;
+                    entry.AugmentationLevelWhenCast = player.EffectiveCreatureAugCount;
                 }
                 else if (spell.School == MagicSchool.CreatureEnchantment && spell.IsHarmful)
                 {
-                    entry.StatModValue -= player.LuminanceAugmentCreatureCount ?? 0.0f;
-                    entry.AugmentationLevelWhenCast = player.LuminanceAugmentCreatureCount ?? 0;
+                    entry.StatModValue -= player.EffectiveCreatureAugCount;
+                    entry.AugmentationLevelWhenCast = player.EffectiveCreatureAugCount;
                 }
 
                 if (spell.School == MagicSchool.ItemEnchantment)
@@ -279,41 +279,41 @@ namespace ACE.Server.WorldObjects.Managers
                         if (spell.Id == 1487 || spell.Id == 1488 || spell.Id == 1489 || spell.Id == 1490 ||
                             spell.Id == 1491 || spell.Id == 1492 || spell.Id == 4399 || spell.Id == 2100) // Brittlemail/Tattercoat
                         {
-                            entry.StatModValue -= (player.LuminanceAugmentItemCount ?? 0.0f) * 1.00f;
+                            entry.StatModValue -= (player.EffectiveItemAugCount) * 1.00f;
                         }
                         else // Impen
                         {
-                            entry.StatModValue += (player.LuminanceAugmentItemCount ?? 0.0f) * 1.00f;
+                            entry.StatModValue += (player.EffectiveItemAugCount) * 1.00f;
                         }
                         // This is required for sorting in PropertiesEnchantmentRegistryExtensions.GetEnchantmentsTopLayerByStatModType()
                         // Otherwise, Impenetrability will not be prioritized over spells that arent affected by luminance augs
                         // Example: ShadowArmor from olthoi infused shadow armor has powerlevel 900 which overrides impen unless we set AugmentationLevelWhenCast
-                        entry.AugmentationLevelWhenCast = player.LuminanceAugmentItemCount ?? 0;
+                        entry.AugmentationLevelWhenCast = player.EffectiveItemAugCount;
                     }
                     else if (spell.StatModKey == 360 && selfCastEligible) //blood drinker buffed
                     {
-                        entry.StatModValue += (player.LuminanceAugmentItemCount ?? 0.0f) * 0.5f;
+                        entry.StatModValue += (player.EffectiveItemAugCount) * 0.5f;
                     }
                     else if (spell.StatModKey == 170 && selfCastEligible) //spirit drinker
                     {
-                        entry.StatModValue += (player.LuminanceAugmentItemCount ?? 0.0f) * 0.005f;
+                        entry.StatModValue += (player.EffectiveItemAugCount) * 0.005f;
                     }
                     else if (spell.Name.Contains("Bane") || spell.StatModKey == 171
                         || spell.StatModKey == 318 || spell.StatModKey ==  317) //banes and surges
                     {
-                        entry.StatModValue += (player.LuminanceAugmentItemCount ?? 0.0f) * 0.01f;
+                        entry.StatModValue += (player.EffectiveItemAugCount) * 0.01f;
                     }
                     else if (spell.StatModKey == 168 || spell.StatModKey == 169 && selfCastEligible)
                     {
-                        entry.StatModValue += GetItemAugPercentageRating(player.LuminanceAugmentItemCount ?? 0); //(player.LuminanceAugmentItemCount ?? 0.0f) * 0.01f;
+                        entry.StatModValue += GetItemAugPercentageRating(player.EffectiveItemAugCount); //(player.EffectiveItemAugCount) * 0.01f;
                     }
                     else if (spell.StatModKey == 361 && selfCastEligible) //eg atlans alacrity
                     {
-                        entry.StatModValue -= (player.LuminanceAugmentItemCount ?? 0.0f) * 1.0f;
+                        entry.StatModValue -= (player.EffectiveItemAugCount) * 1.0f;
                     }
                     if (selfCastEligible)
                     {
-                        entry.AugmentationLevelWhenCast = player.LuminanceAugmentItemCount ?? 0;
+                        entry.AugmentationLevelWhenCast = player.EffectiveItemAugCount;
                     }                    
                 }
                 if (spell.School == MagicSchool.LifeMagic)
@@ -322,36 +322,36 @@ namespace ACE.Server.WorldObjects.Managers
                     {
                         if (spell.StatModKey == 0) //armor -- single point
                         {
-                            entry.StatModValue += (player.LuminanceAugmentLifeCount ?? 0.0f);
+                            entry.StatModValue += (player.EffectiveLifeAugCount);
                         }
                         else if (spell.StatModKey == 64 || spell.StatModKey == 65 || spell.StatModKey == 66 //slash, pierce, bludge
                             || spell.StatModKey == 67 || spell.StatModKey == 68 || spell.StatModKey == 69 || spell.StatModKey == 70) //fire, cold, acid, electric
                         {
-                            entry.StatModValue -= GetLifeAugProtectRating(player.LuminanceAugmentLifeCount ?? 0);
+                            entry.StatModValue -= GetLifeAugProtectRating(player.EffectiveLifeAugCount);
                         }
                         else
                         {
-                            entry.StatModValue += (player.LuminanceAugmentLifeCount ?? 0.0f) * 0.10f;
+                            entry.StatModValue += (player.EffectiveLifeAugCount) * 0.10f;
                         }                        
                     }
                     else if (spell.IsHarmful) //debuffs -- single point
                     {
                         if (spell.StatModKey == 0)
                         {
-                            entry.StatModValue -= (player.LuminanceAugmentLifeCount ?? 0.0f);
+                            entry.StatModValue -= (player.EffectiveLifeAugCount);
                         }
                         else if (spell.StatModKey == 64 || spell.StatModKey == 65 || spell.StatModKey == 66 //slash, pierce, bludge
                             || spell.StatModKey == 67 || spell.StatModKey == 68 || spell.StatModKey == 69 || spell.StatModKey == 70 //fire, cold, acid, electric
                             || spell.StatModKey == 312 || spell.StatModKey == 307 || spell.StatModKey == 318 || spell.StatModKey == 308 || spell.StatModKey == 317) //surge of regeneration
                         {
-                            entry.StatModValue += (player.LuminanceAugmentLifeCount ?? 0.0f) * 0.01f;
+                            entry.StatModValue += (player.EffectiveLifeAugCount) * 0.01f;
                         }
                         else
                         {
-                            entry.StatModValue -= (player.LuminanceAugmentLifeCount ?? 0.0f) * 0.10f;
+                            entry.StatModValue -= (player.EffectiveLifeAugCount) * 0.10f;
                         }
                     }
-                    entry.AugmentationLevelWhenCast = player.LuminanceAugmentLifeCount ?? 0;
+                    entry.AugmentationLevelWhenCast = player.EffectiveLifeAugCount;
                 }
 
             }
@@ -365,7 +365,7 @@ namespace ACE.Server.WorldObjects.Managers
 
                     if (wielder != null)
                     {
-                        entry.AugmentationLevelWhenCast = wielder.LuminanceAugmentItemCount ?? 0;
+                        entry.AugmentationLevelWhenCast = wielder.EffectiveItemAugCount;
                     }
                 }
             }

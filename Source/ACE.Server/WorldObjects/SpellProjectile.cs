@@ -606,9 +606,9 @@ namespace ACE.Server.WorldObjects
                     critDamageBonus = lifeMagicDamage * 0.5f * weaponCritDamageMod;
                 }
 
-                if (sourceCreature != null && sourceCreature.LuminanceAugmentLifeCount.HasValue && sourceCreature.LuminanceAugmentLifeCount >= 1)
+                if (sourceCreature != null && sourceCreature.EffectiveLifeAugCount >= 1)
                 {
-                    lifeMagicDamage += sourceCreature.LuminanceAugmentLifeCount.Value;
+                    lifeMagicDamage += sourceCreature.EffectiveLifeAugCount;
                 }
 
                 weaponResistanceMod = GetWeaponResistanceModifier(weapon, sourceCreature, attackSkill, Spell.DamageType);

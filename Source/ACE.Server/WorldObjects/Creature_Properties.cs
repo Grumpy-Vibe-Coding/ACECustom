@@ -378,6 +378,20 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyInt64.LumAugLifeCount); else SetProperty(PropertyInt64.LumAugLifeCount, value.Value); }
         }
 
+        public long? TriuneWeaveCount
+        {
+            get => GetProperty(PropertyInt64.TriuneWeaveCount) ?? 0;
+            set { if (!value.HasValue) RemoveProperty(PropertyInt64.TriuneWeaveCount); else SetProperty(PropertyInt64.TriuneWeaveCount, value.Value); }
+        }
+
+        // Effective counts include the Charm of the Triune Weave. Use these at bonus-application
+        // sites only; gem purchase, caps, and progression gates read the raw LumAug counts.
+        public long EffectiveCreatureAugCount => (LuminanceAugmentCreatureCount ?? 0) + (TriuneWeaveCount ?? 0);
+
+        public long EffectiveItemAugCount => (LuminanceAugmentItemCount ?? 0) + (TriuneWeaveCount ?? 0);
+
+        public long EffectiveLifeAugCount => (LuminanceAugmentLifeCount ?? 0) + (TriuneWeaveCount ?? 0);
+
         public long? LuminanceAugmentVoidCount
         {
             get => GetProperty(PropertyInt64.LumAugVoidCount) ?? 0;

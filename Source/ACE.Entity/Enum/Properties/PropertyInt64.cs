@@ -53,6 +53,20 @@ namespace ACE.Entity.Enum.Properties
         LumAugMagicDefenseCount = 9026,
         BankedWeaklyEnlightenedCoins = 9027,
 
+        // 50000+ block (matches the PropertyInt/PropertyBool charm-system ids)
+        /// <summary>Charm of the Triune Weave: each point grants +1 Creature, +1 Item, and +1 Life augmentation on top of the (capped) gem-bought counts.</summary>
+        TriuneWeaveCount       = 50000,
+        // School charm counters: accumulated strength only — they gate future ability unlocks and
+        // deliberately add NOTHING to the capped War/Void/Melee/Missile aug stats.
+        /// <summary>Charm of the Raging Tempest (War).</summary>
+        TempestCharmCount       = 50001,
+        /// <summary>Charm of the Nether Veil (Void).</summary>
+        NetherVeilCharmCount    = 50002,
+        /// <summary>Charm of Crashing Steel (Melee).</summary>
+        CrashingSteelCharmCount = 50003,
+        /// <summary>Charm of the True Shot (Missile).</summary>
+        TrueShotCharmCount      = 50004,
+
         // Pet Bonding System (Combat Pet Devices) — [AssessmentProperty] for identify + plugin PublicUpdateProperty*
         /// <summary>Current bond XP toward next level on a PetDevice.</summary>
         [AssessmentProperty]

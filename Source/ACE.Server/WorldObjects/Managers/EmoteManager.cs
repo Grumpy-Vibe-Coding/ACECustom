@@ -163,6 +163,32 @@ namespace ACE.Server.WorldObjects.Managers
             { "Specialize", 266 },
         };
 
+        /// <summary>Charm of the Triune Weave. The charm must be in inventory to use Motes; progress lives on the player (PropertyInt64.TriuneWeaveCount), never on the item.</summary>
+        private const uint TriuneCharmWcid = 777700030;
+
+        private sealed class SchoolCharmDef
+        {
+            public string FullName;
+            public uint CharmWcid;
+            public uint Mote1;
+            public uint Mote10;
+            public uint Mote50;
+            public uint Mote100;
+            public PropertyInt64 CountProperty;
+        }
+
+        /// <summary>
+        /// School charms keyed by their mote emote-message prefix. Counters accumulate toward future
+        /// ability unlocks only — they add nothing to the capped War/Void/Melee/Missile aug stats.
+        /// </summary>
+        private static readonly Dictionary<string, SchoolCharmDef> SchoolCharms = new Dictionary<string, SchoolCharmDef>
+        {
+            { "Tempest",  new SchoolCharmDef { FullName = "Charm of the Raging Tempest", CharmWcid = 777700051, Mote1 = 777700052, Mote10 = 777700053, Mote50 = 777700054, Mote100 = 777700055, CountProperty = PropertyInt64.TempestCharmCount } },
+            { "Nether",   new SchoolCharmDef { FullName = "Charm of the Nether Veil",    CharmWcid = 777700056, Mote1 = 777700057, Mote10 = 777700058, Mote50 = 777700059, Mote100 = 777700060, CountProperty = PropertyInt64.NetherVeilCharmCount } },
+            { "Steel",    new SchoolCharmDef { FullName = "Charm of Crashing Steel",     CharmWcid = 777700061, Mote1 = 777700062, Mote10 = 777700063, Mote50 = 777700064, Mote100 = 777700065, CountProperty = PropertyInt64.CrashingSteelCharmCount } },
+            { "TrueShot", new SchoolCharmDef { FullName = "Charm of the True Shot",      CharmWcid = 777700066, Mote1 = 777700067, Mote10 = 777700068, Mote50 = 777700069, Mote100 = 777700070, CountProperty = PropertyInt64.TrueShotCharmCount } },
+        };
+
         /// <summary>
         /// Checked both when the gem is used and again inside the confirmation callback (before any
         /// luminance is spent), because the count can change between prompt and confirm.
@@ -3282,6 +3308,109 @@ namespace ACE.Server.WorldObjects.Managers
                                             player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You have successfully increased your summons attributes and skills by {augCount} point(s) each.", ChatMessageType.Broadcast));
                                         }), $"You are about to spend {totalCost:N0} luminance to add {augCount} point(s) to all of your summons attributes and skills. Are you sure?");
                                     }
+                                }
+                                break;
+                            case "Triune":
+                            case "Triune10":
+                            case "Triune50":
+                            case "Triune100":
+                                {
+                                    // Motes are bought with Prestige Coins, so no luminance cost and no cap here.
+                                    int augCount = emote.Message == "Triune" ? 1 :
+                                                   emote.Message == "Triune10" ? 10 :
+                                                   emote.Message == "Triune50" ? 50 :
+                                                   emote.Message == "Triune100" ? 100 : 0;
+
+                                    if (player.GetNumInventoryItemsOfWCID(TriuneCharmWcid) == 0)
+                                    {
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this mote.", ChatMessageType.Broadcast));
+                                        break;
+                                    }
+
+                                    int moteId = augCount == 1 ? 777700031 :
+                                                 augCount == 10 ? 777700032 :
+                                                 augCount == 50 ? 777700033 :
+                                                 augCount == 100 ? 777700034 : 0;
+
+                                    player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
+                                    {
+                                        if (!response) return;
+                                        if (player.GetNumInventoryItemsOfWCID(TriuneCharmWcid) == 0)
+                                        {
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this mote.", ChatMessageType.Broadcast));
+                                            return;
+                                        }
+
+                                        // Consume before granting: queued confirms each require their own mote.
+                                        if (moteId == 0 || !player.TryConsumeFromInventoryWithNetworking((uint)moteId, 1))
+                                        {
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the mote. Please try again.", ChatMessageType.Broadcast));
+                                            return;
+                                        }
+
+                                        player.TriuneWeaveCount = (player.TriuneWeaveCount ?? 0) + augCount;
+                                        player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.TriuneWeaveCount, player.TriuneWeaveCount ?? 0));
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Your Triune Weave is empowered to {player.TriuneWeaveCount:N0}, granting +{player.TriuneWeaveCount:N0} Creature, Item, and Life augmentations.", ChatMessageType.Broadcast));
+                                    }), $"You are about to empower your Charm of the Triune Weave by {augCount}, granting +{augCount} to your Creature, Item, and Life augmentations. Are you sure?");
+                                }
+                                break;
+                            case "Tempest":
+                            case "Tempest10":
+                            case "Tempest50":
+                            case "Tempest100":
+                            case "Nether":
+                            case "Nether10":
+                            case "Nether50":
+                            case "Nether100":
+                            case "Steel":
+                            case "Steel10":
+                            case "Steel50":
+                            case "Steel100":
+                            case "TrueShot":
+                            case "TrueShot10":
+                            case "TrueShot50":
+                            case "TrueShot100":
+                                {
+                                    var moteMessage = emote.Message;
+                                    int augCount = moteMessage.EndsWith("100") ? 100 :
+                                                   moteMessage.EndsWith("50") ? 50 :
+                                                   moteMessage.EndsWith("10") ? 10 : 1;
+                                    var prefix = augCount == 1 ? moteMessage : moteMessage.Substring(0, moteMessage.Length - (augCount == 100 ? 3 : 2));
+
+                                    if (!SchoolCharms.TryGetValue(prefix, out var charm))
+                                        break;
+
+                                    if (player.GetNumInventoryItemsOfWCID(charm.CharmWcid) == 0)
+                                    {
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this mote.", ChatMessageType.Broadcast));
+                                        break;
+                                    }
+
+                                    uint moteId = augCount == 1 ? charm.Mote1 :
+                                                  augCount == 10 ? charm.Mote10 :
+                                                  augCount == 50 ? charm.Mote50 : charm.Mote100;
+
+                                    player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
+                                    {
+                                        if (!response) return;
+                                        if (player.GetNumInventoryItemsOfWCID(charm.CharmWcid) == 0)
+                                        {
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this mote.", ChatMessageType.Broadcast));
+                                            return;
+                                        }
+
+                                        // Consume before granting: queued confirms each require their own mote.
+                                        if (!player.TryConsumeFromInventoryWithNetworking(moteId, 1))
+                                        {
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the mote. Please try again.", ChatMessageType.Broadcast));
+                                            return;
+                                        }
+
+                                        var newCount = (player.GetProperty(charm.CountProperty) ?? 0) + augCount;
+                                        player.SetProperty(charm.CountProperty, newCount);
+                                        player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, charm.CountProperty, newCount));
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Your {charm.FullName} is empowered to {newCount:N0}.", ChatMessageType.Broadcast));
+                                    }), $"You are about to empower your {charm.FullName} by {augCount}. Are you sure?");
                                 }
                                 break;
                             default:
