@@ -14,6 +14,7 @@ namespace ACE.Server.Entity.Actions
         AllegianceManager_DoPassXP,
         Bindstone_EnqueueBroadcastMotion,
         Bindstone_SetSanctuary,
+        BossGroupManager_KickSpawn,
         Chest_Reset,
         ConfirmationManager_EnqueueAbort,
         Container_FinishClose,

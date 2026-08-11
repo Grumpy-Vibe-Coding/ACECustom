@@ -2909,6 +2909,107 @@ namespace ACE.Server.Command.Handlers
             CommandHandlerHelper.WriteOutputInfo(session, $"Teleporting to variation {variationLabel}.");
         }
 
+        // bossgroup - boss-group status + runtime tuning (BossGroupManager / PropertyInt.BossGroupId gens)
+        [CommandHandler("bossgroup", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
+            "Boss-group status + runtime tuning (generators sharing a BossGroupId).",
+            "status [--wire] | set <group> delay|radius <value> | clear <group> delay|radius | enable <group> | disable <group> | respawn <group>\n" +
+            "Overrides are RUNTIME (shard store, instant); the weenie values stay the defaults.\n" +
+            "Example: @bossgroup set 1 delay 1800")]
+        public static void HandleBossGroup(Session session, params string[] parameters)
+        {
+            var sub = parameters.Length > 0 ? parameters[0].ToLowerInvariant() : "status";
+
+            if (sub == "status")
+            {
+                if (parameters.Length > 1 && parameters[1].Equals("--wire", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var line in Managers.BossGroupManager.GetWireLines())
+                        ChatPacket.SendServerMessage(session, line, ChatMessageType.Broadcast);
+                    return;
+                }
+                foreach (var line in Managers.BossGroupManager.GetStatusLines())
+                    CommandHandlerHelper.WriteOutputInfo(session, line);
+                return;
+            }
+
+            if (parameters.Length < 2 || !int.TryParse(parameters[1], out var group))
+            {
+                CommandHandlerHelper.WriteOutputInfo(session, "Usage: /bossgroup status [--wire] | set <group> delay|radius <value> | clear <group> delay|radius | enable|disable <group> | respawn <group>");
+                return;
+            }
+
+            switch (sub)
+            {
+                case "set":
+                {
+                    if (parameters.Length < 4 || !float.TryParse(parameters[3], out var value) || value < 0)
+                    {
+                        CommandHandlerHelper.WriteOutputInfo(session, "Usage: /bossgroup set <group> delay|radius <value>");
+                        return;
+                    }
+                    var field = parameters[2].ToLowerInvariant();
+                    if (field == "delay")
+                        Managers.BossGroupManager.MutateOverride(group, ov => ov.Delay = value);
+                    else if (field == "radius")
+                        Managers.BossGroupManager.MutateOverride(group, ov => ov.Radius = value);
+                    else
+                    {
+                        CommandHandlerHelper.WriteOutputInfo(session, "Field must be delay or radius.");
+                        return;
+                    }
+                    CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: {field} override = {value:0.#} (runtime, instant; weenie default untouched).");
+                    return;
+                }
+                case "clear":
+                {
+                    if (parameters.Length < 3)
+                    {
+                        CommandHandlerHelper.WriteOutputInfo(session, "Usage: /bossgroup clear <group> delay|radius");
+                        return;
+                    }
+                    var field = parameters[2].ToLowerInvariant();
+                    if (field == "delay")
+                        Managers.BossGroupManager.MutateOverride(group, ov => ov.Delay = null);
+                    else if (field == "radius")
+                        Managers.BossGroupManager.MutateOverride(group, ov => ov.Radius = null);
+                    else
+                    {
+                        CommandHandlerHelper.WriteOutputInfo(session, "Field must be delay or radius.");
+                        return;
+                    }
+                    CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: {field} override cleared (weenie default applies).");
+                    return;
+                }
+                case "enable":
+                    Managers.BossGroupManager.MutateOverride(group, ov => ov.Enabled = true);
+                    CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group} ENABLED.");
+                    return;
+                case "disable":
+                    Managers.BossGroupManager.MutateOverride(group, ov => ov.Enabled = false);
+                    CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group} DISABLED - a live boss is left alone; it just never respawns until re-enabled.");
+                    return;
+                case "respawn":
+                {
+                    // clock/flag first: the smite's death event lands async and must see the pending flag
+                    var kicked = Managers.BossGroupManager.ForceRespawn(group);
+                    var boss = Managers.BossGroupManager.GetAliveBoss(group);
+                    if (boss is Creature c && !c.IsDestroyed)
+                    {
+                        c.Smite(session.Player);
+                        CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: current boss smitten; a new boss is spawning at a re-elected generator.");
+                    }
+                    else if (kicked)
+                        CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: spawning now at a re-elected generator.");
+                    else
+                        CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: no loaded generator is polling this group yet - it spawns as soon as one loads.");
+                    return;
+                }
+                default:
+                    CommandHandlerHelper.WriteOutputInfo(session, "Usage: /bossgroup status [--wire] | set <group> delay|radius <value> | clear <group> delay|radius | enable|disable <group> | respawn <group>");
+                    return;
+            }
+        }
+
         // tv {variation} - Alias for televariant
         [CommandHandler("tv", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, 1,
             "Teleport yourself to the specified variation at your current location (alias for televariant).",

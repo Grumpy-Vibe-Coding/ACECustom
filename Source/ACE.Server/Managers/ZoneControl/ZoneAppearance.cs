@@ -18,6 +18,10 @@ namespace ACE.Server.Managers.ZoneControl
     /// </summary>
     public class ZoneAppearance
     {
+        /// <summary>PropertyString.Name (1) display-name override (owner 2026-08-09). Set per-WCID
+        /// only (the command enforces --wcid; a zone-wide default would rename every mob identically).</summary>
+        public string Name { get; set; }
+
         // ── Recolor / resize (per-instance property writes) ──
         /// <summary>PropertyInt.PaletteTemplate (3): recolor via a ClothingBase's sub-palette option.</summary>
         public int? PaletteTemplate { get; set; }
@@ -63,6 +67,7 @@ namespace ACE.Server.Managers.ZoneControl
         public List<TextureMapEntry> TextureMaps { get; set; }
 
         public bool IsEmpty =>
+            string.IsNullOrEmpty(Name) &&
             !PaletteTemplate.HasValue && !Shade.HasValue && !Scale.HasValue &&
             !Translucency.HasValue && !Shiny.HasValue &&
             !SetupTableId.HasValue && !MotionTable.HasValue && !SoundTable.HasValue &&
@@ -72,6 +77,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>Reset every field to "not overridden" (used by clearappearance-all / the plugin's Revert all).</summary>
         public void Clear()
         {
+            Name = null;
             PaletteTemplate = null; Shade = null; Scale = null; Translucency = null; Shiny = null;
             SetupTableId = null; MotionTable = null; SoundTable = null;
             PaletteBase = null; ClothingBase = null; Icon = null;
@@ -83,6 +89,7 @@ namespace ACE.Server.Managers.ZoneControl
 
         public ZoneAppearance Clone() => new ZoneAppearance
         {
+            Name = Name,
             PaletteTemplate = PaletteTemplate,
             Shade = Shade,
             Scale = Scale,
@@ -105,6 +112,7 @@ namespace ACE.Server.Managers.ZoneControl
             if (base_ == null && overlay == null) return null;
             var result = base_?.Clone() ?? new ZoneAppearance();
             if (overlay == null) return result;
+            if (!string.IsNullOrEmpty(overlay.Name)) result.Name = overlay.Name;
             if (overlay.PaletteTemplate.HasValue) result.PaletteTemplate = overlay.PaletteTemplate;
             if (overlay.Shade.HasValue) result.Shade = overlay.Shade;
             if (overlay.Scale.HasValue) result.Scale = overlay.Scale;

@@ -156,6 +156,13 @@ namespace ACE.Server.Managers.ZoneControl
             if (ap == null)
                 return;
 
+            // ── Display name override (owner 2026-08-09; per-WCID only, enforced at the command) ──
+            if (!string.IsNullOrEmpty(ap.Name))
+            {
+                creature.Name = ap.Name;
+                creature.SetProperty(PropertyString.Name, ap.Name);
+            }
+
             // ── Model / data swaps (DataId; guarded by class byte so a wrong id can't garble the client) ──
             // A Setup swap replaces the body: clear the base weenie's own overlay + saved ObjDesc FIRST so its
             // appearance doesn't bleed onto the new model (mirrors PetDevice.SummonCreature's capture apply),

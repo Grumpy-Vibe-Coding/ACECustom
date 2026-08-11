@@ -845,6 +845,14 @@ namespace ACE.Entity.Enum.Properties
         /// from this mask (e.g. Cold 0x8, Fire 0x10, Cold+Fire 0x18 = randomly one per hit). 0/unset = normal weapon/
         /// body-part type. Does NOT change magic-school (War/Void) spells — those come from the mob's spellbook.</summary>
         OutgoingDamageTypeOverride = 50107,
+
+        /// <summary>BOSS GROUP: set on a GENERATOR weenie to join it to a named boss group. All generators
+        /// sharing this id (placed on any number of landblocks) keep exactly ONE spawn alive between them:
+        /// when it dies, one respawn delay (the profile's Delay) passes, then ONE randomly-chosen generator
+        /// of the group (among loaded landblocks) spawns the next one. Coordinated by BossGroupManager.
+        /// A boss-group generator should have MaxCreate 1 and boss-only entries — escorts belong on the
+        /// boss creature's own generator table, not on the group gen.</summary>
+        BossGroupId = 50108,
     }
 
     public static class PropertyIntExtensions

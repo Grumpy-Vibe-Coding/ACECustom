@@ -964,6 +964,21 @@ namespace ACE.Server.Command.Handlers
         // 6079/6085; shirt 4466; pants 4470). Banes/Impen rejected (owner: life protections).
         private static readonly uint[] LegendaryWardSpells = { 6079, 6080, 6081, 6082, 6083, 6084, 6085 };
         private static readonly uint[] LifeProtectionSpells = { 4460, 4462, 4464, 4466, 4468, 4470, 4472 };
+        // Owner 2026-08-09, from the live top-30 gear survey: Legendary Impenetrability
+        // (strongest impen; same-family levels don't stack so one id suffices) and the
+        // defensive cantrip cluster worn by virtually every endgame suit.
+        private static readonly uint[] ImpenSpells = { 6095 };
+        private static readonly uint[] DefensiveCantripSpells = { 6055, 6077, 6102, 6103, 6104, 6105 };
+        // Owner 2026-08-09: the trinket slot's DEFAULT suite (no card needed) — the 7
+        // Legendary Wards + Legendary Armor, Augmented Understanding III, Augmented
+        // Damage II, Rare Damage Boost X, Sigil of Defense XV, Sigil of Destruction XV,
+        // Honeyed Life Mead, Towering Defense, Health/Stamina/Mana Boost.
+        private static readonly uint[] TrinketDefaultSpells =
+        {
+            6079, 6080, 6081, 6082, 6083, 6084, 6085, 6102,
+            5137, 5139, 5187, 5253, 5238, 6170, 5450,
+            3571, 3570, 3569,
+        };
 
         /// <summary>Adds spells to a forged piece and stamps the /testchar-norm spell-support
         /// props (spellcraft/mana) if the piece has none — without them item spells never
@@ -1414,7 +1429,9 @@ namespace ACE.Server.Command.Handlers
             "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
             "ring/bracelet mint the left + right pair.\n" +
             "cards: albonus=N (AL over tier baseline) prot=X (uniform 8-element mod) dresist/cdresist/maxhp/drating/cdrating=N (Gear ratings)\n" +
-            "ward (adds the 7 Legendary elemental Wards) lifeprot (adds the 7 life Protections) - both on every minted piece")]
+            "ward (adds the 7 Legendary elemental Wards) lifeprot (adds the 7 life Protections)\n" +
+            "impen (Legendary Impenetrability) defcantrips (Legendary Armor/Invuln/Coord/Endurance/Focus/Health Gain) - all on every minted piece\n" +
+            "Defaults (no card): T11+ armor gets Legendary Impen; the trinket gets wards/Leg Armor/Aug Understanding III/Aug Damage II/Rare Dmg Boost X/Sigils XV/Life Mead/Towering Defense/HP-Stam-Mana Boost")]
         public static void HandleAsForge(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -1437,6 +1454,8 @@ namespace ACE.Server.Command.Handlers
             int? dresist = null, cdresist = null, maxhp = null, drating = null, cdrating = null;
             var ward = false;
             var lifeprot = false;
+            var impen = false;
+            var defcantrips = false;
             var loadoutDesc = "";
             foreach (var p in parameters.Skip(1))
             {
@@ -1464,8 +1483,10 @@ namespace ACE.Server.Command.Handlers
                         case "cdrating": cdrating = Iv(); break;
                         case "ward": ward = true; break;
                         case "lifeprot": lifeprot = true; break;
+                        case "impen": impen = true; break;
+                        case "defcantrips": defcantrips = true; break;
                         default:
-                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot dresist cdresist maxhp drating cdrating ward lifeprot");
+                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot dresist cdresist maxhp drating cdrating ward lifeprot impen defcantrips");
                             return;
                     }
                 }
@@ -1575,6 +1596,18 @@ namespace ACE.Server.Command.Handlers
                     AddForgeSpells(wo, LegendaryWardSpells);
                 if (lifeprot)
                     AddForgeSpells(wo, LifeProtectionSpells);
+                if (impen)
+                    AddForgeSpells(wo, ImpenSpells);
+                if (defcantrips)
+                    AddForgeSpells(wo, DefensiveCantripSpells);
+
+                // Owner defaults 2026-08-09 (no card required): T11+ armor pieces carry
+                // Legendary Impenetrability; the trinket carries its full default suite.
+                // GetOrAddKnownSpell dedups if the matching cards are also on.
+                if (isVodArmor && tier >= 11)
+                    AddForgeSpells(wo, ImpenSpells);
+                if (wo.WeenieClassId == 41483)
+                    AddForgeSpells(wo, TrinketDefaultSpells);
                 wo.ChangesDetected = true;
 
                 // VoD armor pieces: per-tier AL baseline (tier x 100) + albonus card on top;

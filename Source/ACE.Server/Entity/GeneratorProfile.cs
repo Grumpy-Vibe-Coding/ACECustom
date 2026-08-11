@@ -250,6 +250,13 @@ namespace ACE.Server.Entity
         /// </summary>
         public List<WorldObject> Spawn()
         {
+            // boss groups: gens sharing a BossGroupId keep ONE spawn alive between them across any
+            // number of landblocks. Deny = drop this attempt BEFORE creating the object (a denied
+            // profile just retries next cycle — must not enter the FirstSpawn failed-slot path).
+            var bossGroup = Generator.GetProperty(PropertyInt.BossGroupId);
+            if (bossGroup != null && !BossGroupManager.TryClaimSpawn(bossGroup.Value, Generator, Delay))
+                return null;
+
             var objects = new List<WorldObject>();
 
             if (RegenLocationType.HasFlag(RegenLocationType.Treasure))
@@ -357,6 +364,9 @@ namespace ACE.Server.Entity
                 else
                     success = Spawn_Default(obj);
 
+                if (bossGroup != null && success)
+                    BossGroupManager.OnBossSpawned(bossGroup.Value, Generator, obj);
+
                 // The one that answers "who spawned this mob" - every object, tagged with its generator.
                 if (Generator.GenDiag)
                     log.Warn($"[GenDiag] SPAWN {obj.Name} [{obj.WeenieClassId}] 0x{obj.Guid} " +
@@ -432,6 +442,11 @@ namespace ACE.Server.Entity
         public bool Spawn_Scatter(WorldObject obj)
         {
             float genRadius = (float)(Generator.GetProperty(PropertyFloat.GeneratorRadius) ?? 0f);
+
+            // boss groups: a runtime radius override (plugin/command tuning) beats the weenie value
+            var scatterBossGroup = Generator.GetProperty(PropertyInt.BossGroupId);
+            if (scatterBossGroup != null && BossGroupManager.GetRadiusOverride(scatterBossGroup.Value) is float ovRadius)
+                genRadius = ovRadius;
             obj.Location = new ACE.Entity.Position(Generator.Location);
 
             // Skipping using same offset code above for offsetting scatter pos due to issues with rotation that were not expected at time content was rebuilt (Colo, others)
@@ -655,6 +670,10 @@ namespace ACE.Server.Entity
                 return;
 
             Spawned.Remove(woi.Guid.Full);
+
+            var bossGroup = Generator.GetProperty(PropertyInt.BossGroupId);
+            if (bossGroup != null)
+                BossGroupManager.OnBossRemoved(bossGroup.Value, woi.Guid.Full);
 
             NextAvailable = DateTime.UtcNow.AddSeconds(Delay);
         }

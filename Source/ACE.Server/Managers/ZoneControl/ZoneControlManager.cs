@@ -1680,6 +1680,57 @@ namespace ACE.Server.Managers.ZoneControl
             return rows;
         }
 
+        /// <summary>Distinct placed generator wcids (+ placement counts) across a zone's landblocks at
+        /// the zone's variation — the plugin Generator Settings discovery list ([[ZCL]], genlist).
+        /// Lean sibling of <see cref="SurveyArea"/>: no creature-tree expansion. Null = no such zone.</summary>
+        public static List<SurveyPlacedRow> GetPlacedGenerators(string name)
+        {
+            EnsureInitialized();
+            List<ushort> lbs;
+            int variation;
+            lock (_lock)
+            {
+                var area = FindArea(name);
+                if (area == null)
+                    return null;
+                lbs = area.Landblocks.OrderBy(x => x).ToList();
+                variation = area.Variation;
+            }
+
+            var placed = new Dictionary<uint, SurveyPlacedRow>();
+            foreach (var lb in lbs)
+                AccumulatePlacedGenerators(lb, variation, placed);
+            return placed.Values.OrderBy(p => p.Wcid).ToList();
+        }
+
+        /// <summary>Same scan for one landblock — genlist's fallback when the player is outside any zone.</summary>
+        public static List<SurveyPlacedRow> GetPlacedGeneratorsForLandblock(ushort landblock, int variation)
+        {
+            var placed = new Dictionary<uint, SurveyPlacedRow>();
+            AccumulatePlacedGenerators(landblock, variation, placed);
+            return placed.Values.OrderBy(p => p.Wcid).ToList();
+        }
+
+        private static void AccumulatePlacedGenerators(ushort lb, int variation, Dictionary<uint, SurveyPlacedRow> placed)
+        {
+            var instances = DatabaseManager.World.GetCachedInstancesByLandblock(lb, variation);
+            foreach (var inst in instances)
+            {
+                var weenie = DatabaseManager.World.GetCachedWeenie(inst.WeenieClassId);
+                if (!(weenie?.PropertiesGenerator is { Count: > 0 }))
+                    continue;
+                if (placed.TryGetValue(inst.WeenieClassId, out var row))
+                    row.Count++;
+                else
+                    placed[inst.WeenieClassId] = new SurveyPlacedRow
+                    {
+                        Wcid = inst.WeenieClassId,
+                        Name = weenie.GetName() ?? ("wcid " + inst.WeenieClassId),
+                        Count = 1,
+                    };
+            }
+        }
+
         /// <summary>Mirrors Creature.IsMonster (Attackable || TargetingTactic != None) at the weenie level.</summary>
         private static bool IsMonsterWeenie(Weenie weenie)
         {

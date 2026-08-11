@@ -78,6 +78,27 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
+        /// <summary>One look-preview spawn per player (previewmob) - a new preview replaces the old one.</summary>
+        private static readonly Dictionary<uint, ACE.Server.WorldObjects.WorldObject> ZcPreviews = new Dictionary<uint, ACE.Server.WorldObjects.WorldObject>();
+
+        /// <summary>The five reserved "Drafted Look" weenies (Target Dummy clones, Add_DraftedLook_Dummies_2026-08-10.sql)
+        /// backing the Look Lab's Drafted Look target. Each drafting player gets ONE slot per zone (draftslot);
+        /// the look is crafted in that slot's zone appearance bucket, then copydraft moves it onto a real wcid.</summary>
+        private static readonly uint[] ZcDraftSlotWcids = { 739999995, 739999996, 739999997, 739999998, 739999999 };
+
+        /// <summary>Live draft-slot claims: (zone name lower, player guid) -> slot wcid. Claims of players no
+        /// longer online are evicted (bucket cleared) whenever someone asks for a slot.</summary>
+        private static readonly Dictionary<(string Zone, uint Player), uint> ZcDraftClaims = new();
+
+        /// <summary>Drop a claim and wipe its slot's appearance bucket so the next claimant starts clean.</summary>
+        private static void ReleaseDraftClaim(string zoneKey, uint playerGuid)
+        {
+            if (!ZcDraftClaims.TryGetValue((zoneKey, playerGuid), out var slot))
+                return;
+            ZcDraftClaims.Remove((zoneKey, playerGuid));
+            ZoneControlManager.MutateArea(zoneKey, a => a.AppearanceByWcid?.Remove(slot));
+        }
+
         [CommandHandler("zonecontrol", AccessLevel.Developer, CommandHandlerFlag.None, 0,
             "Author/toggle Zone Control zones (any world area).",
             "help | list | here | create <name> <variation> [here|hex] | rename <old> <new> | delete <name> | "
@@ -86,11 +107,12 @@ namespace ACE.Server.Command.Handlers
             + "set <name> <stat> <value> [--wcid <id>] | clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>] | "
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
-            + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | "
+            + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | "
             + "cantrip <name> <add|remove|list> [spellId] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
-            + "mobinfo <wcid> | effect <name> [dot on|off | dmg <amount> | type <name|percent> | interval <secs>] | reload")]
+            + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
+            + "effect <name> [dot on|off | dmg <amount> | type <name|percent> | interval <secs>] | reload")]
         public static void HandleZoneControl(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -117,6 +139,10 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>]   (cosmetic; separate from stats; DataId fields take hex 0x.. ; reload landblock to see)");
                 Msg("  /zonecontrol clearappearance <name> [field] [--wcid <id>]   (no field = clear all)");
                 Msg("  /zonecontrol copylook <name> <donorWcid> [--wcid <id>]   (make the target look like another monster - copies its model + palette + parts)");
+                Msg("  /zonecontrol previewmob <wcid> [distance]   (spawn an inert look-preview in front of you for 60s; a new preview replaces the old one; distance 1-120, default 5)");
+                Msg("  /zonecontrol becomemob <donorWcid> --wcid <targetWcid>   (target BECOMES a full copy of the donor - stats/loot/spells/everything; keeps its name, class_Name and scale)");
+                Msg("  /zonecontrol draftslot <name> [release]   (claim your Drafted Look slot in this zone - a scratch wcid to craft a look on; release discards)");
+                Msg("  /zonecontrol copydraft <name> <destWcid>   (save your Drafted Look onto destWcid's zone appearance, then bakemob/clonemob to keep it)");
                 Msg("  /zonecontrol listparts <wcid | 0xSetupId>   (dump a mob's body-part layout: index -> model piece; head = index 16)");
                 Msg("  /zonecontrol appearance <name> animpart <index> <gfxObjHex> [--wcid <id>]   (swap ONE body part, e.g. animpart 16 = head; clear with clearappearance <name> animpart <index>)");
                 Msg("  /zonecontrol cantrip <name> <add|remove|list> [spellId] [--wcid <id>]   (custom cantrip pool for the extra-loot-cantrip roll)");
@@ -126,6 +152,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol quests <name>   (quest registry for the plugin Quests tab; throttled to one pull per 60s)");
                 Msg("  /zonecontrol terrain <name> <hex> <type|clear>   (override the map terrain color for one landblock; type = " + string.Join("/", ZoneControlManager.TerrainTags) + "; display-only)");
                 Msg("  /zonecontrol mobinfo <wcid>   (weenie base data: body parts, resists, wields)");
+                Msg("  /zonecontrol genlist [zone]   (placed generator wcids + counts for the plugin's Generator Settings table; no zone = where you stand)");
                 Msg("  parts = " + string.Join(", ", Enum.GetNames(typeof(CombatBodyPart)).Where(n => n != "Undefined")));
                 Msg("  stats = " + string.Join(", ", ZoneStat.All));
                 return;
@@ -410,6 +437,121 @@ namespace ACE.Server.Command.Handlers
                         var name = args[1];
                         if (!TryHex(args[2], out var lb)) { Msg("hex landblock required, e.g. F559"); return; }
                         Msg(ZoneControlManager.RemoveLandblock(name, (ushort)lb) ? $"'{name}' -= lb {lb:X4}" : $"No zone '{name}' or lb not a member.");
+                        return;
+                    }
+
+                    case "geninfo":
+                    {
+                        // Current generator-weenie knobs for the plugin's Generator Settings boxes.
+                        if (args.Count < 2 || !uint.TryParse(args[1], out var genWcid)) { Msg("Usage: geninfo <wcid>"); return; }
+                        var genWeenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(genWcid);
+                        if (genWeenie == null) { Msg($"[[ZCG]]w={genWcid}~found=0"); return; }
+                        Msg(BuildGenInfoPayload(genWcid, genWeenie));
+                        return;
+                    }
+
+                    case "genlist":
+                    {
+                        // Discovery for the plugin's Generator Settings table (owner 2026-08-08): distinct
+                        // placed generator wcids + counts across a zone's landblocks at the zone's variation.
+                        // No name = the zone covering the player's landblock (their effective variation
+                        // preferred); outside any zone the scan falls back to the single current landblock.
+                        // Emits one [[ZCL]] header then a [[ZCG]] knob line per wcid.
+                        string scopeLabel;
+                        List<ZoneControlManager.SurveyPlacedRow> placedGens;
+                        if (args.Count >= 2)
+                        {
+                            placedGens = ZoneControlManager.GetPlacedGenerators(args[1]);
+                            if (placedGens == null) { Msg($"No zone '{args[1]}'."); return; }
+                            scopeLabel = args[1];
+                        }
+                        else
+                        {
+                            var loc = session.Player?.Location;
+                            if (loc == null) { Msg("No location."); return; }
+                            var hereLb = loc.LandblockId.Landblock;
+                            var hereVar = ZoneControlManager.GetEffectiveVariation(session.Player);
+                            var covering = ZoneControlManager.AreasCovering(hereLb);
+                            var hereArea = covering.FirstOrDefault(a => a.Variation == hereVar) ?? covering.FirstOrDefault();
+                            if (hereArea != null)
+                            {
+                                placedGens = ZoneControlManager.GetPlacedGenerators(hereArea.Name) ?? new List<ZoneControlManager.SurveyPlacedRow>();
+                                scopeLabel = hereArea.Name;
+                            }
+                            else
+                            {
+                                placedGens = ZoneControlManager.GetPlacedGeneratorsForLandblock(hereLb, hereVar);
+                                scopeLabel = $"lb {hereLb:X4}";
+                            }
+                        }
+
+                        const int GenListCap = 200;
+                        var genListTrunc = placedGens.Count > GenListCap;
+                        if (genListTrunc)
+                            placedGens = placedGens.Take(GenListCap).ToList();
+
+                        var zcl = new StringBuilder("[[ZCL]]zone=")
+                            .Append(scopeLabel.Replace('|', ' ').Replace('~', ' ').Replace('=', ' ').Replace(',', ' '));
+                        if (genListTrunc)
+                            zcl.Append("|trunc=1");
+                        zcl.Append("|g=").Append(string.Join(",", placedGens.Select(p => p.Wcid + "~" + p.Count)));
+                        Msg(zcl.ToString());
+
+                        foreach (var p in placedGens)
+                        {
+                            var w = ACE.Database.DatabaseManager.World.GetCachedWeenie(p.Wcid);
+                            Msg(w == null ? $"[[ZCG]]w={p.Wcid}~found=0" : BuildGenInfoPayload(p.Wcid, w));
+                        }
+                        return;
+                    }
+
+                    case "genedit":
+                    {
+                        // WEENIE edit (single source of truth): updates ace_world + clears the weenie
+                        // cache. Live generators keep their old profile until their landblock reloads.
+                        if (args.Count < 4 || !uint.TryParse(args[1], out var genWcid))
+                        { Msg("Usage: genedit <wcid> delay|radius|stagger|init|max <value>"); return; }
+                        var genField = args[2].ToLowerInvariant();
+                        if (!float.TryParse(args[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var genVal) || genVal < 0)
+                        { Msg("Value must be a non-negative number."); return; }
+                        if (ACE.Database.DatabaseManager.World.GetCachedWeenie(genWcid) == null)
+                        { Msg($"No weenie {genWcid}."); return; }
+
+                        // parsed-numeric interpolation only — nothing user-typed reaches the SQL as text
+                        var sqls = new List<string>();
+                        var vs = genVal.ToString("0.####", CultureInfo.InvariantCulture);
+                        switch (genField)
+                        {
+                            case "delay":
+                                sqls.Add($"UPDATE `weenie_properties_generator` SET `delay` = {vs} WHERE `object_Id` = {genWcid}");
+                                sqls.Add($"INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES ({genWcid},41,{vs}) ON DUPLICATE KEY UPDATE `value` = {vs}");
+                                break;
+                            case "radius":
+                                sqls.Add($"INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES ({genWcid},43,{vs}) ON DUPLICATE KEY UPDATE `value` = {vs}");
+                                break;
+                            case "stagger":
+                                sqls.Add($"INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES ({genWcid},9034,{vs}) ON DUPLICATE KEY UPDATE `value` = {vs}");
+                                break;
+                            case "init":
+                                sqls.Add($"INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES ({genWcid},82,{(int)genVal}) ON DUPLICATE KEY UPDATE `value` = {(int)genVal}");
+                                break;
+                            case "max":
+                                sqls.Add($"INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES ({genWcid},81,{(int)genVal}) ON DUPLICATE KEY UPDATE `value` = {(int)genVal}");
+                                break;
+                            default:
+                                Msg("Field must be delay, radius, stagger, init or max."); return;
+                        }
+
+                        using (var genCtx = new WorldDbContext())
+                            foreach (var s in sqls)
+                                genCtx.Database.ExecuteSqlRaw(s);
+                        ACE.Database.DatabaseManager.World.ClearCachedWeenie(genWcid);
+
+                        Msg($"genedit: wcid {genWcid} {genField} = {vs} (weenie updated + cache cleared). " +
+                            "Live generators keep the OLD value until their landblock next reloads.");
+                        var refreshed = ACE.Database.DatabaseManager.World.GetCachedWeenie(genWcid);
+                        if (refreshed != null)
+                            Msg(BuildGenInfoPayload(genWcid, refreshed));
                         return;
                     }
 
@@ -881,6 +1023,19 @@ namespace ACE.Server.Command.Handlers
                         Action<ZoneAppearance> applyAp;
                         switch (field)
                         {
+                            case "name":
+                                // Display-name override (owner 2026-08-09). Per-WCID ONLY: a zone-wide
+                                // default would rename every mob in the zone identically. Value = the rest
+                                // of the args (--wcid was already extracted), so spaces need no quotes.
+                                if (!wcid.HasValue) { Msg("name is per-monster only - target a specific monster (--wcid)."); return; }
+                                var newName = string.Join(" ", args.Skip(3)).Trim().Trim('"').Trim();
+                                newName = new string(newName.Where(c => c >= 32 && c < 127 && c != '|' && c != '~' && c != '=').ToArray()).Trim();
+                                if (newName.Length == 0) { Msg("Usage: appearance <zone> name <new name> --wcid <id>"); return; }
+                                if (newName.Length > 64) newName = newName.Substring(0, 64);
+                                var nmFinal = newName;
+                                applyAp = ap => ap.Name = nmFinal;
+                                valueEcho = nmFinal;
+                                break;
                             case "palette":
                             case "palettetemplate":
                                 if (!int.TryParse(args[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pal)) { Msg("palette must be an integer id."); return; }
@@ -944,7 +1099,7 @@ namespace ACE.Server.Command.Handlers
                                 valueEcho = "0x" + didIcon.ToString("X8");
                                 break;
                             default:
-                                Msg("field must be palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon"); return;
+                                Msg("field must be name | palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon"); return;
                         }
 
                         ZoneControlManager.MutateArea(name, a => applyAp(a.AppearanceFor(wcid, create: true)));
@@ -972,6 +1127,7 @@ namespace ACE.Server.Command.Handlers
                             {
                                 switch (field)
                                 {
+                                    case "name": cleared = !string.IsNullOrEmpty(ap.Name); ap.Name = null; break;
                                     case "palette": case "palettetemplate": cleared = ap.PaletteTemplate.HasValue; ap.PaletteTemplate = null; break;
                                     case "shade": cleared = ap.Shade.HasValue; ap.Shade = null; break;
                                     case "scale": cleared = ap.Scale.HasValue; ap.Scale = null; break;
@@ -996,12 +1152,259 @@ namespace ACE.Server.Command.Handlers
                                         }
                                         else { cleared = (ap.AnimParts?.Count ?? 0) > 0; ap.AnimParts = null; }
                                         break;
-                                    default: Msg("field must be palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon | parts | animpart <index>"); return;
+                                    default: Msg("field must be name | palette | shade | scale | translucency | shiny | setup | clothing | palettebase | motion | sound | icon | parts | animpart <index>"); return;
                                 }
                             }
                             if (wcid.HasValue && ap.IsEmpty) a.AppearanceByWcid.Remove(wcid.Value);
                         });
                         Msg(cleared ? $"'{name}' appearance {(field ?? "all")} cleared (reverts on respawn)." : "That appearance wasn't set.");
+                        return;
+                    }
+
+                    case "resetmob":
+                    {
+                        // One-shot "back to zone defaults" for ONE monster (owner 2026-08-09): drops the
+                        // wcid's whole stat/prop/loot override bucket AND its appearance bucket (incl.
+                        // parts + name). The zone layer and the variation Default are untouched.
+                        if (args.Count < 2 || !wcid.HasValue) { Msg("Usage: resetmob <zone> --wcid <id>  (removes ALL of that monster's overrides - stats, props, loot, appearance)"); return; }
+                        var name = args[1];
+                        if (ZoneControlManager.GetArea(name) == null) { Msg($"No zone '{name}'."); return; }
+                        bool hadStats = false, hadAp = false;
+                        ZoneControlManager.MutateArea(name, a =>
+                        {
+                            hadStats = a.Profile.WcidOverrides != null && a.Profile.WcidOverrides.Remove(wcid.Value);
+                            hadAp = a.AppearanceByWcid != null && a.AppearanceByWcid.Remove(wcid.Value);
+                        });
+                        Msg(hadStats || hadAp
+                            ? $"'{name}' wcid {wcid.Value} reset to zone defaults ({(hadStats ? "stats/props/loot" : "")}{(hadStats && hadAp ? " + " : "")}{(hadAp ? "appearance" : "")} removed). Reload the landblock to see it."
+                            : "That monster had no overrides - it already runs on zone defaults.");
+                        return;
+                    }
+
+                    case "bakemob":
+                    {
+                        // The OPPOSITE of resetmob (owner 2026-08-09): write the monster's current
+                        // effective LOOK (zone default overlaid by its per-WCID entry) into its weenie
+                        // in ace_world - permanent, global (every zone and variation), survives zone
+                        // deletion. APPEARANCE ONLY by design: stats stay ZC-tuned (weak-baseline
+                        // philosophy). After a successful bake the wcid's appearance bucket is removed
+                        // (redundant); the zone-wide appearance default is left alone.
+                        if (args.Count < 2 || !wcid.HasValue) { Msg("Usage: bakemob <zone> --wcid <id>  (writes the monster's current look into its base template permanently)"); return; }
+                        var name = args[1];
+                        var area = ZoneControlManager.GetArea(name);
+                        if (area == null) { Msg($"No zone '{name}'."); return; }
+                        var w = wcid.Value;
+                        if (ACE.Database.DatabaseManager.World.GetCachedWeenie(w) == null) { Msg($"No weenie {w} in the world db."); return; }
+
+                        var apOverlay = area.AppearanceByWcid != null && area.AppearanceByWcid.TryGetValue(w, out var apw3) ? apw3 : null;
+                        var merged = ZoneAppearance.Merge(area.AppearanceDefault, apOverlay);
+                        if (merged == null || merged.IsEmpty) { Msg("Nothing to bake - this monster has no appearance overrides here."); return; }
+
+                        var bake = BuildAppearanceBakeSql(w, merged);
+
+                        using (var bakeCtx = new WorldDbContext())
+                            foreach (var s in bake)
+                                bakeCtx.Database.ExecuteSqlRaw(s);
+                        ACE.Database.DatabaseManager.World.ClearCachedWeenie(w);
+
+                        ZoneControlManager.MutateArea(name, a => a.AppearanceByWcid?.Remove(w));
+
+                        Msg($"bakemob: wcid {w} - {bake.Count} change(s) written to the WORLD DB (permanent; applies in every zone and variation). " +
+                            "This monster's appearance overrides here were removed (now baked in). Reload the landblock to see it.");
+                        return;
+                    }
+
+                    case "clonemob":
+                    {
+                        // Mint a BRAND-NEW monster (owner 2026-08-09): full weenie clone of the source
+                        // wcid + the source's current effective ZC look baked in + optional new display
+                        // name, under a NEW wcid. The SOURCE weenie and its zone overrides are UNTOUCHED
+                        // (other devs keep iterating on it). Ends by exporting the finished weenie to the
+                        // Content sql folder - the shippable per-wcid file (import-discord compatible).
+                        // Usage: clonemob <zone> <newWcid> [new display name...] --wcid <srcWcid>
+                        if (args.Count < 3 || !wcid.HasValue)
+                        { Msg("Usage: clonemob <zone> <newWcid> [new display name] --wcid <srcWcid>"); return; }
+                        var name = args[1];
+                        var area = ZoneControlManager.GetArea(name);
+                        if (area == null) { Msg($"No zone '{name}'."); return; }
+                        if (!uint.TryParse(args[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var newWcid) || newWcid == 0)
+                        { Msg("newWcid must be a number."); return; }
+                        var srcWcid = wcid.Value;
+                        if (newWcid == srcWcid) { Msg("newWcid must differ from the source wcid."); return; }
+                        var srcWeenie = ACE.Database.DatabaseManager.World.GetWeenie(srcWcid);
+                        if (srcWeenie == null) { Msg($"No weenie {srcWcid} in the world db."); return; }
+                        if (ACE.Database.DatabaseManager.World.GetCachedWeenie(newWcid) != null)
+                        { Msg($"Weenie {newWcid} already exists - pick an unused wcid."); return; }
+
+                        // optional new display name = the remaining tokens (same sanitize as the name lever)
+                        var cloneName = string.Join(" ", args.Skip(3)).Trim().Trim('"').Trim();
+                        cloneName = new string(cloneName.Where(c => c >= 32 && c < 127 && c != '|' && c != '~' && c != '=').ToArray()).Trim();
+                        if (cloneName.Length > 64) cloneName = cloneName.Substring(0, 64);
+
+                        // 1) Full-fidelity clone: the Adapter's SQL writer emits the source weenie's
+                        //    complete per-wcid SQL (every table incl. emotes); re-pointing every
+                        //    whole-word occurrence of the source wcid also remaps self-references.
+                        if (Processors.DeveloperContentCommands.WeenieSQLWriter == null)
+                        {
+                            Processors.DeveloperContentCommands.WeenieSQLWriter = new ACE.Database.SQLFormatters.World.WeenieSQLWriter
+                            {
+                                WeenieNames = ACE.Database.DatabaseManager.World.GetAllWeenieNames(),
+                                SpellNames = ACE.Database.DatabaseManager.World.GetAllSpellNames(),
+                                TreasureDeath = ACE.Database.DatabaseManager.World.GetAllTreasureDeath(),
+                                TreasureWielded = ACE.Database.DatabaseManager.World.GetAllTreasureWielded(),
+                                PacketOpCodes = ACE.Entity.PacketOpCodeNames.Values,
+                            };
+                        }
+                        string cloneSql;
+                        using (var ms = new System.IO.MemoryStream())
+                        {
+                            using (var sw = new System.IO.StreamWriter(ms, System.Text.Encoding.UTF8, 4096, leaveOpen: true))
+                            {
+                                Processors.DeveloperContentCommands.WeenieSQLWriter.CreateSQLDELETEStatement(srcWeenie, sw);
+                                sw.WriteLine();
+                                Processors.DeveloperContentCommands.WeenieSQLWriter.CreateSQLINSERTStatement(srcWeenie, sw);
+                                sw.Flush();
+                            }
+                            cloneSql = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+                        }
+                        cloneSql = System.Text.RegularExpressions.Regex.Replace(
+                            cloneSql, $@"\b{srcWcid}\b", newWcid.ToString(CultureInfo.InvariantCulture));
+
+                        using (var cloneCtx = new WorldDbContext())
+                        {
+                            cloneCtx.Database.SetCommandTimeout(0);
+                            cloneCtx.Database.ExecuteSqlRaw(cloneSql.Replace("\r\n", "\n"));
+                            // unique class_Name (the clone inherited the source's)
+                            cloneCtx.Database.ExecuteSqlRaw(
+                                $"UPDATE `weenie` SET `class_Name` = CONCAT(`class_Name`, '_{newWcid}') WHERE `class_Id` = {newWcid}");
+                        }
+
+                        // 1b) Copy the source's per-monster ZONE buckets too (stats/props/loot/cantrips/
+                        //     currency/spell rules) so the clone behaves identically IN THIS ZONE (owner
+                        //     2026-08-09: "loot table, stats etc - would need it"). Deep copy via the same
+                        //     JSON round-trip the store itself persists with; source bucket untouched.
+                        ZoneControlManager.MutateArea(name, a =>
+                        {
+                            if (a.Profile.WcidOverrides != null && a.Profile.WcidOverrides.TryGetValue(srcWcid, out var srcVp) && srcVp != null)
+                                a.Profile.WcidOverrides[newWcid] = Newtonsoft.Json.JsonConvert.DeserializeObject<ZoneVariantProfile>(
+                                    Newtonsoft.Json.JsonConvert.SerializeObject(srcVp));
+                        });
+
+                        // 2) Bake the source's effective ZC look (+ the new display name) onto the CLONE.
+                        //    Source buckets stay exactly as they are.
+                        var apOv = area.AppearanceByWcid != null && area.AppearanceByWcid.TryGetValue(srcWcid, out var apw4) ? apw4 : null;
+                        var look = ZoneAppearance.Merge(area.AppearanceDefault, apOv) ?? new ZoneAppearance();
+                        if (cloneName.Length > 0)
+                            look.Name = cloneName;
+                        if (!look.IsEmpty)
+                        {
+                            var bakeSql = BuildAppearanceBakeSql(newWcid, look);
+                            using var lookCtx = new WorldDbContext();
+                            foreach (var s in bakeSql)
+                                lookCtx.Database.ExecuteSqlRaw(s);
+                        }
+                        ACE.Database.DatabaseManager.World.ClearCachedWeenie(newWcid);
+
+                        // 3) Export the FINISHED weenie to the Content sql folder - the permanent,
+                        //    shippable per-wcid file.
+                        Processors.DeveloperContentCommands.ExportSQLWeenie(session, newWcid.ToString(CultureInfo.InvariantCulture));
+
+                        Msg($"clonemob: {srcWcid} cloned to NEW wcid {newWcid}" +
+                            (cloneName.Length > 0 ? $" named '{cloneName}'" : "") +
+                            " with the current look baked in. The source monster is untouched. " +
+                            "SQL exported to the Content sql folder (see above). Summon it anywhere (e.g. /ci " + newWcid + ").");
+                        return;
+                    }
+
+                    case "becomemob":
+                    {
+                        // Convert an EXISTING monster into a full copy of another (owner 2026-08-10,
+                        // after the 36-PH-mobs-to-drudge hand-SQL): everything the donor is - stats,
+                        // skills, body parts, spell book, loot, emotes - lands on the target wcid.
+                        // The target keeps exactly four things: class_Id, class_Name, display Name,
+                        // and its current DefaultScale. Zone buckets are untouched (stats stay
+                        // zone-tuned). Zone-less on purpose: this edits the WORLD DB, not a zone.
+                        // Usage: becomemob <donorWcid> --wcid <targetWcid>
+                        if (args.Count < 2 || !wcid.HasValue ||
+                            !uint.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var bmDonor))
+                        { Msg("Usage: becomemob <donorWcid> --wcid <targetWcid>   (target becomes a full copy of the donor; keeps name + scale)"); return; }
+                        var bmTarget = wcid.Value;
+                        if (bmDonor == bmTarget) { Msg("Donor and target must differ."); return; }
+                        if (ZcDraftSlotWcids.Contains(bmTarget)) { Msg("The target cannot be a Drafted Look slot."); return; }
+                        var bmDonorWeenie = ACE.Database.DatabaseManager.World.GetWeenie(bmDonor);
+                        if (bmDonorWeenie == null) { Msg($"No weenie {bmDonor} in the world db."); return; }
+                        var bmTargetWeenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(bmTarget);
+                        if (bmTargetWeenie == null) { Msg($"No weenie {bmTarget} in the world db."); return; }
+
+                        // What the target KEEPS.
+                        var bmKeepName = bmTargetWeenie.GetProperty(PropertyString.Name);
+                        var bmKeepScale = bmTargetWeenie.GetProperty(PropertyFloat.DefaultScale);
+                        string bmKeepClassName;
+                        using (var bmCtx = new WorldDbContext())
+                            bmKeepClassName = bmCtx.Weenie.Where(x => x.ClassId == bmTarget).Select(x => x.ClassName).FirstOrDefault();
+
+                        // Same engine as clonemob: full-fidelity donor SQL, every occurrence of the
+                        // donor wcid re-pointed at the target (covers emote self-references too).
+                        if (Processors.DeveloperContentCommands.WeenieSQLWriter == null)
+                        {
+                            Processors.DeveloperContentCommands.WeenieSQLWriter = new ACE.Database.SQLFormatters.World.WeenieSQLWriter
+                            {
+                                WeenieNames = ACE.Database.DatabaseManager.World.GetAllWeenieNames(),
+                                SpellNames = ACE.Database.DatabaseManager.World.GetAllSpellNames(),
+                                TreasureDeath = ACE.Database.DatabaseManager.World.GetAllTreasureDeath(),
+                                TreasureWielded = ACE.Database.DatabaseManager.World.GetAllTreasureWielded(),
+                                PacketOpCodes = ACE.Entity.PacketOpCodeNames.Values,
+                            };
+                        }
+                        string bmSql;
+                        using (var ms = new System.IO.MemoryStream())
+                        {
+                            using (var sw = new System.IO.StreamWriter(ms, System.Text.Encoding.UTF8, 4096, leaveOpen: true))
+                            {
+                                Processors.DeveloperContentCommands.WeenieSQLWriter.CreateSQLDELETEStatement(bmDonorWeenie, sw);
+                                sw.WriteLine();
+                                Processors.DeveloperContentCommands.WeenieSQLWriter.CreateSQLINSERTStatement(bmDonorWeenie, sw);
+                                sw.Flush();
+                            }
+                            bmSql = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+                        }
+                        bmSql = System.Text.RegularExpressions.Regex.Replace(
+                            bmSql, $@"\b{bmDonor}\b", bmTarget.ToString(CultureInfo.InvariantCulture));
+
+                        using (var bmCtx = new WorldDbContext())
+                        {
+                            bmCtx.Database.SetCommandTimeout(0);
+                            // Wipe the target's OLD self first (the remapped DELETE also targets it,
+                            // but be explicit), then import the donor copy.
+                            bmCtx.Database.ExecuteSqlRaw($"DELETE FROM `weenie` WHERE `class_Id` = {bmTarget}");
+                            bmCtx.Database.ExecuteSqlRaw(bmSql.Replace("\r\n", "\n"));
+                            // Restore the kept identity.
+                            if (!string.IsNullOrEmpty(bmKeepClassName))
+                            {
+                                var cn = bmKeepClassName.Replace("'", "''");
+                                bmCtx.Database.ExecuteSqlRaw($"UPDATE `weenie` SET `class_Name` = '{cn}' WHERE `class_Id` = {bmTarget}");
+                            }
+                            if (!string.IsNullOrEmpty(bmKeepName))
+                            {
+                                var nm = bmKeepName.Replace("'", "''");
+                                bmCtx.Database.ExecuteSqlRaw($"DELETE FROM `weenie_properties_string` WHERE `object_Id` = {bmTarget} AND `type` = 1");
+                                bmCtx.Database.ExecuteSqlRaw($"INSERT INTO `weenie_properties_string` (`object_Id`, `type`, `value`) VALUES ({bmTarget}, 1, '{nm}')");
+                            }
+                            if (bmKeepScale.HasValue)
+                            {
+                                bmCtx.Database.ExecuteSqlRaw($"DELETE FROM `weenie_properties_float` WHERE `object_Id` = {bmTarget} AND `type` = 39");
+                                bmCtx.Database.ExecuteSqlRaw($"INSERT INTO `weenie_properties_float` (`object_Id`, `type`, `value`) VALUES ({bmTarget}, 39, {bmKeepScale.Value.ToString(CultureInfo.InvariantCulture)})");
+                            }
+                        }
+                        ACE.Database.DatabaseManager.World.ClearCachedWeenie(bmTarget);
+
+                        // Fresh shippable per-wcid SQL so the pack file matches the new reality.
+                        Processors.DeveloperContentCommands.ExportSQLWeenie(session, bmTarget.ToString(CultureInfo.InvariantCulture));
+
+                        var bmDonorName = bmDonorWeenie.GetProperty(PropertyString.Name) ?? bmDonor.ToString();
+                        Msg($"becomemob: {bmKeepName ?? bmTarget.ToString()} ({bmTarget}) is now a full copy of {bmDonorName} ({bmDonor}) - " +
+                            "stats, loot, spells, everything. Kept: name, class_Name" + (bmKeepScale.HasValue ? $", scale {bmKeepScale.Value:0.##}" : "") + ". " +
+                            "Zone tuning unaffected. SQL exported. Reload the landblock to see it.");
                         return;
                     }
 
@@ -1051,6 +1454,143 @@ namespace ACE.Server.Command.Handlers
                         var donorName = donor.GetProperty(PropertyString.Name) ?? donorWcid.ToString();
                         var partN = (donorAnim?.Count ?? 0) + (donorTex?.Count ?? 0);
                         Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} appearance copied from {donorName} ({donorWcid}){(partN > 0 ? $", incl. {partN} body-part swaps" : "")}. Reload the landblock to see it.");
+                        return;
+                    }
+
+                    case "previewmob":
+                    {
+                        // Look-preview (owner 2026-08-09): spawn an INERT copy of a weenie in front of the
+                        // player - not attackable, never aggros, 60s lifespan (heartbeat-driven, ~5s grain).
+                        // One preview slot per player: a new preview replaces the previous one. Spawned inside
+                        // a governed zone it picks up that zone's appearance overrides like any spawn, so it
+                        // can also preview an override set, not just stock looks.
+                        if (session?.Player == null) { Msg("previewmob needs an in-world player."); return; }
+                        if (args.Count < 2 || !uint.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pvWcid))
+                        { Msg("Usage: previewmob <wcid> [distance]"); return; }
+                        // Optional spawn distance (owner 2026-08-10). Explicit distance wins over the
+                        // automatic scale push-out below.
+                        float pvDist = 5f;
+                        var pvDistExplicit = args.Count >= 3 &&
+                            float.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out pvDist);
+                        if (pvDistExplicit) pvDist = Math.Clamp(pvDist, 1f, 120f); else pvDist = 5f;
+                        var pvWeenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(pvWcid);
+                        if (pvWeenie == null) { Msg($"No weenie {pvWcid} in the world db."); return; }
+
+                        if (ZcPreviews.TryGetValue(session.Player.Guid.Full, out var prevPv)
+                            && prevPv != null && !prevPv.IsDestroyed)
+                            prevPv.DeleteObject();
+
+                        var pv = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(pvWcid);
+                        if (pv == null) { Msg($"Weenie {pvWcid} could not be instantiated."); return; }
+                        if (!(pv is ACE.Server.WorldObjects.Creature pvCreature))
+                        { pv.Destroy(); Msg($"{pv.Name ?? pvWcid.ToString()} is not a creature - nothing to preview."); return; }
+
+                        pv.Location = session.Player.Location.InFrontOf(pvDist, true);
+                        pv.Location.LandblockId = new ACE.Entity.LandblockId(ACE.Server.Entity.PositionExtensions.GetCell(pv.Location));
+                        // The single-object factory path skips the zone spawn snapshot (only landblock/
+                        // generator spawns get it), so previews never wore zone appearance overrides
+                        // (found 2026-08-10: zone-default scale did not show on a preview). Location is
+                        // set, so the scaler's ordering guard is satisfied; stats on an inert preview
+                        // are harmless.
+                        ZoneSpawnScaler.ApplyToSpawn(pvCreature);
+                        // Scale-aware spawn distance (found 2026-08-10): a zone scale like 5x placed the
+                        // preview's huge model ON the player - from inside a mesh you see nothing, which
+                        // reads as "it despawned and never came back". Push big previews out proportionally
+                        // UNLESS the caller chose a distance - their number is respected as-is.
+                        var pvScale = (float)(pv.ObjScale ?? 1.0);
+                        if (!pvDistExplicit && pvScale > 1.5f)
+                        {
+                            pv.Location = session.Player.Location.InFrontOf(pvDist * pvScale, true);
+                            pv.Location.LandblockId = new ACE.Entity.LandblockId(ACE.Server.Entity.PositionExtensions.GetCell(pv.Location));
+                        }
+                        pv.Lifespan = 60;
+                        pv.Attackable = false;
+                        pvCreature.Tolerance = Tolerance.NoAttack;
+                        pv.Name = (pv.Name ?? "Preview") + " (Preview)";
+
+                        if (!pv.EnterWorld()) { Msg("Preview failed to spawn (physics placement)."); return; }
+                        ZcPreviews[session.Player.Guid.Full] = pv;
+                        Msg($"Previewing {pvWeenie.GetProperty(PropertyString.Name) ?? pvWcid.ToString()} ({pvWcid}) for 60s.");
+                        return;
+                    }
+
+                    case "draftslot":
+                    {
+                        // Look Lab "Drafted Look" target (owner 2026-08-10): hand the asking player ONE of the
+                        // five reserved Drafted Look wcids for this zone, so up to five admins can craft looks
+                        // in the same zone without clobbering each other. Re-asking returns the same slot.
+                        // "draftslot <zone> release" frees the slot and wipes its scratch bucket.
+                        // Machine reply line for the plugin: [[ZCDRAFT]]<wcid>  (0 = all slots busy / released).
+                        if (session?.Player == null) { Msg("draftslot needs an in-world player."); return; }
+                        if (args.Count < 2) { Msg("Usage: draftslot <zone> [release]"); return; }
+                        var dsArea = ZoneControlManager.GetArea(args[1]);
+                        if (dsArea == null) { Msg($"No zone '{args[1]}'."); return; }
+                        var dsZone = dsArea.Name;
+                        var dsMe = session.Player.Guid.Full;
+
+                        if (args.Count > 2 && args[2].Equals("release", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ReleaseDraftClaim(dsZone, dsMe);
+                            Msg("Draft slot released (scratch look discarded).");
+                            Msg("[[ZCDRAFT]]0");
+                            return;
+                        }
+
+                        // Evict claims of players no longer online (their scratch buckets are wiped too).
+                        foreach (var dead in ZcDraftClaims.Keys.Where(k => PlayerManager.GetOnlinePlayer(k.Player) == null).ToList())
+                            ReleaseDraftClaim(dead.Zone, dead.Player);
+
+                        if (ZcDraftClaims.TryGetValue((dsZone, dsMe), out var mine))
+                        { Msg("[[ZCDRAFT]]" + mine); return; }
+
+                        var free = ZcDraftSlotWcids.FirstOrDefault(s =>
+                            !ZcDraftClaims.Any(kv => kv.Key.Zone.Equals(dsZone, StringComparison.OrdinalIgnoreCase) && kv.Value == s));
+                        if (free == 0)
+                        { Msg("All 5 draft slots in this zone are in use."); Msg("[[ZCDRAFT]]0"); return; }
+
+                        ZcDraftClaims[(dsZone, dsMe)] = free;
+                        // Start clean even if something left junk in the bucket.
+                        ZoneControlManager.MutateArea(dsZone, a => a.AppearanceByWcid?.Remove(free));
+                        Msg("[[ZCDRAFT]]" + free);
+                        return;
+                    }
+
+                    case "copydraft":
+                    {
+                        // Save the crafted Drafted Look: copy YOUR slot's zone appearance bucket onto the
+                        // destination wcid's bucket in the same zone (REPLACES the destination's bucket),
+                        // then clear + release the slot. bakemob / clonemob take it from there.
+                        if (session?.Player == null) { Msg("copydraft needs an in-world player."); return; }
+                        if (args.Count < 3) { Msg("Usage: copydraft <zone> <destWcid>   (saves your Drafted Look onto the destination's zone appearance)"); return; }
+                        var cdArea = ZoneControlManager.GetArea(args[1]);
+                        if (cdArea == null) { Msg($"No zone '{args[1]}'."); return; }
+                        var cdZone = cdArea.Name;
+                        if (!uint.TryParse(args[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var cdDest) || cdDest == 0)
+                        { Msg("destWcid must be a number."); return; }
+                        if (ZcDraftSlotWcids.Contains(cdDest))
+                        { Msg("The destination cannot be a Drafted Look slot."); return; }
+                        if (ACE.Database.DatabaseManager.World.GetCachedWeenie(cdDest) == null)
+                        { Msg($"No weenie {cdDest} in the world db."); return; }
+
+                        if (!ZcDraftClaims.TryGetValue((cdZone, session.Player.Guid.Full), out var cdSlot))
+                        { Msg($"You have no draft slot in '{cdZone}' - nothing to save."); return; }
+
+                        var cdBucket = cdArea.AppearanceByWcid != null && cdArea.AppearanceByWcid.TryGetValue(cdSlot, out var cdb) ? cdb : null;
+                        if (cdBucket == null || cdBucket.IsEmpty)
+                        { Msg("Your Drafted Look is empty - apply a look or set a lever first."); return; }
+
+                        // Deep copy via the same JSON round-trip the store persists with; REPLACES dest's bucket.
+                        ZoneControlManager.MutateArea(cdZone, a =>
+                        {
+                            a.AppearanceByWcid ??= new Dictionary<uint, ZoneAppearance>();
+                            a.AppearanceByWcid[cdDest] = Newtonsoft.Json.JsonConvert.DeserializeObject<ZoneAppearance>(
+                                Newtonsoft.Json.JsonConvert.SerializeObject(cdBucket));
+                        });
+                        ReleaseDraftClaim(cdZone, session.Player.Guid.Full);
+
+                        var cdName = ACE.Database.DatabaseManager.World.GetCachedWeenie(cdDest)?.GetProperty(PropertyString.Name) ?? cdDest.ToString();
+                        Msg($"copydraft: your Drafted Look now overrides {cdName} ({cdDest}) in '{cdZone}' (its previous appearance overrides here were replaced). " +
+                            "Slot released. Make it permanent with bakemob, or mint a new monster with clonemob.");
                         return;
                     }
 
@@ -1669,6 +2209,7 @@ namespace ACE.Server.Command.Handlers
                 : area.AppearanceDefault);
             if (apVp != null)
             {
+                if (!string.IsNullOrEmpty(apVp.Name)) sb.Append("|ap_name=").Append(CleanWire(apVp.Name));
                 if (apVp.PaletteTemplate.HasValue) sb.Append("|ap_palette=").Append(apVp.PaletteTemplate.Value.ToString(CultureInfo.InvariantCulture));
                 if (apVp.Shade.HasValue) sb.Append("|ap_shade=").Append(apVp.Shade.Value.ToString(CultureInfo.InvariantCulture));
                 if (apVp.Scale.HasValue) sb.Append("|ap_scale=").Append(apVp.Scale.Value.ToString(CultureInfo.InvariantCulture));
@@ -1723,6 +2264,8 @@ namespace ACE.Server.Command.Handlers
                 string B(bool? v) => v.HasValue ? (v.Value ? "1" : "0") : null;
                 string Bi(int? v) => v.HasValue ? (v.Value != 0 ? "1" : "0") : null;
 
+                string N(string v) => string.IsNullOrEmpty(v) ? null : CleanWire(v);
+                Eff("name",     N(selfAp?.Name),            N(zoneAp?.Name),            N(wpn?.GetProperty(PropertyString.Name)));
                 Eff("palette",  I(selfAp?.PaletteTemplate), I(zoneAp?.PaletteTemplate), I(wpn?.GetProperty(PropertyInt.PaletteTemplate)));
                 Eff("shade",    F(selfAp?.Shade),           F(zoneAp?.Shade),           F(wpn?.GetProperty(PropertyFloat.Shade)));
                 Eff("scale",    F(selfAp?.Scale),           F(zoneAp?.Scale),           F(wpn?.GetProperty(PropertyFloat.DefaultScale)) ?? "1");
@@ -2004,6 +2547,52 @@ namespace ACE.Server.Command.Handlers
 
         /// <summary>Strip the wire's separator chars from a value so it can't break payload parsing.</summary>
         private static string CleanWire(string s) => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
+
+        /// <summary>The raw-SQL statements that write an appearance set into a weenie — shared by
+        /// bakemob (bake onto the SAME wcid) and clonemob (bake onto a fresh clone). Numeric-only
+        /// interpolation, except Name which is ASCII-sanitized at set time and quote-escaped here.
+        /// A Setup swap clears the weenie's own overlay first (parity with the runtime applier).</summary>
+        private static List<string> BuildAppearanceBakeSql(uint w, ZoneAppearance merged)
+        {
+            var bake = new List<string>();
+            void Did(int type, uint? v) { if (v.HasValue) bake.Add($"INSERT INTO `weenie_properties_d_i_d` (`object_Id`,`type`,`value`) VALUES ({w},{type},{v.Value}) ON DUPLICATE KEY UPDATE `value` = {v.Value}"); }
+            void Flt(int type, double? v) { if (v.HasValue) { var s = v.Value.ToString("0.####", CultureInfo.InvariantCulture); bake.Add($"INSERT INTO `weenie_properties_float` (`object_Id`,`type`,`value`) VALUES ({w},{type},{s}) ON DUPLICATE KEY UPDATE `value` = {s}"); } }
+
+            if (merged.SetupTableId.HasValue)
+            {
+                bake.Add($"DELETE FROM `weenie_properties_d_i_d` WHERE `object_Id` = {w} AND `type` IN (6,7)");
+                bake.Add($"DELETE FROM `weenie_properties_int` WHERE `object_Id` = {w} AND `type` = 3");
+                bake.Add($"DELETE FROM `weenie_properties_float` WHERE `object_Id` = {w} AND `type` = 12");
+                bake.Add($"DELETE FROM `weenie_properties_anim_part` WHERE `object_Id` = {w}");
+                bake.Add($"DELETE FROM `weenie_properties_palette` WHERE `object_Id` = {w}");
+                bake.Add($"DELETE FROM `weenie_properties_texture_map` WHERE `object_Id` = {w}");
+            }
+            Did(1, merged.SetupTableId); Did(2, merged.MotionTable); Did(3, merged.SoundTable);
+            Did(6, merged.PaletteBase); Did(7, merged.ClothingBase); Did(8, merged.Icon);
+            if (merged.PaletteTemplate.HasValue) bake.Add($"INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES ({w},3,{merged.PaletteTemplate.Value}) ON DUPLICATE KEY UPDATE `value` = {merged.PaletteTemplate.Value}");
+            if (merged.Shiny.HasValue) bake.Add(merged.Shiny.Value
+                ? $"INSERT INTO `weenie_properties_int` (`object_Id`,`type`,`value`) VALUES ({w},9038,1) ON DUPLICATE KEY UPDATE `value` = 1"
+                : $"DELETE FROM `weenie_properties_int` WHERE `object_Id` = {w} AND `type` = 9038");
+            Flt(12, merged.Shade); Flt(39, merged.Scale); Flt(76, merged.Translucency);
+            if (!string.IsNullOrEmpty(merged.Name))
+            {
+                var esc = merged.Name.Replace("\\", "\\\\").Replace("'", "''");
+                bake.Add($"INSERT INTO `weenie_properties_string` (`object_Id`,`type`,`value`) VALUES ({w},1,'{esc}') ON DUPLICATE KEY UPDATE `value` = '{esc}'");
+            }
+            if (merged.AnimParts != null && merged.AnimParts.Count > 0)
+            {
+                bake.Add($"DELETE FROM `weenie_properties_anim_part` WHERE `object_Id` = {w}");
+                foreach (var p in merged.AnimParts)
+                    bake.Add($"INSERT INTO `weenie_properties_anim_part` (`object_Id`,`index`,`animation_Id`) VALUES ({w},{p.Index},{p.GfxObj})");
+            }
+            if (merged.TextureMaps != null && merged.TextureMaps.Count > 0)
+            {
+                bake.Add($"DELETE FROM `weenie_properties_texture_map` WHERE `object_Id` = {w}");
+                foreach (var t in merged.TextureMaps)
+                    bake.Add($"INSERT INTO `weenie_properties_texture_map` (`object_Id`,`index`,`old_Id`,`new_Id`) VALUES ({w},{t.Index},{t.OldTex},{t.NewTex})");
+            }
+            return bake;
+        }
 
         /// <summary>The head part index of a Setup = the highest (max-Z) non-null part, using the first placement
         /// frame that has one entry per part. Part index->bone mapping varies per setup, so the head is NOT a fixed
@@ -2345,6 +2934,18 @@ namespace ACE.Server.Command.Handlers
                 g.Wcid + "~" + SurveySafe(g.Name) + "~" + g.Count)));
 
             return sb.ToString();
+        }
+
+        /// <summary>Builds the "[[ZCG]]" generator-knob payload for the plugin's Generator Settings rows:
+        /// w=wcid~name~delay~radius~stagger~init~max (delay = first generator entry's; -1 = no entries).</summary>
+        private static string BuildGenInfoPayload(uint wcid, ACE.Entity.Models.Weenie weenie)
+        {
+            var name = (weenie.GetName() ?? ("wcid " + wcid)).Replace('|', ' ').Replace('~', ' ').Replace('=', ' ');
+            var delay = weenie.PropertiesGenerator != null && weenie.PropertiesGenerator.Count > 0
+                ? (weenie.PropertiesGenerator[0].Delay ?? 0f) : -1f;
+            float F(int id) => (float)(weenie.GetProperty((PropertyFloat)id) ?? 0);
+            int I(int id) => weenie.GetProperty((PropertyInt)id) ?? 0;
+            return $"[[ZCG]]w={wcid}~found=1~{name}~{delay:0.####}~{F(43):0.####}~{F(9034):0.####}~{I(82)}~{I(81)}";
         }
 
         /// <summary>Builds the "[[ZCI]]" weenie base-data payload for the plugin's Body Parts / Resists /
