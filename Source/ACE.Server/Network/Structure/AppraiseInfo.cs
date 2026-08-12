@@ -319,6 +319,13 @@ namespace ACE.Server.Network.Structure
                 }
             }
 
+            // Growth charms + motes carry UnlimitedUse only so Gem.ActOnUse does not self-consume
+            // them (motes are consumed by the confirm handler). It is a mechanical flag, not a use
+            // counter - hide it so the panel shows no "Number of uses remaining" line.
+            if ((wo.WeenieClassId >= 777700030 && wo.WeenieClassId <= 777700034) ||
+                (wo.WeenieClassId >= 777700051 && wo.WeenieClassId <= 777700070))
+                PropertiesBool.Remove(PropertyBool.UnlimitedUse);
+
             // Charm of the Triune Weave - progress lives on the examiner's character, so a
             // replacement charm always shows the true totals. Appraisal output only, never persisted.
             if (wo.WeenieClassId == 777700030 && examiner != null)
