@@ -185,10 +185,11 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         // Split-arrow props (already in ACE.Entity — the custom bowstring system)
-        private const int SplitArrowsBoolId = 9030;      // PropertyBool.SplitArrows
-        private const int SplitArrowCountIntId = 9031;   // PropertyInt.SplitArrowCount
-        private const int SplitArrowRangeFloatId = 9032; // PropertyFloat.SplitArrowRange
-        private const int SplitArrowDmgFloatId = 9033;   // PropertyFloat.SplitArrowDamageMultiplier
+        // public: the weapon forge (/wsforge cards) stamps the same split-arrow properties
+        public const int SplitArrowsBoolId = 9030;      // PropertyBool.SplitArrows
+        public const int SplitArrowCountIntId = 9031;   // PropertyInt.SplitArrowCount
+        public const int SplitArrowRangeFloatId = 9032; // PropertyFloat.SplitArrowRange
+        public const int SplitArrowDmgFloatId = 9033;   // PropertyFloat.SplitArrowDamageMultiplier
 
         // Non-elemental imbues ALL excluded from the Rending card pool (owner 2026-07-13):
         // CripplingBlow/CriticalStrike compete with the Crushing Blow / Biting Strike cards via

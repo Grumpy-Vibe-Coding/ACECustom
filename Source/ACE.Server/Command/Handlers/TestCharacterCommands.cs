@@ -672,7 +672,7 @@ namespace ACE.Server.Command.Handlers
             {
                 if (parameters.Length < 2)
                 {
-                    Msg("usage: /testchar extra healkit,stamkit,manakit,lockpick,ivory,arrow,dispel,enlcoins,mmds,scarabs,aetheria");
+                    Msg("usage: /testchar extra healkit,stamkit,manakit,lockpick,ivory,arrow,dispel,enlcoins,mmds,scarabs,aetheria,bags");
                     return;
                 }
                 var owned = player.GetAllPossessionsDeep();
@@ -733,8 +733,9 @@ namespace ACE.Server.Command.Handlers
                             MintStack(20631, "Prismatic Tapers", 10000);   // max stack, owner 08-03
                             break;
                         case "aetheria": SpawnAetherias(player); Msg("extra: aetheria set spawned (skips owned pieces)"); break;
+                        case "bags":     MintBoosterPacks(player, Msg); break;
                         default:
-                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|arrow|dispel|enlcoins|mmds|scarabs|aetheria)");
+                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|arrow|dispel|enlcoins|mmds|scarabs|aetheria|bags)");
                             return;
                     }
                 }
@@ -899,6 +900,53 @@ namespace ACE.Server.Command.Handlers
             // Override Enlightenment to 300
             player.Enlightenment = 300;
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 300));
+        }
+
+        /// <summary>The 102-slot "Booster Pack" bags (wcid 310025) the /testchar tier package spawns,
+        /// as a standalone extra. Fills the player's pack slots but NEVER past what the client is
+        /// showing: ContainerCapacity is read at login, so a PackSlot aug taken this session gives a
+        /// slot the client won't render until relog and a pack put there looks lost (owner
+        /// 2026-08-11 - hence 7 normally, 8 only for a character that logged in already holding the
+        /// aug). Existing Booster Packs are counted, so re-running tops up instead of duplicating.</summary>
+        private static void MintBoosterPacks(Player player, Action<string> Msg)
+        {
+            const uint PackWcid = 310025;
+
+            // Slots the client is showing, minus every container already in the pack bar.
+            var slots = Math.Min(player.ClientPackSlots, player.ContainerCapacity ?? 7);
+            var held = player.Inventory.Values.OfType<Container>().Count();
+            var room = slots - held;
+
+            if (room <= 0)
+            {
+                Msg($"extra: bags - all {slots} pack slots already filled ({held} packs) - skipped");
+                if ((player.ContainerCapacity ?? 7) > slots)
+                    Msg("extra: bags - the PackSlot aug added a slot this session; relog and re-run to fill it.");
+                return;
+            }
+
+            var made = 0;
+            for (int i = 1; i <= 8 && made < room; i++)
+            {
+                var packName = $"Booster Pack {i}";
+                if (HasItemNamed(player, packName)) continue;
+                if (!(WorldObjectFactory.CreateNewWorldObject(PackWcid) is Container bag)) continue;
+                bag.Name = packName;
+                bag.SetProperty(PropertyString.Name, packName);
+                if (player.TryCreateInInventoryWithNetworking(bag))
+                    made++;
+                else
+                {
+                    bag.Destroy();
+                    break;
+                }
+            }
+
+            Msg(made > 0
+                ? $"extra: bags - {made} Booster Pack(s) created ({held + made}/{slots} slots filled, 102 slots each)"
+                : "extra: bags - nothing to create");
+            if ((player.ContainerCapacity ?? 7) > slots)
+                Msg("extra: bags - an 8th slot exists server-side but the client shows it only after a relog; re-run then.");
         }
 
         private static void SpawnArmor(Player player)

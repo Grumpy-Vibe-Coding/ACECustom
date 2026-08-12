@@ -1903,6 +1903,28 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "defaultget":
+                    {
+                        // Machine payload for the plugin's Defaults editor (owner 2026-08-11). READ ONLY -
+                        // every write still goes through the 'default set|clearstat|setall|copyfrom|clear'
+                        // verbs below. Wire shape matches [[ZC]] ("<stat>=<defined>,<value>") so the plugin
+                        // reuses its zone-grid parser. "defaultget all" emits one line per authored
+                        // variation, which is what the ladder view (v11-v25 side by side) reads.
+                        if (args.Count >= 2 && args[1].Equals("all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var authored = ZoneControlManager.ListVariationDefaults();
+                            Msg($"[[ZCDL]]vars={string.Join(",", authored)}");
+                            foreach (var v in authored)
+                                Msg(BuildVariationDefaultPayload(v));
+                            return;
+                        }
+
+                        if (args.Count < 2 || !int.TryParse(args[1].TrimStart('v', 'V'), out var getVar) || getVar < 0)
+                        { Msg("Usage: defaultget <variation>|all"); return; }
+                        Msg(BuildVariationDefaultPayload(getVar));
+                        return;
+                    }
+
                     case "default":
                     {
                         // Per-variation Default layer (2026-07-30). Every zone at <var> inherits these, per
@@ -2090,6 +2112,29 @@ namespace ACE.Server.Command.Handlers
         // Reference "Test Dummy" weenie used to fill the effective-look table when no specific mob is targeted
         // (so the plugin shows a real reference look instead of a column of N/A). 99999099 = "Target Dummy".
         private const uint ZoneControlDummyWcid = 99999099;
+
+        /// <summary>"[[ZCD]]var=..|found=..|&lt;stat&gt;=defined,value|.." - one variation Default's stats,
+        /// in the same wire shape as [[ZC]] so the plugin's grid parser is shared. Stats only: a Default
+        /// also carries Effects/Appearance, which the editor does not author (owner 2026-08-11).</summary>
+        private static string BuildVariationDefaultPayload(int variation)
+        {
+            var d = ZoneControlManager.GetVariationDefault(variation);
+            var stats = d?.Profile?.Stats;
+
+            var sb = new StringBuilder();
+            sb.Append("[[ZCD]]var=").Append(variation)
+              .Append("|found=").Append(d != null ? 1 : 0);
+
+            foreach (var stat in ZoneStat.All)
+            {
+                int defined = 0;
+                double value = 0;
+                if (stats != null && stats.TryGetValue(stat, out var curve) && curve != null)
+                { defined = 1; value = curve.Base; }
+                sb.Append('|').Append(stat).Append('=').Append(defined).Append(',').Append(value.ToString(CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
+        }
 
         private static string BuildZonePayload(string name, uint? wcid, Session session)
         {

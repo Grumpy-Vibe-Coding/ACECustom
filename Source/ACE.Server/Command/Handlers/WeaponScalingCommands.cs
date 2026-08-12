@@ -7,8 +7,14 @@ using System.Text;
 
 using ACE.Common.Performance;
 using ACE.Entity.Enum;
+using ACE.Entity.Enum.Properties;
+using ACE.Server.Factories.Tables;
 using ACE.Server.Managers.WeaponScaling;
+using ACE.Server.Managers.ZoneControl;
 using ACE.Server.Network;
+using ACE.Server.Network.GameEvent.Events;
+using ACE.Server.Network.GameMessages.Messages;
+using ACE.Server.WorldObjects;
 
 namespace ACE.Server.Command.Handlers
 {
@@ -559,7 +565,11 @@ namespace ACE.Server.Command.Handlers
             ("mace",        331, "Mace"),       // mace (jitte folds into this family)
             ("spear",       348, "Spear"),      // spear
             ("staff",       338, "Staff"),      // quarterstaff
-            ("ua",        30612, "Knuckles"),   // knuckleselectric — W_WeaponType Unarmed
+            // FINESSE unarmed (owner 2026-08-11): the old pick (30612 knuckleselectric) was a
+            // LightWeapons weenie, so a finesse-spec test char could not swing it. 31784 is
+            // WeaponSkill 46 with the SAME weapon type / attack type / base damage, so it resolves
+            // to the identical "unarmed" scaling family - a pure skill swap.
+            ("ua",        31784, "Claw"),       // ace31784-claw — W_WeaponType Unarmed, Finesse
             ("cleaver",   40618, "Spadone"),    // spadone — 2H slash line
             ("spear2h",   40818, "Corsesca"),   // corsesca — 2H thrust line
             ("bow",       29243, "Bow"),        // bowpiercing
@@ -589,15 +599,298 @@ namespace ACE.Server.Command.Handlers
         /// rows unsafe). Wield gate + stamps mirror the Creature_Death T11+ sweep; static damage
         /// stays the base weenie's (the scaling term/mod dominates). Element override also
         /// re-colors the icon underlay and renames coherently ("Nether Spadone (Test q800)").</summary>
+        // ─────────────── Weapon loadout cards (/wsforge cards clause, owner 2026-08-11) ───────────────
+        // Deterministic versions of the Zone Control loot special rolls (ZoneLootMutator.TrySpecialRolls):
+        // the SAME properties and clamps, but exact configured values instead of chance rolls. Crafts
+        // (hilt/bowstring) apply LAST, same rule as loot - their bonuses add on top of the other cards.
+
+        private sealed class ForgeCards
+        {
+            public bool Proc; public uint ProcSpell; public double ProcRate = 0.15;
+            public bool Rend;
+            public double? RendPower;
+            public int? Cleave;
+            public int? Split; public double SplitRange = 8.0; public double SplitDmg = 1.0;
+            public double? Bite;
+            public double? Crush;
+            public double? ArmorRend;
+            public double? ShieldCleave;
+            public bool Phantom;
+            public double? Slayer; public CreatureType SlayerType = CreatureType.Drudge;
+            public bool Paragon;
+            public bool Hilt;
+            public bool Bowstring;
+        }
+
+        private const ImbuedEffectType ForgeAllRends =
+            ImbuedEffectType.SlashRending | ImbuedEffectType.PierceRending | ImbuedEffectType.BludgeonRending |
+            ImbuedEffectType.AcidRending | ImbuedEffectType.ColdRending | ImbuedEffectType.ElectricRending |
+            ImbuedEffectType.FireRending | ImbuedEffectType.NetherRending;
+
+        /// <summary>Parses "key=val,key,..." (the part after "cards:"). Unknown keys are an error,
+        /// not a silent skip - same contract as /asforge.</summary>
+        private static string ParseForgeCards(string clause, ForgeCards cards)
+        {
+            foreach (var token in clause.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = token.Split('=');
+                var key = parts[0].ToLowerInvariant();
+                var val = parts.Length > 1 ? parts[1] : null;
+                double Num(double dflt) => val != null && double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : dflt;
+                switch (key)
+                {
+                    case "proc": cards.Proc = true; cards.ProcSpell = (uint)Num(0); break;
+                    case "procrate": cards.ProcRate = Math.Clamp(Num(0.15), 0.0, 1.0); break;
+                    case "rend": cards.Rend = true; break;
+                    case "rendpower": cards.RendPower = Math.Clamp(Num(1.5), 1.5, 10.0); break;
+                    case "cleave": cards.Cleave = (int)Math.Clamp(Num(1), 1, 10); break;
+                    case "split": cards.Split = (int)Math.Clamp(Num(1), 1, 10); break;
+                    case "splitrange": cards.SplitRange = Math.Clamp(Num(8), 0.0, 50.0); break;
+                    case "splitdmg": cards.SplitDmg = Math.Clamp(Num(1), 0.0, 1.0); break;
+                    case "bite": cards.Bite = Math.Clamp(Num(0.5), 0.0, 1.0); break;
+                    case "crush": cards.Crush = Math.Clamp(Num(2), 2.0, 10.0); break;
+                    case "armorrend": cards.ArmorRend = Math.Clamp(Num(0.5), 0.0, 1.0); break;
+                    case "shieldcleave": cards.ShieldCleave = Math.Clamp(Num(0.5), 0.0, 1.0); break;
+                    case "phantom": cards.Phantom = true; break;
+                    case "slayer": cards.Slayer = Math.Clamp(Num(1.5), 1.5, 10.0); break;
+                    case "slayertype":
+                        if (val == null || !Enum.TryParse<CreatureType>(val, true, out var ct) || ct == CreatureType.Invalid)
+                            return $"cards: unknown slayertype '{val}' (use a CreatureType name, e.g. drudge, olthoi, virindi)";
+                        cards.SlayerType = ct;
+                        break;
+                    case "paragon": cards.Paragon = true; break;
+                    case "hilt": cards.Hilt = true; break;
+                    case "bowstring": cards.Bowstring = true; break;
+                    default: return $"cards: unknown key '{key}'";
+                }
+            }
+            return null;
+        }
+
+        private static ImbuedEffectType ForgeMatchingRend(DamageType dt)
+        {
+            if (dt.HasFlag(DamageType.Slash)) return ImbuedEffectType.SlashRending;
+            if (dt.HasFlag(DamageType.Pierce)) return ImbuedEffectType.PierceRending;
+            if (dt.HasFlag(DamageType.Bludgeon)) return ImbuedEffectType.BludgeonRending;
+            if (dt.HasFlag(DamageType.Acid)) return ImbuedEffectType.AcidRending;
+            if (dt.HasFlag(DamageType.Cold)) return ImbuedEffectType.ColdRending;
+            if (dt.HasFlag(DamageType.Electric)) return ImbuedEffectType.ElectricRending;
+            if (dt.HasFlag(DamageType.Fire)) return ImbuedEffectType.FireRending;
+            if (dt.HasFlag(DamageType.Nether)) return ImbuedEffectType.NetherRending;
+            return ImbuedEffectType.Undef;
+        }
+
+        /// <summary>Max-level bolt matching the weapon's own damage type (test gear wants max).</summary>
+        private static uint ForgeDefaultProcSpell(DamageType dt)
+        {
+            var list = dt.HasFlag(DamageType.Slash) ? SpellLevelProgression.WhirlingBlade
+                     : dt.HasFlag(DamageType.Pierce) ? SpellLevelProgression.ForceBolt
+                     : dt.HasFlag(DamageType.Bludgeon) ? SpellLevelProgression.ShockWave
+                     : dt.HasFlag(DamageType.Acid) ? SpellLevelProgression.AcidStream
+                     : dt.HasFlag(DamageType.Fire) ? SpellLevelProgression.FlameBolt
+                     : dt.HasFlag(DamageType.Cold) ? SpellLevelProgression.FrostBolt
+                     : dt.HasFlag(DamageType.Electric) ? SpellLevelProgression.LightningBolt
+                     : dt.HasFlag(DamageType.Nether) ? SpellLevelProgression.HarmOther
+                     : SpellLevelProgression.ForceBolt;   // plain bows etc. - element lives on the ammo
+            return (uint)list[list.Count - 1];
+        }
+
+        /// <summary>Stamps the enabled cards; returns a " | cards: ... | skipped: ..." note for the
+        /// forge message (empty when no cards).</summary>
+        private static string ApplyForgeCards(WorldObject wo, ForgeCards c)
+        {
+            var isMelee = wo is MeleeWeapon;
+            var isMissile = wo is MissileLauncher;
+            var applied = new List<string>();
+            var skipped = new List<string>();
+
+            if (c.Proc)
+            {
+                if (isMelee || isMissile)
+                {
+                    var spellId = c.ProcSpell != 0 ? c.ProcSpell : ForgeDefaultProcSpell(wo.W_DamageType);
+                    wo.ProcSpell = spellId;
+                    wo.ProcSpellRate = c.ProcRate;
+                    wo.ProcSpellSelfTargeted = false;
+                    applied.Add($"proc {spellId} @ {c.ProcRate:0.##}");
+                }
+                else skipped.Add("proc (melee/missile only)");
+            }
+
+            if (c.Rend)
+            {
+                var rend = ForgeMatchingRend(wo.W_DamageType);
+                if (rend != ImbuedEffectType.Undef) { wo.ImbuedEffect |= rend; applied.Add(rend.ToString()); }
+                else skipped.Add("rend (no resolvable damage type)");
+            }
+
+            if (c.ArmorRend.HasValue)
+            {
+                if (isMelee || isMissile)
+                {
+                    wo.ImbuedEffect |= ImbuedEffectType.ArmorRending;
+                    wo.SetProperty((PropertyFloat)ZoneLootMutator.ArmorRendOverridePropId, c.ArmorRend.Value);
+                    applied.Add($"armorrend {c.ArmorRend.Value:0.##}");
+                }
+                else skipped.Add("armorrend (melee/missile only)");
+            }
+
+            if (c.RendPower.HasValue)
+            {
+                if ((wo.GetImbuedEffects() & ForgeAllRends) != 0)
+                {
+                    wo.SetProperty((PropertyFloat)ZoneLootMutator.RendingModOverridePropId, c.RendPower.Value);
+                    applied.Add($"rendpower {c.RendPower.Value:0.##}");
+                }
+                else skipped.Add("rendpower (weapon carries no rend)");
+            }
+
+            if (c.Cleave.HasValue)
+            {
+                if (isMelee)
+                {
+                    wo.SetProperty(PropertyInt.Cleaving, c.Cleave.Value + 1);   // engine: CleaveTargets = Cleaving - 1
+                    applied.Add($"cleave {c.Cleave.Value}");
+                }
+                else skipped.Add("cleave (melee only)");
+            }
+
+            if (c.Split.HasValue)
+            {
+                if (isMissile)
+                {
+                    wo.SetProperty((PropertyBool)ZoneLootMutator.SplitArrowsBoolId, true);
+                    wo.SetProperty((PropertyInt)ZoneLootMutator.SplitArrowCountIntId, c.Split.Value);
+                    wo.SetProperty((PropertyFloat)ZoneLootMutator.SplitArrowRangeFloatId, c.SplitRange);
+                    wo.SetProperty((PropertyFloat)ZoneLootMutator.SplitArrowDmgFloatId, c.SplitDmg);
+                    applied.Add($"split {c.Split.Value} r{c.SplitRange:0.#} d{c.SplitDmg:0.##}");
+                }
+                else skipped.Add("split (bows only)");
+            }
+
+            if (c.Bite.HasValue) { wo.CriticalFrequency = c.Bite.Value; applied.Add($"bite {c.Bite.Value:0.##}"); }
+
+            // Crushing Blow: card value IS the final crit multiplier; engine computes 1 + CriticalMultiplier.
+            if (c.Crush.HasValue) { wo.SetProperty(PropertyFloat.CriticalMultiplier, c.Crush.Value - 1.0); applied.Add($"crush {c.Crush.Value:0.##}x"); }
+
+            if (c.ShieldCleave.HasValue) { wo.IgnoreShield = c.ShieldCleave.Value; applied.Add($"shieldcleave {c.ShieldCleave.Value:0.##}"); }
+
+            if (c.Phantom)
+            {
+                wo.IgnoreMagicArmor = true;
+                wo.IgnoreMagicResist = true;
+                applied.Add("phantom");
+            }
+
+            if (c.Slayer.HasValue)
+            {
+                wo.SlayerCreatureType = c.SlayerType;
+                wo.SlayerDamageBonus = c.Slayer.Value;
+                applied.Add($"slayer {c.SlayerType} {c.Slayer.Value:0.##}x");
+            }
+
+            if (c.Paragon)
+            {
+                wo.ItemMaxLevel = (wo.ItemMaxLevel ?? 0) + 1;
+                wo.ItemBaseXp = 2000000000;
+                wo.ItemTotalXp = wo.ItemTotalXp ?? 0;
+                applied.Add("paragon");
+            }
+
+            // crafts LAST - numbers mirror the live recipes exactly (ZoneLootMutator hilt/bowstring blocks)
+            if (c.Hilt)
+            {
+                if (isMelee)
+                {
+                    wo.SetProperty(PropertyBool.Ivoryable, true);
+                    wo.SetProperty(PropertyInt.WieldRequirements2, 8);   // WieldRequirement.Training
+                    wo.SetProperty(PropertyInt.WieldSkillType2, 46);
+                    wo.SetProperty(PropertyInt.WieldDifficulty2, 3);     // specialized
+                    wo.Value = 0;
+                    wo.SetProperty(PropertyFloat.ManaStoneDestroyChance, 0.01);   // hilt completion marker
+                    wo.SetProperty(PropertyFloat.DamageMod, (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 1.075);
+                    wo.SetProperty(PropertyFloat.CriticalFrequency, (wo.GetProperty(PropertyFloat.CriticalFrequency) ?? 0.1) + 0.25);
+                    wo.SetProperty(PropertyFloat.CriticalMultiplier, (wo.GetProperty(PropertyFloat.CriticalMultiplier) ?? 1.0) + 0.175);
+                    applied.Add("hilt");
+                }
+                else skipped.Add("hilt (melee only)");
+            }
+
+            if (c.Bowstring)
+            {
+                if (isMissile)
+                {
+                    wo.SetProperty(PropertyInt.WieldRequirements2, 8);
+                    wo.SetProperty(PropertyInt.WieldSkillType2, 47);     // Missile Weapons
+                    wo.SetProperty(PropertyInt.WieldDifficulty2, 3);
+                    wo.SetProperty((PropertyBool)ZoneLootMutator.SplitArrowsBoolId, true);
+                    wo.SetProperty((PropertyInt)ZoneLootMutator.SplitArrowCountIntId,
+                        (wo.GetProperty((PropertyInt)ZoneLootMutator.SplitArrowCountIntId) ?? 0) + 1);   // stacks with split
+                    wo.SetProperty((PropertyFloat)ZoneLootMutator.SplitArrowRangeFloatId, 12.0);         // recipe SETS 12 - string goes on last
+                    wo.SetProperty(PropertyFloat.DamageMod, (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 0.05);
+                    applied.Add("bowstring");
+                }
+                else skipped.Add("bowstring (bows only)");
+            }
+
+            var note = "";
+            if (applied.Count > 0) note += " | cards: " + string.Join(", ", applied);
+            if (skipped.Count > 0) note += " | skipped: " + string.Join(", ", skipped);
+            return note;
+        }
+
+        /// <summary>The 102-slot pack (wcid 310025, the /testchar "Booster Pack" bag) a bagged forge
+        /// run mints into. Found by name so repeat runs keep filling the same pack; created on first
+        /// use, which costs one of the player's 7 visible pack slots.</summary>
+        private const uint ForgePackWcid = 310025;
+        private const string ForgePackName = "Weapon Pack";
+
+        private static Container GetOrCreateForgePack(Player player)
+        {
+            var existing = player.Inventory.Values.OfType<Container>()
+                .FirstOrDefault(c => string.Equals(c.Name, ForgePackName, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+                return existing;
+
+            if (!(ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(ForgePackWcid) is Container bag))
+                return null;
+            bag.Name = ForgePackName;
+            bag.SetProperty(PropertyString.Name, ForgePackName);
+            if (player.TryCreateInInventoryWithNetworking(bag))
+                return bag;
+
+            bag.Destroy();   // no free pack slot - caller falls back to the main pack
+            return null;
+        }
+
+        /// <summary>Place a freshly minted item into a specific container the player already holds.
+        /// TryCreateInInventoryWithNetworking only targets "main pack, else first side pack with
+        /// room", so the client updates are done by hand here (same messages it sends).</summary>
+        private static bool TryPlaceInPack(Player player, WorldObject wo, Container bag)
+        {
+            if (bag == null || !bag.TryAddToInventory(wo))
+                return false;
+
+            player.Session.Network.EnqueueSend(new GameMessageCreateObject(wo));
+            player.Session.Network.EnqueueSend(
+                new GameEventItemServerSaysContainId(player.Session, wo, bag),
+                new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.EncumbranceVal, player.EncumbranceVal ?? 0));
+            wo.SaveBiotaToDatabase();
+            return true;
+        }
+
         private static string ForgeWeapon(ACE.Server.WorldObjects.Player player, uint wcid, string cleanName,
-            int quality, int tier, DamageType? element)
+            int quality, int tier, DamageType? element, ForgeCards cards = null, Container bag = null)
         {
             var wo = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(wcid);
             if (wo == null)
                 return $"forge: could not create wcid {wcid}";
 
             ACE.Server.Factories.LootGenerationFactory.StripWieldRequirements(wo);
-            ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
+            // T10 = the basic tier, no aug wield gate (same rule as /asforge armor). A minwield-0
+            // tier row would NOT give that: ApplyT11WieldRequirement falls back to the global gate.
+            if (tier >= 11)
+                ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
 
@@ -639,14 +932,20 @@ namespace ACE.Server.Command.Handlers
             wo.Attuned = ACE.Entity.Enum.AttunedStatus.Attuned;
             wo.Bonded = ACE.Entity.Enum.BondedStatus.Bonded;
 
-            if (!player.TryCreateInInventoryWithNetworking(wo))
+            var cardNote = cards != null ? ApplyForgeCards(wo, cards) : "";
+
+            // Bagged runs fill the Weapon Pack; if it is full (or could not be made) the weapon still
+            // lands normally rather than being lost.
+            var placed = bag != null && TryPlaceInPack(player, wo, bag);
+            if (!placed && !player.TryCreateInInventoryWithNetworking(wo))
             {
                 wo.Destroy();
                 return $"forge: could not place {wo.Name} in inventory (full?)";
             }
 
             return $"forged: {wo.Name} -> family {WeaponScalingCombat.GetFamilyKey(wo) ?? "none"}, " +
-                   $"grade {WeaponScalingManager.GetQualityGrade(quality)} ({quality}/1000), tier {tier}";
+                   $"grade {WeaponScalingManager.GetQualityGrade(quality)} ({quality}/1000), tier {tier}" +
+                   (placed ? " [" + ForgePackName + "]" : "") + cardNote;
         }
 
         [CommandHandler("wstestkit", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
@@ -686,8 +985,12 @@ namespace ACE.Server.Command.Handlers
         /// class at any quality/element/tier, minted live.</summary>
         [CommandHandler("wsforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges one Weapon Scaling test weapon of the given class (or a full set with 'all').",
-            "<class|all> [quality 0-1000, default 500] [element] [tier, default 11]\n" +
-            "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand")]
+            "<class|all> [quality 0-1000, default 500] [element] [tier 10-25, default 11; 10 = basic, no wield gate] [cards:key=val,key,...]\n" +
+            "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand\n" +
+            "cards: proc[=spellId] procrate=0-1 (Cast on Strike; no id = max-level bolt matching the element) rend (matching rend imbue)\n" +
+            "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
+            "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 phantom slayer=1.5-10 slayertype=<name> paragon hilt bowstring\n" +
+            "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)")]
         public static void HandleWsForge(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -696,7 +999,33 @@ namespace ACE.Server.Command.Handlers
             if (player == null)
                 return;
 
-            var classKey = parameters[0].ToLowerInvariant();
+            // The cards clause may sit at any position - strip it out of the positional args first.
+            ForgeCards cards = null;
+            foreach (var p in parameters)
+            {
+                if (!p.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                cards = new ForgeCards();
+                var err = ParseForgeCards(p.Substring(6), cards);
+                if (err != null)
+                {
+                    Msg("wsforge " + err);
+                    return;
+                }
+            }
+            // "bag" anywhere = mint into the Weapon Pack (owner 2026-08-11: a premade's weapon set
+            // should not bury the main pack).
+            var useBag = parameters.Any(p => p.Equals("bag", StringComparison.OrdinalIgnoreCase));
+            var positional = parameters
+                .Where(p => !p.StartsWith("cards:", StringComparison.OrdinalIgnoreCase)
+                            && !p.Equals("bag", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (positional.Length == 0)
+            {
+                Msg("wsforge: missing class. Classes: all " + string.Join(" ", ForgeClasses.Select(c => c.Key)));
+                return;
+            }
+
+            var classKey = positional[0].ToLowerInvariant();
             var all = classKey == "all";
             var cls = ForgeClasses.FirstOrDefault(c => c.Key == classKey);
             if (!all && cls.Wcid == 0)
@@ -706,13 +1035,13 @@ namespace ACE.Server.Command.Handlers
             }
 
             var quality = 500;
-            if (parameters.Length > 1 && int.TryParse(parameters[1], out var q))
+            if (positional.Length > 1 && int.TryParse(positional[1], out var q))
                 quality = Math.Clamp(q, 0, 1000);
 
             DamageType? element = null;
-            if (parameters.Length > 2 && !parameters[2].Equals("base", StringComparison.OrdinalIgnoreCase))
+            if (positional.Length > 2 && !positional[2].Equals("base", StringComparison.OrdinalIgnoreCase))
             {
-                element = ParseElement(parameters[2]);
+                element = ParseElement(positional[2]);
                 if (element == null)
                 {
                     Msg("wsforge: unknown element. Use base|slash|pierce|bludge|acid|fire|cold|electric|nether.");
@@ -721,18 +1050,22 @@ namespace ACE.Server.Command.Handlers
             }
 
             var tier = 11;
-            if (parameters.Length > 3 && int.TryParse(parameters[3], out var t))
-                tier = Math.Clamp(t, 11, 25);
+            if (positional.Length > 3 && int.TryParse(positional[3], out var t))
+                tier = Math.Clamp(t, 10, 25);
+
+            var bag = useBag ? GetOrCreateForgePack(player) : null;
+            if (useBag && bag == null)
+                Msg($"wsforge: no free pack slot for a {ForgePackName} - forging into the main pack instead.");
 
             if (all)
             {
                 // one of every class at the same quality/element/tier (owner 2026-08-01)
                 foreach (var c in ForgeClasses)
-                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element));
+                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element, cards, bag));
                 return;
             }
 
-            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element));
+            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element, cards, bag));
         }
     }
 }
