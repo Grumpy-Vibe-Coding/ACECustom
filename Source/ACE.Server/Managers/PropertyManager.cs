@@ -90,22 +90,27 @@ namespace ACE.Server.Managers
             ConfigProperty<T> newVal = oldVal.WithValue(newValue);
             propInfo.SetValue(null, newVal);
 
-            if (markModified) { 
+            if (markModified) {
+                // Assign, do NOT TryAdd. These dictionaries hold the value still waiting to be written,
+                // and WriteUpdatesToDb only drains them every 5 minutes. TryAdd keeps the value that got
+                // there first, so changing one property twice inside that window silently discarded the
+                // second change - and worse, the following LoadFromDb read the stale first value back out
+                // of the database and reapplied it over the live one, undoing what the admin just typed.
                 if (typeof(T) == typeof(bool))
                 {
-                    _modifiedBoolProps.TryAdd(key, (ConfigProperty<bool>)(object)newVal);
+                    _modifiedBoolProps[key] = (ConfigProperty<bool>)(object)newVal;
                 }
                 else if (typeof(T) == typeof(long))
                 {
-                    _modifiedLongProps.TryAdd(key, (ConfigProperty<long>)(object)newVal);
+                    _modifiedLongProps[key] = (ConfigProperty<long>)(object)newVal;
                 }
                 else if (typeof(T) == typeof(double))
                 {
-                    _modifiedDoubleProps.TryAdd(key, (ConfigProperty<double>)(object)newVal);
+                    _modifiedDoubleProps[key] = (ConfigProperty<double>)(object)newVal;
                 }
                 else if (typeof(T) == typeof(string))
                 {
-                    _modifiedStringProps.TryAdd(key, (ConfigProperty<string>)(object)newVal);
+                    _modifiedStringProps[key] = (ConfigProperty<string>)(object)newVal;
                 }
             }
             return true;
