@@ -107,7 +107,7 @@ namespace ACE.Server.Command.Handlers
             + "set <name> <stat> <value> [--wcid <id>] | clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>] | "
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
-            + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | "
+            + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | seticon <wcid> <iconDid|clear> [layer] | "
             + "cantrip <name> <add|remove|list> [spellId] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
@@ -143,6 +143,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol becomemob <donorWcid> --wcid <targetWcid>   (target BECOMES a full copy of the donor - stats/loot/spells/everything; keeps its name, class_Name and scale)");
                 Msg("  /zonecontrol draftslot <name> [release]   (claim your Drafted Look slot in this zone - a scratch wcid to craft a look on; release discards)");
                 Msg("  /zonecontrol copydraft <name> <destWcid>   (save your Drafted Look onto destWcid's zone appearance, then bakemob/clonemob to keep it)");
+                Msg("  /zonecontrol seticon <wcid> <iconDid|clear> [icon|overlay|overlay2|underlay]   (PERMANENT world-db icon change, layer defaults to icon; logged to zc_seticon_<date>.sql. 'appearance icon' is the zone-only version)");
                 Msg("  /zonecontrol listparts <wcid | 0xSetupId>   (dump a mob's body-part layout: index -> model piece; head = index 16)");
                 Msg("  /zonecontrol appearance <name> animpart <index> <gfxObjHex> [--wcid <id>]   (swap ONE body part, e.g. animpart 16 = head; clear with clearappearance <name> animpart <index>)");
                 Msg("  /zonecontrol cantrip <name> <add|remove|list> [spellId] [--wcid <id>]   (custom cantrip pool for the extra-loot-cantrip roll)");
@@ -1591,6 +1592,107 @@ namespace ACE.Server.Command.Handlers
                         var cdName = ACE.Database.DatabaseManager.World.GetCachedWeenie(cdDest)?.GetProperty(PropertyString.Name) ?? cdDest.ToString();
                         Msg($"copydraft: your Drafted Look now overrides {cdName} ({cdDest}) in '{cdZone}' (its previous appearance overrides here were replaced). " +
                             "Slot released. Make it permanent with bakemob, or mint a new monster with clonemob.");
+                        return;
+                    }
+
+                    case "seticon":
+                    {
+                        // PERMANENT world-db edit: sets PropertyDataId.Icon (type 8) on a weenie.
+                        // Unlike `appearance icon`, which is a per-zone override living in the ZC
+                        // store, this rewrites the weenie itself and affects every server.
+                        //
+                        // Every edit is mirrored to zc_seticon_<date>.sql next to the server dll so
+                        // the standing "no orphan MariaDB edits" rule still holds - that file is the
+                        // migration artifact for ILT.
+                        // LAYERS (owner 2026-08-12): the client composites an icon from four
+                        // PropertyDataIds - Icon 8 (base), IconOverlay 50 (corner badge),
+                        // IconOverlaySecondary 51, IconUnderlay 52. Overlay art is a FULL 32x32
+                        // texture that is mostly transparent, not a small image.
+                        if (args.Count < 3)
+                        {
+                            Msg("Usage: seticon <wcid> <iconDid|clear> [icon|overlay|overlay2|underlay]   "
+                                + "(layer defaults to icon; 'clear' removes an overlay/underlay. "
+                                + "Permanent world-db edit - use 'appearance icon' for a zone-only override)");
+                            return;
+                        }
+                        if (!uint.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var siWcid) || siWcid == 0)
+                        { Msg("wcid must be a number."); return; }
+
+                        var siLayerArg = args.Count > 3 ? args[3].ToLowerInvariant() : "icon";
+                        PropertyDataId siProp;
+                        switch (siLayerArg)
+                        {
+                            case "icon": siProp = PropertyDataId.Icon; break;
+                            case "overlay": siProp = PropertyDataId.IconOverlay; break;
+                            case "overlay2":
+                            case "secondary": siProp = PropertyDataId.IconOverlaySecondary; break;
+                            case "underlay": siProp = PropertyDataId.IconUnderlay; break;
+                            default:
+                                Msg($"Unknown layer '{siLayerArg}'. Use icon | overlay | overlay2 | underlay.");
+                                return;
+                        }
+                        var siType = (int)siProp;
+
+                        var siClear = args[2].Equals("clear", StringComparison.OrdinalIgnoreCase)
+                                   || args[2].Equals("none", StringComparison.OrdinalIgnoreCase)
+                                   || args[2] == "0";
+
+                        uint siIcon = 0;
+                        if (!siClear)
+                        {
+                            if (!uint.TryParse(args[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out siIcon) || siIcon == 0)
+                            { Msg("iconDid must be a number (decimal, eg 100668365), or 'clear'."); return; }
+
+                            // Icons live in the 0x06 texture band. Anything else is a typo - most likely
+                            // a hex DID pasted without conversion - and would render as a missing icon.
+                            if (siIcon < 0x06000000 || siIcon > 0x06FFFFFF)
+                            { Msg($"{siIcon} is not in the icon range 0x06000000-0x06FFFFFF ({0x06000000}-{0x06FFFFFF}). Paste the DECIMAL DID."); return; }
+                        }
+                        else if (siProp == PropertyDataId.Icon)
+                        {
+                            // An item with no base icon draws nothing at all. Overlays and underlays
+                            // are the layers you legitimately want to remove; to change the base,
+                            // set a different DID rather than clearing it.
+                            Msg("Refusing to clear the BASE icon - the item would render blank. Set a different iconDid instead, or clear an overlay/underlay layer.");
+                            return;
+                        }
+
+                        var siWeenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(siWcid);
+                        if (siWeenie == null) { Msg($"No weenie {siWcid} in the world db."); return; }
+                        var siName = siWeenie.GetProperty(PropertyString.Name) ?? siWcid.ToString();
+                        var siOld = siWeenie.GetProperty(siProp);
+
+                        try
+                        {
+                            // Upsert: plenty of weenies have no row for a given layer at all, so a
+                            // bare UPDATE would silently affect 0 rows and report success.
+                            var sql = siClear
+                                ? $"DELETE FROM weenie_properties_d_i_d WHERE object_Id = {siWcid} AND type = {siType};"
+                                : $"INSERT INTO weenie_properties_d_i_d (object_Id, type, value) VALUES ({siWcid}, {siType}, {siIcon}) "
+                                  + $"ON DUPLICATE KEY UPDATE value = {siIcon};";
+
+                            using (var ctx = new ACE.Database.Models.World.WorldDbContext())
+                            {
+                                ctx.Database.SetCommandTimeout(0);
+                                ctx.Database.ExecuteSqlRaw(sql);
+                            }
+
+                            var siWhat = siClear ? "cleared" : siIcon.ToString(CultureInfo.InvariantCulture);
+                            var siLog = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                                $"zc_seticon_{DateTime.Now:yyyy-MM-dd}.sql");
+                            System.IO.File.AppendAllText(siLog,
+                                $"-- {DateTime.Now:HH:mm:ss} {siName} ({siWcid}) {siLayerArg}({siType}) {(siOld?.ToString() ?? "none")} -> {siWhat}{System.Environment.NewLine}{sql}{System.Environment.NewLine}");
+
+                            ACE.Database.DatabaseManager.World.ClearCachedWeenie(siWcid);
+
+                            Msg($"seticon: {siName} ({siWcid}) {siLayerArg} layer (type {siType}) {(siOld?.ToString() ?? "none")} -> {siWhat}. " +
+                                "Weenie cache cleared; items ALREADY in a pack keep their old biota snapshot - trash and /ci a fresh one to see it. " +
+                                $"Logged to zc_seticon_{DateTime.Now:yyyy-MM-dd}.sql");
+                        }
+                        catch (Exception ex)
+                        {
+                            Msg($"seticon failed: {ex.Message}");
+                        }
                         return;
                     }
 
