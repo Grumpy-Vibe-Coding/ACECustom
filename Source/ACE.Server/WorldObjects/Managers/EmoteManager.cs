@@ -163,7 +163,7 @@ namespace ACE.Server.WorldObjects.Managers
             { "Specialize", 266 },
         };
 
-        /// <summary>Charm of the Triune Weave. The charm must be in inventory to use Motes; progress lives on the player (PropertyInt64.TriuneWeaveCount), never on the item.</summary>
+        /// <summary>Charm of the Triune Weave. The charm must be in inventory to use Remnants; progress lives on the player (PropertyInt64.TriuneWeaveCount), never on the item.</summary>
         private const uint TriuneCharmWcid = 777700030;
 
         private sealed class SchoolCharmDef
@@ -178,12 +178,12 @@ namespace ACE.Server.WorldObjects.Managers
         }
 
         /// <summary>
-        /// School charms keyed by their mote emote-message prefix. Counters accumulate toward future
+        /// School charms keyed by their remnant emote-message prefix. Counters accumulate toward future
         /// ability unlocks only — they add nothing to the capped War/Void/Melee/Missile aug stats.
         /// </summary>
         private static readonly Dictionary<string, SchoolCharmDef> SchoolCharms = new Dictionary<string, SchoolCharmDef>
         {
-            { "Tempest",  new SchoolCharmDef { FullName = "Charm of the Raging Tempest", CharmWcid = 777700051, Mote1 = 777700052, Mote10 = 777700053, Mote50 = 777700054, Mote100 = 777700055, CountProperty = PropertyInt64.TempestCharmCount } },
+            { "Wrath",    new SchoolCharmDef { FullName = "Charm of the Battlemage's Wrath", CharmWcid = 777700051, Mote1 = 777700052, Mote10 = 777700053, Mote50 = 777700054, Mote100 = 777700055, CountProperty = PropertyInt64.BattlemagesWrathCharmCount } },
             { "Nether",   new SchoolCharmDef { FullName = "Charm of the Nether Veil",    CharmWcid = 777700056, Mote1 = 777700057, Mote10 = 777700058, Mote50 = 777700059, Mote100 = 777700060, CountProperty = PropertyInt64.NetherVeilCharmCount } },
             { "Steel",    new SchoolCharmDef { FullName = "Charm of Crashing Steel",     CharmWcid = 777700061, Mote1 = 777700062, Mote10 = 777700063, Mote50 = 777700064, Mote100 = 777700065, CountProperty = PropertyInt64.CrashingSteelCharmCount } },
             { "TrueShot", new SchoolCharmDef { FullName = "Charm of the True Shot",      CharmWcid = 777700066, Mote1 = 777700067, Mote10 = 777700068, Mote50 = 777700069, Mote100 = 777700070, CountProperty = PropertyInt64.TrueShotCharmCount } },
@@ -3315,7 +3315,7 @@ namespace ACE.Server.WorldObjects.Managers
                             case "Triune50":
                             case "Triune100":
                                 {
-                                    // Motes are bought with Prestige Coins, so no luminance cost and no cap here.
+                                    // Remnants are bought with Prestige Coins, so no luminance cost and no cap here.
                                     int augCount = emote.Message == "Triune" ? 1 :
                                                    emote.Message == "Triune10" ? 10 :
                                                    emote.Message == "Triune50" ? 50 :
@@ -3323,7 +3323,7 @@ namespace ACE.Server.WorldObjects.Managers
 
                                     if (player.GetNumInventoryItemsOfWCID(TriuneCharmWcid) == 0)
                                     {
-                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this mote.", ChatMessageType.Broadcast));
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this remnant.", ChatMessageType.Broadcast));
                                         break;
                                     }
 
@@ -3337,14 +3337,14 @@ namespace ACE.Server.WorldObjects.Managers
                                         if (!response) return;
                                         if (player.GetNumInventoryItemsOfWCID(TriuneCharmWcid) == 0)
                                         {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this mote.", ChatMessageType.Broadcast));
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this remnant.", ChatMessageType.Broadcast));
                                             return;
                                         }
 
-                                        // Consume before granting: queued confirms each require their own mote.
+                                        // Consume before granting: queued confirms each require their own remnant.
                                         if (moteId == 0 || !player.TryConsumeFromInventoryWithNetworking((uint)moteId, 1))
                                         {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the mote. Please try again.", ChatMessageType.Broadcast));
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the remnant. Please try again.", ChatMessageType.Broadcast));
                                             return;
                                         }
 
@@ -3354,10 +3354,10 @@ namespace ACE.Server.WorldObjects.Managers
                                     }), $"You are about to empower your Charm of the Triune Weave by {augCount}, granting +{augCount} to your Creature, Item, and Life augmentations. Are you sure?");
                                 }
                                 break;
-                            case "Tempest":
-                            case "Tempest10":
-                            case "Tempest50":
-                            case "Tempest100":
+                            case "Wrath":
+                            case "Wrath10":
+                            case "Wrath50":
+                            case "Wrath100":
                             case "Nether":
                             case "Nether10":
                             case "Nether50":
@@ -3382,7 +3382,7 @@ namespace ACE.Server.WorldObjects.Managers
 
                                     if (player.GetNumInventoryItemsOfWCID(charm.CharmWcid) == 0)
                                     {
-                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this mote.", ChatMessageType.Broadcast));
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this remnant.", ChatMessageType.Broadcast));
                                         break;
                                     }
 
@@ -3395,14 +3395,14 @@ namespace ACE.Server.WorldObjects.Managers
                                         if (!response) return;
                                         if (player.GetNumInventoryItemsOfWCID(charm.CharmWcid) == 0)
                                         {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this mote.", ChatMessageType.Broadcast));
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this remnant.", ChatMessageType.Broadcast));
                                             return;
                                         }
 
-                                        // Consume before granting: queued confirms each require their own mote.
+                                        // Consume before granting: queued confirms each require their own remnant.
                                         if (!player.TryConsumeFromInventoryWithNetworking(moteId, 1))
                                         {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the mote. Please try again.", ChatMessageType.Broadcast));
+                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the remnant. Please try again.", ChatMessageType.Broadcast));
                                             return;
                                         }
 

@@ -58,8 +58,8 @@ namespace ACE.Entity.Enum.Properties
         TriuneWeaveCount       = 50000,
         // School charm counters: accumulated strength only — they gate future ability unlocks and
         // deliberately add NOTHING to the capped War/Void/Melee/Missile aug stats.
-        /// <summary>Charm of the Raging Tempest (War).</summary>
-        TempestCharmCount       = 50001,
+        /// <summary>Charm of the Battlemage's Wrath (War).</summary>
+        BattlemagesWrathCharmCount = 50001,
         /// <summary>Charm of the Nether Veil (Void).</summary>
         NetherVeilCharmCount    = 50002,
         /// <summary>Charm of Crashing Steel (Melee).</summary>
