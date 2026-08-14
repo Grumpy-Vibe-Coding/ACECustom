@@ -42,6 +42,11 @@ namespace ACE.Server.WorldObjects
         private DateTime? UcmPromptStartedAtUtc { get; set; }
         /// <summary>The current active check stage.</summary>
         private UcmStage CurrentStage { get; set; } = UcmStage.None;
+        /// <summary>
+        /// True when the active <see cref="UcmStage.Basic"/> prompt is the advanced math variant.
+        /// Cleared on escalation, so a bot detection failure still carries the full sentence.
+        /// </summary>
+        private bool CurrentQuestionIsAdvanced { get; set; }
 
         /// <summary>
         /// Determines whether a check operation is currently in progress.
@@ -69,16 +74,29 @@ namespace ACE.Server.WorldObjects
         {
             if (IsChecking) return false;
 
-            // Generate math problem using single digits (0-9)
-            int a = RNG.Next(0, 10);
-            int b = RNG.Next(0, 10);
-            int correctAnswer = a + b;
+            // While the toggle is on, the hard question replaces the simple one entirely.
+            bool isAdvanced = ServerConfig.ucm_advanced_math_enabled.Value;
+            bool isRightAnswerForm;
+            string question;
 
-            bool isRightAnswerForm = RNG.Next(0, 2) == 0;
-            int shownAnswer = isRightAnswerForm ? correctAnswer : (correctAnswer + 1);
+            if (isAdvanced)
+            {
+                question = BuildAdvancedQuestion(out isRightAnswerForm);
+            }
+            else
+            {
+                // Generate math problem using single digits (0-9)
+                int a = RNG.Next(0, 10);
+                int b = RNG.Next(0, 10);
+                int correctAnswer = a + b;
+
+                isRightAnswerForm = RNG.Next(0, 2) == 0;
+                int shownAnswer = isRightAnswerForm ? correctAnswer : (correctAnswer + 1);
+                question = $"Is {a} + {b} = {shownAnswer}?";
+            }
 
             TimeSpan timeout = TimeSpan.FromSeconds(ServerConfig.ucm_check_timeout_seconds.Value);
-            string message = $"Is {a} + {b} = {shownAnswer}?\n\nYou have {timeout.GetFriendlyLongString()} to respond.";
+            string message = $"{question}\n\nYou have {timeout.GetFriendlyLongString()} to respond.";
             var ucmBasicCheckConfirmation = new Confirmation_Custom(Self.Guid, (response, timedOut) =>
             {
                 using var scope = _lock.EnterScope();
@@ -121,6 +139,7 @@ namespace ACE.Server.WorldObjects
             var startUtc = DateTime.UtcNow;
             ActiveUcmConfirmationContextId = ucmBasicCheckConfirmation.ContextId;
             CurrentStage = UcmStage.Basic;
+            CurrentQuestionIsAdvanced = isAdvanced;
             UcmPromptStartedAtUtc = startUtc;
             LastUCMCheckTime = startUtc;
             Timeout = startUtc.Add(timeout);
@@ -182,7 +201,11 @@ namespace ACE.Server.WorldObjects
             if (ActiveUcmConfirmationContextId is uint ctx)
                 Self.ConfirmationManager.TryDismissConfirmation(ConfirmationType.Yes_No, ctx);
 
-            if (CurrentStage == UcmStage.Basic)
+            // Captured before EndActiveCheckLocked clears the stage state.
+            bool advancedMathFail = CurrentStage == UcmStage.Basic && CurrentQuestionIsAdvanced;
+
+            // The focus test stamps feed titles and leaderboards, so the joke question does not award them.
+            if (CurrentStage == UcmStage.Basic && !advancedMathFail)
             {
                 _ = reason switch
                 {
@@ -193,14 +216,24 @@ namespace ACE.Server.WorldObjects
                 };
             }
 
-            string message = "You failed the focus test and have been punished!";
+            string message = advancedMathFail ? PickAdvancedMathInsult() : "You failed the focus test and have been punished!";
             Self.Session.Network.EnqueueSend(new GameMessageSystemChat(message, ChatMessageType.Broadcast));
 
             var failElapsed = FormatUcmResponseSeconds(UcmPromptStartedAtUtc);
-            PlayerManager.BroadcastToAuditChannel(Self, $"[UCM Check] Player {Self.Name} failed UCM check ({GetUCMCheckFailReasonString(reason)}, Stage: {CurrentStage}) at {Self.Location}.{failElapsed}");
+            var stageTag = advancedMathFail ? $"{CurrentStage} / AdvancedMath" : CurrentStage.ToString();
+            PlayerManager.BroadcastToAuditChannel(Self, $"[UCM Check] Player {Self.Name} failed UCM check ({GetUCMCheckFailReasonString(reason)}, Stage: {stageTag}) at {Self.Location}.{failElapsed}");
             EndActiveCheckLocked();
-            Self.SendToJail();
-            PlayerManager.BroadcastToAll(new GameMessageSystemChat($"{Self.Name} failed a focus check and was sent to jail!", ChatMessageType.Broadcast));
+
+            if (advancedMathFail)
+            {
+                Self.SendToJail(TimeSpan.FromSeconds(ServerConfig.ucm_advanced_math_jail_seconds.Value));
+                PlayerManager.BroadcastToAll(new GameMessageSystemChat($"{Self.Name} could not do basic math and has been jailed.", ChatMessageType.Broadcast));
+            }
+            else
+            {
+                Self.SendToJail();
+                PlayerManager.BroadcastToAll(new GameMessageSystemChat($"{Self.Name} failed a focus check and was sent to jail!", ChatMessageType.Broadcast));
+            }
         }
 
         /// <summary>
@@ -210,6 +243,7 @@ namespace ACE.Server.WorldObjects
         private void EndActiveCheckLocked()
         {
             CurrentStage = UcmStage.None;
+            CurrentQuestionIsAdvanced = false;
             ActiveUcmConfirmationContextId = null;
             UcmPromptStartedAtUtc = null;
         }
@@ -221,8 +255,10 @@ namespace ACE.Server.WorldObjects
         {
             if (!IsChecking) return;
 
-            // Update state
+            // Update state. Escalation leaves the joke question behind: bot detection is a genuine
+            // check, so a failure here carries the full sentence even while advanced math is enabled.
             CurrentStage = stageToStart;
+            CurrentQuestionIsAdvanced = false;
             UcmPromptStartedAtUtc = DateTime.UtcNow;
             TimeSpan timeout = TimeSpan.FromSeconds(30); // They responded too quickly at first, so... fixed shorter interval.
             Timeout = DateTime.UtcNow.Add(timeout);
@@ -345,6 +381,175 @@ namespace ACE.Server.WorldObjects
             UCMCheckFailReason.SuspiciousSpeed => "responded too fast",
             _ => "unknown reason",
         };
+
+        /// <summary>
+        /// Sent to a player who fails the advanced math question. The joke is that the question
+        /// they just failed was anything but basic.
+        /// </summary>
+        private static readonly string[] AdvancedMathInsults =
+        [
+            "You failed. That was BASIC math, friend. Basic. Sixty seconds to reflect on it.",
+            "Wrong. Somewhere a math teacher just felt a chill.",
+            "Incorrect. Perhaps stick to hitting things with a stick.",
+            "Failed. Your abacus is missing beads.",
+            "Nope. Basic numbers are clearly not for everyone.",
+            "Wrong answer. Counting to ten must be quite the adventure for you.",
+            "Incorrect. Do not fret, basic arithmetic is only most of mathematics.",
+            "Failed. A drudge could have worked that one out, and drudges cannot even count.",
+        ];
+
+        private string PickAdvancedMathInsult() => AdvancedMathInsults[RNG.Next(0, AdvancedMathInsults.Length)];
+
+        /// <summary>
+        /// Builds an integer-exact math question that almost nobody can answer in their head.
+        /// The value shown is the true answer half the time, so a blind guess stays a coin flip.
+        /// </summary>
+        /// <param name="shownIsCorrect">True when the value displayed is the true answer.</param>
+        private string BuildAdvancedQuestion(out bool shownIsCorrect)
+        {
+            long correct;
+            string expression;
+
+            switch (RNG.Next(0, 7))
+            {
+                case 0:
+                {
+                    long x = RNG.Next(1000, 10000);
+                    long y = RNG.Next(1000, 10000);
+                    correct = x * y;
+                    expression = $"{x} * {y}";
+                    break;
+                }
+                case 1:
+                {
+                    long b = RNG.Next(3, 20);
+                    int e = RNG.Next(7, 18);
+                    correct = ModPow(b, e, 1000);
+                    expression = $"{b} ^ {e} mod 1000";
+                    break;
+                }
+                case 2:
+                {
+                    int n = RNG.Next(11, 18);
+                    correct = Factorial(n);
+                    expression = $"{n}!";
+                    break;
+                }
+                case 3:
+                {
+                    int n = RNG.Next(40, 60);
+                    correct = Fibonacci(n);
+                    expression = $"the {Ordinal(n)} Fibonacci number";
+                    break;
+                }
+                case 4:
+                {
+                    int n = RNG.Next(20, 34);
+                    int k = RNG.Next(6, 13);
+                    correct = Binomial(n, k);
+                    expression = $"{n} choose {k}";
+                    break;
+                }
+                case 5:
+                {
+                    int limit = RNG.Next(150, 400);
+                    correct = SumOfPrimesBelow(limit);
+                    expression = $"the sum of all primes below {limit}";
+                    break;
+                }
+                default:
+                {
+                    long x = RNG.Next(200, 900);
+                    long y = RNG.Next(20, 90);
+                    long d = RNG.Next(3, 13);
+                    long product = x * y;
+                    long c = RNG.Next(50, 1000);
+                    c += ((product - c) % d + d) % d;    // nudge c so the division comes out exact
+                    correct = (product - c) / d;
+                    expression = $"({x} * {y} - {c}) / {d}";
+                    break;
+                }
+            }
+
+            shownIsCorrect = RNG.Next(0, 2) == 0;
+            long shown = correct;
+
+            if (!shownIsCorrect)
+            {
+                // Shift by roughly a thousandth so the wrong value keeps the same digit count and
+                // cannot be spotted by shape alone.
+                long magnitude = Math.Max(1, correct / 1000);
+                long delta = RNG.NextInt64(1, magnitude + 1);
+                shown = RNG.Next(0, 2) == 0 ? correct + delta : correct - delta;
+                if (shown < 0 || shown == correct) shown = correct + delta;
+            }
+
+            return $"Is {expression} = {shown}?";
+        }
+
+        private static long ModPow(long value, int exponent, long modulus)
+        {
+            long result = 1;
+            long b = value % modulus;
+            for (int i = 0; i < exponent; i++)
+                result = result * b % modulus;
+            return result;
+        }
+
+        private static long Factorial(int n)
+        {
+            long result = 1;
+            for (int i = 2; i <= n; i++)
+                result *= i;
+            return result;
+        }
+
+        private static long Fibonacci(int n)
+        {
+            long a = 0, b = 1;
+            for (int i = 0; i < n; i++)
+                (a, b) = (b, a + b);
+            return a;
+        }
+
+        private static long Binomial(int n, int k)
+        {
+            if (k > n - k) k = n - k;
+            long result = 1;
+            // Each step holds an exact binomial coefficient, so the division never truncates.
+            for (int i = 0; i < k; i++)
+                result = result * (n - i) / (i + 1);
+            return result;
+        }
+
+        private static long SumOfPrimesBelow(int limit)
+        {
+            long sum = 0;
+            for (int candidate = 2; candidate < limit; candidate++)
+            {
+                bool isPrime = true;
+                for (int divisor = 2; divisor * divisor <= candidate; divisor++)
+                {
+                    if (candidate % divisor != 0) continue;
+                    isPrime = false;
+                    break;
+                }
+                if (isPrime) sum += candidate;
+            }
+            return sum;
+        }
+
+        private static string Ordinal(int n)
+        {
+            if (n % 100 is >= 11 and <= 13) return $"{n}th";
+            return (n % 10) switch
+            {
+                1 => $"{n}st",
+                2 => $"{n}nd",
+                3 => $"{n}rd",
+                _ => $"{n}th",
+            };
+        }
 
         /// <summary>Audit suffix: seconds from prompt shown to outcome (UTC).</summary>
         private static string FormatUcmResponseSeconds(DateTime? promptStartedUtc)

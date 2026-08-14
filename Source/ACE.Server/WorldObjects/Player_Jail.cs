@@ -29,9 +29,10 @@ namespace ACE.Server.WorldObjects
         /// Applies tracking properties, ephemeral combat state overrides, and teleports them to the jail boundary.
         /// If the player is already in jail, this will reset their sentence duration.
         /// </summary>
-        public void SendToJail()
+        /// <param name="overrideDuration">Sentence length to serve instead of ucm_jail_duration_seconds. Used by the advanced math UCM check, which carries a much shorter sentence.</param>
+        public void SendToJail(TimeSpan? overrideDuration = null)
         {
-            TimeSpan jailTime = TimeSpan.FromSeconds(ServerConfig.ucm_jail_duration_seconds.Value);
+            TimeSpan jailTime = overrideDuration ?? TimeSpan.FromSeconds(ServerConfig.ucm_jail_duration_seconds.Value);
             DateTime releaseTime = DateTime.UtcNow.Add(jailTime);
 
             if (!PlayersJailedUntil.TryAdd(Guid.Full, releaseTime))

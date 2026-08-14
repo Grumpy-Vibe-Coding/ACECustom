@@ -55,14 +55,16 @@ namespace ACE.Server.Entity
 
                 // Attempt to enlighten. This involves checking distance and luminance.
                 // Tokens / Medallions / Sigils are not checked but should be present due to validation running first.
-                if (startPos.SquaredDistanceTo(endPos) > Player.RecallMoveThresholdSq)
+                // Horizontal distance only: vertical drift from jumping or sloped ground is not an escape,
+                // and the threshold is its own config property so it can be tuned without touching recalls.
+                if (startPos.Distance2D(endPos) > ServerConfig.enl_move_threshold.Value)
                 {
                     player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You have moved too far during the enlightenment animation!", ChatMessageType.Broadcast));
                     return;
                 }
 
                 // Re-validate since 14 seconds have passed.
-                if (!VerifyRequirements(player)) return;
+                if (!VerifyRequirements(player, isRevalidation: true)) return;
 
                 if (!SpendLuminance(player))
                 {
@@ -89,7 +91,13 @@ namespace ACE.Server.Entity
 
         }
 
-        private static bool VerifyRequirements(Player player)
+        /// <param name="isRevalidation">
+        /// True for the second pass at the end of the 14 second chain. That pass skips IsAnimating,
+        /// which is a physics flag that the ritual's own motion can still be holding as it winds down.
+        /// The concurrency guards that actually prevent a double resolve - Teleporting, TooBusyToRecall
+        /// and IsInDeathProcess - are still enforced on both passes.
+        /// </param>
+        private static bool VerifyRequirements(Player player, bool isRevalidation = false)
         {
             if (player.Level < (275 + player.Enlightenment))
             {
@@ -109,7 +117,7 @@ namespace ACE.Server.Entity
                 return false;
             }
 
-            if (player.Teleporting || player.TooBusyToRecall || player.IsAnimating || player.IsInDeathProcess)
+            if (player.Teleporting || player.TooBusyToRecall || (!isRevalidation && player.IsAnimating) || player.IsInDeathProcess)
             {
                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Cannot enlighten while teleporting or busy. Complete your movement and try again. Neener neener.", ChatMessageType.System));
                 return false;

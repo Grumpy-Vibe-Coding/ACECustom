@@ -581,6 +581,7 @@ namespace ACE.Server.Managers
         public static ConfigProperty<bool> vendor_shop_uses_generator { get; private set; } = new(false, "enables or disables vendors using generator system in addition to createlist to create artificial scarcity");
         public static ConfigProperty<bool> world_closed { get; private set; } = new(false, "enable this to startup world as a closed to players world");
         public static ConfigProperty<bool> enl_removes_society { get; private set; } = new(true, "if true, enlightenment will remove society flags");
+        public static ConfigProperty<double> enl_move_threshold { get; private set; } = new(20.0, "How far in units a player may end up from where they started the enlightenment ritual before it aborts. Measured horizontally between start and end only. Separate from the recall threshold so it can be loosened without affecting recalls.");
         public static ConfigProperty<bool> action_queue_tracking_enabled { get; private set; } = new(false, "if TRUE, enables runtime performance tracking for ActionQueue to identify slow actions. Zero overhead when disabled.");
         public static ConfigProperty<bool> siphon_lens_enabled { get; private set; } = new(false, "if TRUE, enables siphon lens drops from all creature deaths. Use /modifybool siphon_lens_enabled true to activate.");
         public static ConfigProperty<bool> enable_web_portal { get; private set; } = new(true, "If FALSE, the web portal API is disabled and all requests will return an error.");
@@ -708,6 +709,8 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> ucm_check_combat_eligibility_seconds { get; private set; } = new(60, "A player is only eligible for a UCM check if they took a combat action in the prior N seconds.");
         public static ConfigProperty<long> ucm_check_cooldown_seconds { get; private set; } = new(3600 /* 60 min */, "The minimum amount of time in seconds between random UCM checks on a single player.");
         public static ConfigProperty<double> ucm_check_spawn_chance { get; private set; } = new(0.0000641782 /* 50% per 3 hours */, "The probability (0.0 to 1.0) per second to randomly trigger a UCM check. Chance for any period is = (1 - (1 - p) ^ seconds)");
+        public static ConfigProperty<bool> ucm_advanced_math_enabled { get; private set; } = new(false, "While true, UCM checks ask an extremely hard math question instead of the simple one. Most players are expected to fail, so failures carry the shorter ucm_advanced_math_jail_seconds sentence.");
+        public static ConfigProperty<double> ucm_advanced_math_jail_seconds { get; private set; } = new(60.0, "The number of seconds a player is jailed for failing an advanced math UCM check. Does not apply to the escalated bot detection stage, which uses ucm_jail_duration_seconds.");
 
         // Discord Configuration
         public static ConfigProperty<bool> discord_mirror_enabled { get; private set; } = new(true, "Master toggle for mirroring in-game chat (General/Trade/LFG/Society) to Discord.");
