@@ -400,24 +400,58 @@ namespace ACE.Server.WorldObjects
 
         private string PickAdvancedMathInsult() => AdvancedMathInsults[RNG.Next(0, AdvancedMathInsults.Length)];
 
+        private static readonly string[] QuestionNames =
+        [
+            "John", "Bob", "Marta", "Elysa", "Torvin", "Nalani", "Gerrik", "Sila",
+        ];
+
+        private static readonly string[] QuestionPlaces =
+        [
+            "Holtburg", "Shoushi", "Yaraq", "Cragstone", "Arwic", "Rithwic", "Samsur", "Al-Arqas",
+        ];
+
         /// <summary>
-        /// Builds an integer-exact math question that almost nobody can answer in their head.
-        /// The value shown is the true answer half the time, so a blind guess stays a coin flip.
+        /// Speed pairs whose harmonic mean is a whole number, for the round trip question.
+        /// Scaled at use so the speeds read plausibly.
+        /// </summary>
+        private static readonly (long Slow, long Fast)[] HarmonicSpeedPairs =
+        [
+            (2, 6), (3, 6), (4, 12), (6, 12), (5, 20), (3, 15), (10, 15), (6, 30), (8, 24), (12, 36),
+        ];
+
+        private string PickName() => QuestionNames[RNG.Next(0, QuestionNames.Length)];
+
+        private string PickPlace() => QuestionPlaces[RNG.Next(0, QuestionPlaces.Length)];
+
+        /// <summary>Two distinct entries from the given pool.</summary>
+        private (string First, string Second) PickTwo(string[] pool)
+        {
+            int i = RNG.Next(0, pool.Length);
+            int j = RNG.Next(0, pool.Length - 1);
+            if (j >= i) j++;
+            return (pool[i], pool[j]);
+        }
+
+        /// <summary>
+        /// Builds an integer-exact question that almost nobody can answer in their head, either a
+        /// raw arithmetic one or a word problem. The value shown is the true answer half the time,
+        /// so a blind guess stays a coin flip.
         /// </summary>
         /// <param name="shownIsCorrect">True when the value displayed is the true answer.</param>
         private string BuildAdvancedQuestion(out bool shownIsCorrect)
         {
             long correct;
-            string expression;
+            string template;            // composite format string; {0} is the value being asserted
+            long? trapAnswer = null;    // the wrong answer this particular question invites, if any
 
-            switch (RNG.Next(0, 7))
+            switch (RNG.Next(0, 11))
             {
                 case 0:
                 {
                     long x = RNG.Next(1000, 10000);
                     long y = RNG.Next(1000, 10000);
                     correct = x * y;
-                    expression = $"{x} * {y}";
+                    template = $"Is {x} * {y} = {{0}}?";
                     break;
                 }
                 case 1:
@@ -425,21 +459,21 @@ namespace ACE.Server.WorldObjects
                     long b = RNG.Next(3, 20);
                     int e = RNG.Next(7, 18);
                     correct = ModPow(b, e, 1000);
-                    expression = $"{b} ^ {e} mod 1000";
+                    template = $"Is {b} ^ {e} mod 1000 = {{0}}?";
                     break;
                 }
                 case 2:
                 {
                     int n = RNG.Next(11, 18);
                     correct = Factorial(n);
-                    expression = $"{n}!";
+                    template = $"Is {n}! = {{0}}?";
                     break;
                 }
                 case 3:
                 {
                     int n = RNG.Next(40, 60);
                     correct = Fibonacci(n);
-                    expression = $"the {Ordinal(n)} Fibonacci number";
+                    template = $"Is the {Ordinal(n)} Fibonacci number = {{0}}?";
                     break;
                 }
                 case 4:
@@ -447,14 +481,75 @@ namespace ACE.Server.WorldObjects
                     int n = RNG.Next(20, 34);
                     int k = RNG.Next(6, 13);
                     correct = Binomial(n, k);
-                    expression = $"{n} choose {k}";
+                    template = $"Is {n} choose {k} = {{0}}?";
                     break;
                 }
                 case 5:
                 {
                     int limit = RNG.Next(150, 400);
                     correct = SumOfPrimesBelow(limit);
-                    expression = $"the sum of all primes below {limit}";
+                    template = $"Is the sum of all primes below {limit} = {{0}}?";
+                    break;
+                }
+                case 6:
+                {
+                    // Catch-up. Built from k and g so the meeting lands on a whole hour:
+                    // the leader covers v1 * (t + h) and the chaser v2 * t, which agree by construction.
+                    long h = RNG.Next(2, 7);        // head start, in hours
+                    long k = RNG.Next(2, 9);
+                    long g = RNG.Next(2, 10);       // difference in speed
+                    long v1 = k * g;
+                    long v2 = v1 + g;
+                    long t = h * k;                 // hours the chaser rides before catching up
+                    correct = v2 * t;
+                    trapAnswer = v1 * t;            // forgetting the head start
+                    var (leader, chaser) = PickTwo(QuestionNames);
+                    string town = PickPlace();
+                    template = $"{leader} rides out of {town} at {v1} mph. {h} hours later {chaser} sets out along the same road at {v2} mph. Is {chaser} exactly {{0}} miles from {town} at the moment {chaser} catches {leader}?";
+                    break;
+                }
+                case 7:
+                {
+                    // Work rate. Total effort is a * t1 = a * b * m, so b workers take a * m hours.
+                    long a = RNG.Next(3, 16);
+                    long b = RNG.Next(3, 16);
+                    while (b == a) b = RNG.Next(3, 16);
+                    long m = RNG.Next(2, 9);
+                    long t1 = b * m;
+                    correct = a * m;
+                    template = $"It takes {a} drudges {t1} hours to dig a tunnel. Working at that same rate, is the time for {b} drudges to dig the same tunnel {{0}} hours?";
+                    break;
+                }
+                case 8:
+                {
+                    // Closing on each other. Distance is built as t * (v1 + v2) so they meet on the hour.
+                    long t = RNG.Next(2, 10);
+                    long v1 = RNG.Next(8, 40);
+                    long v2 = RNG.Next(8, 40);
+                    long apart = t * (v1 + v2);
+                    correct = v1 * t;
+                    if (apart % 2 == 0) trapAnswer = apart / 2;   // assuming they meet in the middle
+                    var (townA, townB) = PickTwo(QuestionPlaces);
+                    template = $"{townA} and {townB} are {apart} miles apart. A caravan leaves {townA} at {v1} mph and at the same moment another leaves {townB} at {v2} mph, each bound for the other town. Is the point where they meet {{0}} miles from {townA}?";
+                    break;
+                }
+                case 9:
+                {
+                    // Round trip average speed: the harmonic mean, not the arithmetic one, and the
+                    // distance cancels out entirely. Pairs are chosen so the true answer is whole.
+                    var pair = HarmonicSpeedPairs[RNG.Next(0, HarmonicSpeedPairs.Length)];
+                    // Scale so the faster leg lands between 12 and 60 mph rather than walking pace.
+                    long maxScale = Math.Max(1, 60 / pair.Fast);
+                    long minScale = Math.Min(maxScale, Math.Max(1, (12 + pair.Fast - 1) / pair.Fast));
+                    long scale = RNG.NextInt64(minScale, maxScale + 1);
+                    long outbound = pair.Slow * scale;
+                    long inbound = pair.Fast * scale;
+                    if (RNG.Next(0, 2) == 0) (outbound, inbound) = (inbound, outbound);
+                    long miles = RNG.Next(2, 21) * 6;   // deliberate red herring; it cancels
+                    correct = 2 * outbound * inbound / (outbound + inbound);
+                    if ((outbound + inbound) % 2 == 0) trapAnswer = (outbound + inbound) / 2;
+                    string rider = PickName();
+                    template = $"{rider} rides {miles} miles out at {outbound} mph and returns along the same road at {inbound} mph. Is {rider}'s average speed for the whole journey {{0}} mph?";
                     break;
                 }
                 default:
@@ -466,7 +561,7 @@ namespace ACE.Server.WorldObjects
                     long c = RNG.Next(50, 1000);
                     c += ((product - c) % d + d) % d;    // nudge c so the division comes out exact
                     correct = (product - c) / d;
-                    expression = $"({x} * {y} - {c}) / {d}";
+                    template = $"Is ({x} * {y} - {c}) / {d} = {{0}}?";
                     break;
                 }
             }
@@ -476,15 +571,23 @@ namespace ACE.Server.WorldObjects
 
             if (!shownIsCorrect)
             {
-                // Shift by roughly a thousandth so the wrong value keeps the same digit count and
-                // cannot be spotted by shape alone.
-                long magnitude = Math.Max(1, correct / 1000);
-                long delta = RNG.NextInt64(1, magnitude + 1);
-                shown = RNG.Next(0, 2) == 0 ? correct + delta : correct - delta;
-                if (shown < 0 || shown == correct) shown = correct + delta;
+                if (trapAnswer is long trap && trap > 0 && trap != correct)
+                {
+                    // The specific mistake this question invites, which is far crueller than a shift.
+                    shown = trap;
+                }
+                else
+                {
+                    // Shift by roughly a thousandth so the wrong value keeps the same digit count and
+                    // cannot be spotted by shape alone.
+                    long magnitude = Math.Max(1, correct / 1000);
+                    long delta = RNG.NextInt64(1, magnitude + 1);
+                    shown = RNG.Next(0, 2) == 0 ? correct + delta : correct - delta;
+                    if (shown < 0 || shown == correct) shown = correct + delta;
+                }
             }
 
-            return $"Is {expression} = {shown}?";
+            return string.Format(template, shown);
         }
 
         private static long ModPow(long value, int exponent, long modulus)
