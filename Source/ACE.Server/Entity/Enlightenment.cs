@@ -55,9 +55,7 @@ namespace ACE.Server.Entity
 
                 // Attempt to enlighten. This involves checking distance and luminance.
                 // Tokens / Medallions / Sigils are not checked but should be present due to validation running first.
-                // Horizontal distance only: vertical drift from jumping or sloped ground is not an escape,
-                // and the threshold is its own config property so it can be tuned without touching recalls.
-                if (startPos.Distance2D(endPos) > ServerConfig.enl_move_threshold.Value)
+                if (startPos.SquaredDistanceTo(endPos) > Player.RecallMoveThresholdSq)
                 {
                     player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You have moved too far during the enlightenment animation!", ChatMessageType.Broadcast));
                     return;
@@ -244,29 +242,6 @@ namespace ACE.Server.Entity
             return player.SocietyRankCelhan == 1001 || player.SocietyRankEldweb == 1001 || player.SocietyRankRadblo == 1001;
         }
 
-        /// <summary>
-        /// The gate past enlightenment 10. Sums the eleven standard luminance augmentations and
-        /// wants 65.
-        ///
-        /// `>=` rather than `==`: exact equality refused anyone whose total had ever exceeded 65 and
-        /// told them to go and buy augmentations they already owned.
-        ///
-        /// DO NOT "TIGHTEN" THIS BY REQUIRING EACH AUGMENTATION TO BE PRESENT. It reads like the
-        /// obvious reading of the caller's message ("You must have all Standard Luminance
-        /// Augmentations") and it is wrong. Measured against this shard: 1,271 characters total
-        /// exactly 65, but only 521 of them hold all eleven. LumAugSkilledSpec is absent or zero on
-        /// 497 of the qualified, who reach 65 through the other ten - the eleven do not each carry a
-        /// mandatory share. Requiring all eleven would have refused 750 characters who qualify today
-        /// and have done since before this branch existed.
-        ///
-        /// The known hole is that a single inflated property can carry the sum on its own - one
-        /// character here holds LumAugCritDamageRating 200 and nothing else. Nothing in the server
-        /// writes these properties, so reaching that state needs the aug gems' own data or a GM
-        /// command, and anyone with the latter can set Enlightenment directly anyway. Closing it
-        /// properly means capping each augmentation's contribution at its real maximum, which is not
-        /// recorded anywhere in code - deriving those caps from live data would be a guess, and a
-        /// guess that runs low locks players out silently.
-        /// </summary>
         private static bool VerifyLumAugs(Player player)
         {
             var lumAugCredits = 0;
@@ -283,7 +258,7 @@ namespace ACE.Server.Entity
             lumAugCredits += player.LumAugSkilledCraft;
             lumAugCredits += player.LumAugSkilledSpec;
 
-            return lumAugCredits >= 65;
+            return lumAugCredits == 65;
         }
 
         private static void RemoveFromFellowships(Player player)
