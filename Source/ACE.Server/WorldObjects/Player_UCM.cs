@@ -389,7 +389,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         private static readonly string[] AdvancedMathInsults =
         [
-            "You failed. That was BASIC math, friend. Basic. Sixty seconds to reflect on it.",
+            "You failed. That was BASIC math, friend. Basic. Take a moment to reflect on it.",
             "Wrong. Somewhere a math teacher just felt a chill.",
             "Incorrect. Perhaps stick to hitting things with a stick.",
             "Failed. Your abacus is missing beads.",
@@ -444,6 +444,7 @@ namespace ACE.Server.WorldObjects
             long correct;
             string template;            // composite format string; {0} is the value being asserted
             long? trapAnswer = null;    // the wrong answer this particular question invites, if any
+            long? shownMaxValue = null; // upper bound the asserted value must respect, if any
 
             switch (RNG.Next(0, 11))
             {
@@ -461,6 +462,7 @@ namespace ACE.Server.WorldObjects
                     int e = RNG.Next(7, 18);
                     correct = ModPow(b, e, 1000);
                     template = $"Is {b} ^ {e} mod 1000 = {{0}}?";
+                    shownMaxValue = 999;    // a value of 1000+ could never be a mod 1000 result
                     break;
                 }
                 case 2:
@@ -585,6 +587,10 @@ namespace ACE.Server.WorldObjects
                     long delta = RNG.NextInt64(1, magnitude + 1);
                     shown = RNG.Next(0, 2) == 0 ? correct + delta : correct - delta;
                     if (shown < 0 || shown == correct) shown = correct + delta;
+                    // Keep the decoy inside the question's valid result range, so an impossible
+                    // value cannot give the answer away by shape alone.
+                    if (shownMaxValue is long max && shown > max) shown = correct - delta;
+                    if (shown < 0) shown = correct == 0 ? 1 : correct - 1;
                 }
             }
 

@@ -122,20 +122,32 @@ namespace ACE.Server.Managers
         /// </summary>
         public static void LoadFromDb()
         {
+            // Skip any key with a write still pending: the database row is older than the live
+            // value, and applying it here would revert the admin's change until the next drain.
             foreach (ConfigPropertiesBoolean c in DatabaseManager.ShardConfig.GetAllBools())
+            {
+                if (_modifiedBoolProps.ContainsKey(c.Key)) continue;
                 SetValue(c.Key, c.Value, markModified: false);
+            }
 
             foreach (ConfigPropertiesLong c in DatabaseManager.ShardConfig.GetAllLongs())
             {
+                if (_modifiedLongProps.ContainsKey(c.Key) || _modifiedDoubleProps.ContainsKey(c.Key)) continue;
                 if (!SetValue(c.Key, c.Value, markModified: false) && GetPropertyInfo<double>(c.Key) != null)
                     SetValue(c.Key, (double)c.Value, markModified: false);
             }
 
             foreach (ConfigPropertiesDouble c in DatabaseManager.ShardConfig.GetAllDoubles())
+            {
+                if (_modifiedDoubleProps.ContainsKey(c.Key)) continue;
                 SetValue(c.Key, c.Value, markModified: false);
+            }
 
             foreach (ConfigPropertiesString c in DatabaseManager.ShardConfig.GetAllStrings())
+            {
+                if (_modifiedStringProps.ContainsKey(c.Key)) continue;
                 SetValue(c.Key, c.Value, markModified: false);
+            }
         }
 
         /// <summary>

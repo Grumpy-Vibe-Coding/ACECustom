@@ -898,24 +898,13 @@ namespace ACE.Server.WorldObjects
 
             if (player != null)
             {
+                // Only boost a transfer that is actually moving something. These are unsigned
+                // magnitudes, so subtracting from a zero change wraps to ~uint.MaxValue.
                 if (srcVitalChange > 0)
-                {
                     srcVitalChange += (uint)player.EffectiveLifeAugCount;
-                }
-                else
-                {
-                    srcVitalChange -= (uint)player.EffectiveLifeAugCount;
-                }
 
                 if (destVitalChange > 0)
-                {
                     destVitalChange += (uint)player.EffectiveLifeAugCount;
-                }
-                else
-                {
-                    destVitalChange -= (uint)player.EffectiveLifeAugCount;
-                }
-
             }
 
             string srcVital, destVital;

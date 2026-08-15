@@ -90,8 +90,8 @@ namespace ACE.Server.Entity
         }
 
         /// <param name="isRevalidation">
-        /// True for the second pass at the end of the 14 second chain. That pass skips IsAnimating,
-        /// which is a physics flag that the ritual's own motion can still be holding as it winds down.
+        /// True for the second pass at the end of the 14 second chain. That pass skips the
+        /// start-only Contact check while retaining the other validation checks.
         /// The concurrency guards that actually prevent a double resolve - Teleporting, TooBusyToRecall
         /// and IsInDeathProcess - are still enforced on both passes.
         /// </param>

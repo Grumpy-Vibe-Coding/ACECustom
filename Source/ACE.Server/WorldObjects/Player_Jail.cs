@@ -27,7 +27,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Helper function to immediately apply the jail punishment to a player. 
         /// Applies tracking properties, ephemeral combat state overrides, and teleports them to the jail boundary.
-        /// If the player is already in jail, this will reset their sentence duration.
+        /// If the player is already in jail, their sentence is extended to whichever release time is later.
         /// </summary>
         /// <param name="overrideDuration">Sentence length to serve instead of ucm_jail_duration_seconds. Used by the advanced math UCM check, which carries a much shorter sentence.</param>
         /// <param name="countsTowardTotal">
@@ -42,19 +42,24 @@ namespace ACE.Server.WorldObjects
             TimeSpan jailTime = overrideDuration ?? TimeSpan.FromSeconds(ServerConfig.ucm_jail_duration_seconds.Value);
             DateTime releaseTime = DateTime.UtcNow.Add(jailTime);
 
-            if (!PlayersJailedUntil.TryAdd(Guid.Full, releaseTime))
+            // One atomic insert-or-extend. When already serving, keep whichever sentence runs
+            // longer, rather than overwriting: a second offence still resets the clock, because a
+            // fresh full-length sentence always ends later than what is left of the old one - but a
+            // SHORTER sentence can no longer cut a longer one short. Without this, a player two
+            // minutes into the full ucm_jail_duration_seconds who then failed an advanced math
+            // check would have their sentence replaced by that check's 60 seconds and walk out
+            // early, i.e. failing a second check would be a way to reduce the punishment.
+            // A single AddOrUpdate rather than TryAdd-then-AddOrUpdate, so a concurrent release
+            // between the two calls cannot re-insert the sentence while skipping the jail effects.
+            bool newlyJailed = true;
+            PlayersJailedUntil.AddOrUpdate(Guid.Full, releaseTime, (_, current) =>
             {
-                // Already serving. Keep whichever sentence runs longer, rather than overwriting.
-                // A second offence still resets the clock, because a fresh full-length sentence
-                // always ends later than what is left of the old one - but a SHORTER sentence can
-                // no longer cut a longer one short. Without this, a player two minutes into the
-                // full ucm_jail_duration_seconds who then failed an advanced math check would have
-                // their sentence replaced by that check's 60 seconds and walk out early, i.e.
-                // failing a second check would be a way to reduce the punishment.
-                PlayersJailedUntil.AddOrUpdate(Guid.Full, releaseTime,
-                    (_, current) => current > releaseTime ? current : releaseTime);
+                newlyJailed = false;
+                return current > releaseTime ? current : releaseTime;
+            });
+
+            if (!newlyJailed)
                 return;
-            }
 
             // Apply jail effects (newly jailed).
             if (countsTowardTotal)

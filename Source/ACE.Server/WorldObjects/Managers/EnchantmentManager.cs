@@ -425,7 +425,15 @@ namespace ACE.Server.WorldObjects.Managers
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float GetLifeAugProtectRating(long LifeAugAmt)
         {
+            // Beyond the last band every point adds the same 0.00001f, so the tail is closed-form.
+            // This runs on damage-resistance checks via AugmentationLevelWhenCast, and charm-driven
+            // effective counts are not bounded by the purchase caps - the loop must not scale with them.
             float bonus = 0;
+            if (LifeAugAmt > 225)
+            {
+                bonus += (LifeAugAmt - 225) * 0.0000100f;
+                LifeAugAmt = 225;
+            }
             for (int x = 0; x < LifeAugAmt; x++)
             {
                 if (x < 10)
@@ -479,7 +487,13 @@ namespace ACE.Server.WorldObjects.Managers
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float GetItemAugPercentageRating(long itemAugAmt)
         {
+            // Beyond the last band every point adds the same 0.00100f, so the tail is closed-form.
             float bonus = 0;
+            if (itemAugAmt > 450)
+            {
+                bonus += (itemAugAmt - 450) * 0.00100f;
+                itemAugAmt = 450;
+            }
             for (int x = 0; x < itemAugAmt; x++)
             {
                 if (x < 100)

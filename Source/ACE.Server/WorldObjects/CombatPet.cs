@@ -1561,7 +1561,14 @@ namespace ACE.Server.WorldObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static float GetItemAugPercentageRating(long itemAugAmt)
         {
+            // Beyond the last band every point adds the same 0.00100f, so the tail is closed-form
+            // and the loop cannot scale with uncapped charm-driven effective counts.
             float bonus = 0;
+            if (itemAugAmt > 450)
+            {
+                bonus += (itemAugAmt - 450) * 0.00100f;
+                itemAugAmt = 450;
+            }
             for (int x = 0; x < itemAugAmt; x++)
             {
                 if (x < 100)
@@ -1609,7 +1616,14 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public static float GetLifeAugProtectRating(long lifeAugAmt)
         {
+            // Beyond the last band every point adds the same 0.00001f, so the tail is closed-form
+            // and the loop cannot scale with uncapped charm-driven effective counts.
             float bonus = 0;
+            if (lifeAugAmt > 225)
+            {
+                bonus += (lifeAugAmt - 225) * 0.0000100f;
+                lifeAugAmt = 225;
+            }
             for (int x = 0; x < lifeAugAmt; x++)
             {
                 if (x < 10)
