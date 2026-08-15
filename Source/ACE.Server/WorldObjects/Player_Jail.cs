@@ -44,7 +44,15 @@ namespace ACE.Server.WorldObjects
 
             if (!PlayersJailedUntil.TryAdd(Guid.Full, releaseTime))
             {
-                PlayersJailedUntil[Guid.Full] = releaseTime;
+                // Already serving. Keep whichever sentence runs longer, rather than overwriting.
+                // A second offence still resets the clock, because a fresh full-length sentence
+                // always ends later than what is left of the old one - but a SHORTER sentence can
+                // no longer cut a longer one short. Without this, a player two minutes into the
+                // full ucm_jail_duration_seconds who then failed an advanced math check would have
+                // their sentence replaced by that check's 60 seconds and walk out early, i.e.
+                // failing a second check would be a way to reduce the punishment.
+                PlayersJailedUntil.AddOrUpdate(Guid.Full, releaseTime,
+                    (_, current) => current > releaseTime ? current : releaseTime);
                 return;
             }
 

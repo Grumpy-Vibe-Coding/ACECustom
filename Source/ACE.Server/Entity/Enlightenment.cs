@@ -244,27 +244,52 @@ namespace ACE.Server.Entity
             return player.SocietyRankCelhan == 1001 || player.SocietyRankEldweb == 1001 || player.SocietyRankRadblo == 1001;
         }
 
+        /// <summary>
+        /// The gate past enlightenment 10: every standard luminance augmentation, which is exactly
+        /// what the caller's failure message says it wants.
+        ///
+        /// Testing the SUM alone does not say that. Summing to 65 was the original test, and it was
+        /// brittle in one direction and blind in the other:
+        ///
+        ///   * `== 65` refused anyone whose total had ever exceeded 65, and told them to go and buy
+        ///     augmentations they already owned.
+        ///   * `>= 65` let a single inflated augmentation stand in for the other ten. On this shard
+        ///     one character carries LumAugCritDamageRating 200 and nothing else, and would pass a
+        ///     sum test while owning one of the eleven; two more clear 65 with LumAugSkilledSpec
+        ///     missing entirely. Nothing in the server writes these properties - they come from the
+        ///     aug gems' own data, or from a GM - so an inflated value is not hypothetical.
+        ///
+        /// Requiring each one to be present says the intended thing directly, and the sum stays as
+        /// a floor so the check still means "all of them, fully bought" rather than "one point in
+        /// each".
+        /// </summary>
         private static bool VerifyLumAugs(Player player)
         {
+            var lumAugs = new[]
+            {
+                player.LumAugAllSkills,
+                player.LumAugSurgeChanceRating,
+                player.LumAugCritDamageRating,
+                player.LumAugCritReductionRating,
+                player.LumAugDamageRating,
+                player.LumAugDamageReductionRating,
+                player.LumAugItemManaUsage,
+                player.LumAugItemManaGain,
+                player.LumAugHealingRating,
+                player.LumAugSkilledCraft,
+                player.LumAugSkilledSpec,
+            };
+
+            foreach (var aug in lumAugs)
+            {
+                if (aug <= 0)
+                    return false;
+            }
+
             var lumAugCredits = 0;
+            foreach (var aug in lumAugs)
+                lumAugCredits += aug;
 
-            lumAugCredits += player.LumAugAllSkills;
-            lumAugCredits += player.LumAugSurgeChanceRating;
-            lumAugCredits += player.LumAugCritDamageRating;
-            lumAugCredits += player.LumAugCritReductionRating;
-            lumAugCredits += player.LumAugDamageRating;
-            lumAugCredits += player.LumAugDamageReductionRating;
-            lumAugCredits += player.LumAugItemManaUsage;
-            lumAugCredits += player.LumAugItemManaGain;
-            lumAugCredits += player.LumAugHealingRating;
-            lumAugCredits += player.LumAugSkilledCraft;
-            lumAugCredits += player.LumAugSkilledSpec;
-
-            // >= rather than ==. Exact equality locked out anyone who ever exceeded the total, and
-            // told them to go and buy augmentations they already had. Nothing grants more than 65
-            // today - the custom school charms deliberately add nothing to the capped aug stats -
-            // but the failure mode is silent and confusing, and the gate only ever meant "has all
-            // of them".
             return lumAugCredits >= 65;
         }
 
