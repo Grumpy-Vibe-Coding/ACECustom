@@ -555,27 +555,30 @@ namespace ACE.Server.Command.Handlers
         // ═════════════════ weapon forging (test items via the normal item pipeline) ═════════════════
         // One representative base weenie per scaling family (all verified in the world DB 08-01:
         // W_WeaponType + MultiStrike/thrust flags resolve to exactly the intended GetFamilyKey).
-        private static readonly (string Key, uint Wcid, string CleanName)[] ForgeClasses =
+        // TWType = the loot pipeline's weapon type for this class, used by the tier-10 forge
+        // path to run the bench weenie through the SAME mutation scripts a real T10 drop rolls
+        // (owner 2026-08-15: T10 forge output must match the existing T10 loot table range).
+        private static readonly (string Key, uint Wcid, string CleanName, ACE.Server.Factories.Enum.TreasureWeaponType TWType)[] ForgeClasses =
         {
-            ("sword",     30566, "Sword"),      // swordsabra — single strike
-            ("sword_ms",   6853, "Rapier"),     // swordrapier — multi-strike
-            ("dagger",    30596, "Poniard"),    // daggerponiard — single strike
-            ("dagger_ms",  3779, "Dagger"),     // daggerelectric — multi-strike
-            ("axe",         301, "Axe"),        // axebattle
-            ("mace",        331, "Mace"),       // mace (jitte folds into this family)
-            ("spear",       348, "Spear"),      // spear
-            ("staff",       338, "Staff"),      // quarterstaff
+            ("sword",     30566, "Sword", ACE.Server.Factories.Enum.TreasureWeaponType.Sword),      // swordsabra — single strike
+            ("sword_ms",   6853, "Rapier", ACE.Server.Factories.Enum.TreasureWeaponType.SwordMS),   // swordrapier — multi-strike
+            ("dagger",    30596, "Poniard", ACE.Server.Factories.Enum.TreasureWeaponType.Dagger),   // daggerponiard — single strike
+            ("dagger_ms",  3779, "Dagger", ACE.Server.Factories.Enum.TreasureWeaponType.DaggerMS),  // daggerelectric — multi-strike
+            ("axe",         301, "Axe", ACE.Server.Factories.Enum.TreasureWeaponType.Axe),          // axebattle
+            ("mace",        331, "Mace", ACE.Server.Factories.Enum.TreasureWeaponType.Mace),        // mace (jitte folds into this family)
+            ("spear",       348, "Spear", ACE.Server.Factories.Enum.TreasureWeaponType.Spear),      // spear
+            ("staff",       338, "Staff", ACE.Server.Factories.Enum.TreasureWeaponType.Staff),      // quarterstaff
             // FINESSE unarmed (owner 2026-08-11): the old pick (30612 knuckleselectric) was a
             // LightWeapons weenie, so a finesse-spec test char could not swing it. 31784 is
             // WeaponSkill 46 with the SAME weapon type / attack type / base damage, so it resolves
             // to the identical "unarmed" scaling family - a pure skill swap.
-            ("ua",        31784, "Claw"),       // ace31784-claw — W_WeaponType Unarmed, Finesse
-            ("cleaver",   40618, "Spadone"),    // spadone — 2H slash line
-            ("spear2h",   40818, "Corsesca"),   // corsesca — 2H thrust line
-            ("bow",       29243, "Bow"),        // bowpiercing
-            ("crossbow",  29250, "Crossbow"),   // crossbowpiercing
-            ("atlatl",    29254, "Atlatl"),     // atlatlelectric
-            ("wand",      29265, "Sceptre"),    // wandslashing (gets EDM 1.5)
+            ("ua",        31784, "Claw", ACE.Server.Factories.Enum.TreasureWeaponType.Unarmed),         // ace31784-claw — W_WeaponType Unarmed, Finesse
+            ("cleaver",   40618, "Spadone", ACE.Server.Factories.Enum.TreasureWeaponType.TwoHandedSword),  // spadone — 2H slash line
+            ("spear2h",   40818, "Corsesca", ACE.Server.Factories.Enum.TreasureWeaponType.TwoHandedSpear), // corsesca — 2H thrust line
+            ("bow",       29243, "Bow", ACE.Server.Factories.Enum.TreasureWeaponType.Bow),              // bowpiercing
+            ("crossbow",  29250, "Crossbow", ACE.Server.Factories.Enum.TreasureWeaponType.Crossbow),    // crossbowpiercing
+            ("atlatl",    29254, "Atlatl", ACE.Server.Factories.Enum.TreasureWeaponType.Atlatl),        // atlatlelectric
+            ("wand",      29265, "Sceptre", ACE.Server.Factories.Enum.TreasureWeaponType.Caster),       // wandslashing (gets EDM 1.5)
         };
 
         private static DamageType? ParseElement(string s)
@@ -880,9 +883,29 @@ namespace ACE.Server.Command.Handlers
         }
 
         private static string ForgeWeapon(ACE.Server.WorldObjects.Player player, uint wcid, string cleanName,
-            int quality, int tier, DamageType? element, ForgeCards cards = null, Container bag = null)
+            int quality, int tier, DamageType? element,
+            ACE.Server.Factories.Enum.TreasureWeaponType twType = ACE.Server.Factories.Enum.TreasureWeaponType.Undef,
+            ForgeCards cards = null, Container bag = null)
         {
-            var wo = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(wcid);
+            WorldObject wo;
+            if (tier == 10 && twType != ACE.Server.Factories.Enum.TreasureWeaponType.Undef)
+            {
+                // T10 = the SAME range as the existing tier-10 loot table (owner 2026-08-15). The
+                // bench weenie runs through the real loot pipeline with a synthetic tier-10
+                // profile, so its damage rolls from the same mutation-script ranges as a live T10
+                // drop. It also gets NO quality/tier stamp below - a real T10 drop carries none,
+                // so a forged one gets no aug-scaling term and the quality arg is ignored here.
+                var t10Profile = new ACE.Database.Models.World.TreasureDeath { TreasureType = 0, Tier = 10, LootQualityMod = 0 };
+                var roll = new ACE.Server.Factories.Entity.TreasureRoll(ACE.Server.Factories.Enum.TreasureItemType_Orig.Weapon)
+                {
+                    Wcid = (ACE.Server.Factories.Enum.WeenieClassName)wcid,
+                    WeaponType = twType,
+                };
+                wo = ACE.Server.Factories.LootGenerationFactory.CreateAndMutateWcid(t10Profile, roll, false);
+            }
+            else
+                wo = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(wcid);
+
             if (wo == null)
                 return $"forge: could not create wcid {wcid}";
 
@@ -890,12 +913,15 @@ namespace ACE.Server.Command.Handlers
             // T10 = the basic tier, no aug wield gate (same rule as /asforge armor). A minwield-0
             // tier row would NOT give that: ApplyT11WieldRequirement falls back to the global gate.
             if (tier >= 11)
+            {
                 ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
-            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
-            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
+                wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
+                wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
+            }
 
-            // representative caster: real T11 wands carry an elemental multiplier
-            if (wo is ACE.Server.WorldObjects.Caster)
+            // representative caster: real T11 wands carry an elemental multiplier. At T10 the
+            // loot mutation already authored the wand's real table value - leave it alone.
+            if (wo is ACE.Server.WorldObjects.Caster && tier >= 11)
                 wo.ElementalDamageMod = 1.5;
 
             if (element != null)
@@ -917,10 +943,10 @@ namespace ACE.Server.Command.Handlers
                 };
                 wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.UiEffects, (int)uiEffect);
 
-                wo.Name = $"{element.Value} {cleanName} (Test q{quality})";
+                wo.Name = tier == 10 ? $"{element.Value} {cleanName} (Test T10)" : $"{element.Value} {cleanName} (Test q{quality})";
             }
             else
-                wo.Name = $"{wo.Name} (Test q{quality})";
+                wo.Name = tier == 10 ? $"{wo.Name} (Test T10)" : $"{wo.Name} (Test q{quality})";
 
             // Provenance, mirroring real drops' "Dropped by / Location" block (owner 2026-08-01):
             // who forged it + the tier it was stamped at. AppraiseInfo's per-viewer bonus line
@@ -943,9 +969,11 @@ namespace ACE.Server.Command.Handlers
                 return $"forge: could not place {wo.Name} in inventory (full?)";
             }
 
+            var gradeNote = tier == 10
+                ? "T10 loot table range, no aug scaling"
+                : $"grade {WeaponScalingManager.GetQualityGrade(quality)} ({quality}/1000), tier {tier}";
             return $"forged: {wo.Name} -> family {WeaponScalingCombat.GetFamilyKey(wo) ?? "none"}, " +
-                   $"grade {WeaponScalingManager.GetQualityGrade(quality)} ({quality}/1000), tier {tier}" +
-                   (placed ? " [" + ForgePackName + "]" : "") + cardNote;
+                   gradeNote + (placed ? " [" + ForgePackName + "]" : "") + cardNote;
         }
 
         [CommandHandler("wstestkit", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
@@ -977,7 +1005,7 @@ namespace ACE.Server.Command.Handlers
             foreach (var key in new[] { "ua", "bow", "sword", "wand" })
             {
                 var cls = ForgeClasses.First(c => c.Key == key);
-                Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, 11, element));
+                Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, 11, element, cls.TWType));
             }
         }
 
@@ -985,7 +1013,7 @@ namespace ACE.Server.Command.Handlers
         /// class at any quality/element/tier, minted live.</summary>
         [CommandHandler("wsforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges one Weapon Scaling test weapon of the given class (or a full set with 'all').",
-            "<class|all> [quality 0-1000, default 500] [element] [tier 10-25, default 11; 10 = basic, no wield gate] [cards:key=val,key,...]\n" +
+            "<class|all> [quality 0-1000, default 500] [element] [tier 10-25, default 11; 10 = T10 loot-table range, unscaled + no wield gate, quality ignored] [cards:key=val,key,...]\n" +
             "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand\n" +
             "cards: proc[=spellId] procrate=0-1 (Cast on Strike; no id = max-level bolt matching the element) rend (matching rend imbue)\n" +
             "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
@@ -1061,11 +1089,11 @@ namespace ACE.Server.Command.Handlers
             {
                 // one of every class at the same quality/element/tier (owner 2026-08-01)
                 foreach (var c in ForgeClasses)
-                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element, cards, bag));
+                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element, c.TWType, cards, bag));
                 return;
             }
 
-            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element, cards, bag));
+            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element, cls.TWType, cards, bag));
         }
     }
 }

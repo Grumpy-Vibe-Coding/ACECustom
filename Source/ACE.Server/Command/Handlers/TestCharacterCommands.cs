@@ -734,8 +734,17 @@ namespace ACE.Server.Command.Handlers
                             break;
                         case "aetheria": SpawnAetherias(player); Msg("extra: aetheria set spawned (skips owned pieces)"); break;
                         case "bags":     MintBoosterPacks(player, Msg); break;
+                        case "growthcharms":
+                            // The five growth charms (aug-caps lane). Items only - the counters
+                            // that actually scale damage are set via /testchar set charms.
+                            Mint(777700030, "Charm of the Triune Weave");
+                            Mint(777700051, "Charm of the Battlemage's Wrath");
+                            Mint(777700056, "Charm of the Nether Veil");
+                            Mint(777700061, "Charm of Crashing Steel");
+                            Mint(777700066, "Charm of the True Shot");
+                            break;
                         default:
-                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|arrow|dispel|enlcoins|mmds|scarabs|aetheria|bags)");
+                            Msg($"testchar extra: unknown '{key}' (healkit|stamkit|manakit|lockpick|ivory|arrow|dispel|enlcoins|mmds|scarabs|aetheria|bags|growthcharms)");
                             return;
                     }
                 }
@@ -746,7 +755,7 @@ namespace ACE.Server.Command.Handlers
             // set <what> <values>
             if (parameters.Length < 3)
             {
-                Msg("usage: /testchar set attrs|vitals|level|enl|augs|raugs <values>");
+                Msg("usage: /testchar set attrs|vitals|level|enl|augs|charms|raugs <values>");
                 return;
             }
             var what = parameters[1].ToLowerInvariant();
@@ -826,6 +835,27 @@ namespace ACE.Server.Command.Handlers
                     Msg("set augs: " + arg);
                     return;
                 }
+                case "charms":
+                {
+                    // Growth charm counters (PropertyInt64 50000-50004). These are what the
+                    // Effective*AugCount accessors add on top of the raw lum augs - the charm
+                    // ITEMS (extra growthcharms) grant nothing without these.
+                    if (!ParseCsv(arg, 5, out var v))
+                    {
+                        Msg("set charms: need 5 csv values (weave,wrath,nether,steel,trueshot)");
+                        return;
+                    }
+                    var props = new[] { PropertyInt64.TriuneWeaveCount, PropertyInt64.BattlemagesWrathCharmCount,
+                                        PropertyInt64.NetherVeilCharmCount, PropertyInt64.CrashingSteelCharmCount,
+                                        PropertyInt64.TrueShotCharmCount };
+                    for (int i = 0; i < 5; i++)
+                    {
+                        player.SetProperty(props[i], v[i]);
+                        player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, props[i], v[i]));
+                    }
+                    Msg("set charms: " + arg);
+                    return;
+                }
                 case "raugs":
                 {
                     if (arg.Equals("max", StringComparison.OrdinalIgnoreCase) || arg.Equals("zero", StringComparison.OrdinalIgnoreCase))
@@ -863,7 +893,7 @@ namespace ACE.Server.Command.Handlers
                     return;
                 }
                 default:
-                    Msg("usage: /testchar set attrs|vitals|level|enl|augs|raugs <values>");
+                    Msg("usage: /testchar set attrs|vitals|level|enl|augs|charms|raugs <values>");
                     return;
             }
         }
