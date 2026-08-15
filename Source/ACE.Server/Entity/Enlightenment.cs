@@ -245,50 +245,43 @@ namespace ACE.Server.Entity
         }
 
         /// <summary>
-        /// The gate past enlightenment 10: every standard luminance augmentation, which is exactly
-        /// what the caller's failure message says it wants.
+        /// The gate past enlightenment 10. Sums the eleven standard luminance augmentations and
+        /// wants 65.
         ///
-        /// Testing the SUM alone does not say that. Summing to 65 was the original test, and it was
-        /// brittle in one direction and blind in the other:
+        /// `>=` rather than `==`: exact equality refused anyone whose total had ever exceeded 65 and
+        /// told them to go and buy augmentations they already owned.
         ///
-        ///   * `== 65` refused anyone whose total had ever exceeded 65, and told them to go and buy
-        ///     augmentations they already owned.
-        ///   * `>= 65` let a single inflated augmentation stand in for the other ten. On this shard
-        ///     one character carries LumAugCritDamageRating 200 and nothing else, and would pass a
-        ///     sum test while owning one of the eleven; two more clear 65 with LumAugSkilledSpec
-        ///     missing entirely. Nothing in the server writes these properties - they come from the
-        ///     aug gems' own data, or from a GM - so an inflated value is not hypothetical.
+        /// DO NOT "TIGHTEN" THIS BY REQUIRING EACH AUGMENTATION TO BE PRESENT. It reads like the
+        /// obvious reading of the caller's message ("You must have all Standard Luminance
+        /// Augmentations") and it is wrong. Measured against this shard: 1,271 characters total
+        /// exactly 65, but only 521 of them hold all eleven. LumAugSkilledSpec is absent or zero on
+        /// 497 of the qualified, who reach 65 through the other ten - the eleven do not each carry a
+        /// mandatory share. Requiring all eleven would have refused 750 characters who qualify today
+        /// and have done since before this branch existed.
         ///
-        /// Requiring each one to be present says the intended thing directly, and the sum stays as
-        /// a floor so the check still means "all of them, fully bought" rather than "one point in
-        /// each".
+        /// The known hole is that a single inflated property can carry the sum on its own - one
+        /// character here holds LumAugCritDamageRating 200 and nothing else. Nothing in the server
+        /// writes these properties, so reaching that state needs the aug gems' own data or a GM
+        /// command, and anyone with the latter can set Enlightenment directly anyway. Closing it
+        /// properly means capping each augmentation's contribution at its real maximum, which is not
+        /// recorded anywhere in code - deriving those caps from live data would be a guess, and a
+        /// guess that runs low locks players out silently.
         /// </summary>
         private static bool VerifyLumAugs(Player player)
         {
-            var lumAugs = new[]
-            {
-                player.LumAugAllSkills,
-                player.LumAugSurgeChanceRating,
-                player.LumAugCritDamageRating,
-                player.LumAugCritReductionRating,
-                player.LumAugDamageRating,
-                player.LumAugDamageReductionRating,
-                player.LumAugItemManaUsage,
-                player.LumAugItemManaGain,
-                player.LumAugHealingRating,
-                player.LumAugSkilledCraft,
-                player.LumAugSkilledSpec,
-            };
-
-            foreach (var aug in lumAugs)
-            {
-                if (aug <= 0)
-                    return false;
-            }
-
             var lumAugCredits = 0;
-            foreach (var aug in lumAugs)
-                lumAugCredits += aug;
+
+            lumAugCredits += player.LumAugAllSkills;
+            lumAugCredits += player.LumAugSurgeChanceRating;
+            lumAugCredits += player.LumAugCritDamageRating;
+            lumAugCredits += player.LumAugCritReductionRating;
+            lumAugCredits += player.LumAugDamageRating;
+            lumAugCredits += player.LumAugDamageReductionRating;
+            lumAugCredits += player.LumAugItemManaUsage;
+            lumAugCredits += player.LumAugItemManaGain;
+            lumAugCredits += player.LumAugHealingRating;
+            lumAugCredits += player.LumAugSkilledCraft;
+            lumAugCredits += player.LumAugSkilledSpec;
 
             return lumAugCredits >= 65;
         }
