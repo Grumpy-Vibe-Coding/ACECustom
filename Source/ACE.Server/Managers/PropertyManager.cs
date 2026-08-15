@@ -122,20 +122,32 @@ namespace ACE.Server.Managers
         /// </summary>
         public static void LoadFromDb()
         {
+            // Skip any key with a write still pending: the database row is older than the live
+            // value, and applying it here would revert the admin's change until the next drain.
             foreach (ConfigPropertiesBoolean c in DatabaseManager.ShardConfig.GetAllBools())
+            {
+                if (_modifiedBoolProps.ContainsKey(c.Key)) continue;
                 SetValue(c.Key, c.Value, markModified: false);
+            }
 
             foreach (ConfigPropertiesLong c in DatabaseManager.ShardConfig.GetAllLongs())
             {
+                if (_modifiedLongProps.ContainsKey(c.Key) || _modifiedDoubleProps.ContainsKey(c.Key)) continue;
                 if (!SetValue(c.Key, c.Value, markModified: false) && GetPropertyInfo<double>(c.Key) != null)
                     SetValue(c.Key, (double)c.Value, markModified: false);
             }
 
             foreach (ConfigPropertiesDouble c in DatabaseManager.ShardConfig.GetAllDoubles())
+            {
+                if (_modifiedDoubleProps.ContainsKey(c.Key)) continue;
                 SetValue(c.Key, c.Value, markModified: false);
+            }
 
             foreach (ConfigPropertiesString c in DatabaseManager.ShardConfig.GetAllStrings())
+            {
+                if (_modifiedStringProps.ContainsKey(c.Key)) continue;
                 SetValue(c.Key, c.Value, markModified: false);
+            }
         }
 
         /// <summary>
@@ -784,6 +796,8 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> ucm_check_combat_eligibility_seconds { get; private set; } = new(60, "A player is only eligible for a UCM check if they took a combat action in the prior N seconds.");
         public static ConfigProperty<long> ucm_check_cooldown_seconds { get; private set; } = new(3600 /* 60 min */, "The minimum amount of time in seconds between random UCM checks on a single player.");
         public static ConfigProperty<double> ucm_check_spawn_chance { get; private set; } = new(0.0000641782 /* 50% per 3 hours */, "The probability (0.0 to 1.0) per second to randomly trigger a UCM check. Chance for any period is = (1 - (1 - p) ^ seconds)");
+        public static ConfigProperty<bool> ucm_advanced_math_enabled { get; private set; } = new(false, "While true, UCM checks ask an extremely hard math question instead of the simple one. Most players are expected to fail, so failures carry the shorter ucm_advanced_math_jail_seconds sentence.");
+        public static ConfigProperty<double> ucm_advanced_math_jail_seconds { get; private set; } = new(60.0, "The number of seconds a player is jailed for failing an advanced math UCM check. Does not apply to the escalated bot detection stage, which uses ucm_jail_duration_seconds.");
 
         // Discord Configuration
         public static ConfigProperty<bool> discord_mirror_enabled { get; private set; } = new(true, "Master toggle for mirroring in-game chat (General/Trade/LFG/Society) to Discord.");

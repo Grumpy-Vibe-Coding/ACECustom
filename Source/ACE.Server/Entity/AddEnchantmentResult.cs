@@ -64,19 +64,19 @@ namespace ACE.Server.Entity
                 switch (spell.School)
                 {
                     case ACE.Entity.Enum.MagicSchool.WarMagic:
-                        augmentLevel = creature.LuminanceAugmentWarCount ?? 0;
+                        augmentLevel = creature.EffectiveWarAugCount;
                         break;
                     case ACE.Entity.Enum.MagicSchool.LifeMagic:
-                        augmentLevel = creature.LuminanceAugmentLifeCount ?? 0;
+                        augmentLevel = creature.EffectiveLifeAugCount;
                         break;
                     case ACE.Entity.Enum.MagicSchool.ItemEnchantment:
-                        augmentLevel = creature.LuminanceAugmentItemCount ?? 0;
+                        augmentLevel = creature.EffectiveItemAugCount;
                         break;
                     case ACE.Entity.Enum.MagicSchool.CreatureEnchantment:
-                        augmentLevel = creature.LuminanceAugmentCreatureCount ?? 0;
+                        augmentLevel = creature.EffectiveCreatureAugCount;
                         break;
                     case ACE.Entity.Enum.MagicSchool.VoidMagic:
-                        augmentLevel = creature.LuminanceAugmentVoidCount ?? 0;
+                        augmentLevel = creature.EffectiveVoidAugCount;
                         break;
                     case ACE.Entity.Enum.MagicSchool.None:
                     default:

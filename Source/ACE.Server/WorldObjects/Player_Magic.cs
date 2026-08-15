@@ -1947,8 +1947,18 @@ namespace ACE.Server.WorldObjects
                     {
                         // Luminance Life augment — added AFTER the crit bonus, matching SpellProjectile.
                         // Life projectiles get no skill-based damage bonus.
-                        if (LuminanceAugmentLifeCount.HasValue && LuminanceAugmentLifeCount >= 1)
-                            lifeMagicDamage += LuminanceAugmentLifeCount.Value;
+                        //
+                        // EffectiveLifeAugCount, not the raw count: SpellProjectile.CalculateDamage -
+                        // the path this whole method exists to mirror - reads the effective count, so
+                        // reading the raw one here would put a Triune Weave holder's ring damage back
+                        // out of step with their projectile damage. That is the same class of drift
+                        // this method was written to fix.
+                        //
+                        // The War and Void branches below stay RAW on purpose: the Triune Weave only
+                        // grants Creature, Item and Life, and the school charms deliberately add
+                        // nothing to the capped War/Void stats.
+                        if (EffectiveLifeAugCount >= 1)
+                            lifeMagicDamage += EffectiveLifeAugCount;
                     }
                     else
                     {
@@ -1961,15 +1971,17 @@ namespace ACE.Server.WorldObjects
                         // Luminance augment — the pool MUST match the spell's school.  This previously
                         // added the War count unconditionally, which fed a caster's War pool into Void
                         // rings (e.g. Clouded Soul) and dropped their Void pool entirely.
+                        //
+                        // Effective counts, matching SpellProjectile: gems plus the school's charm.
                         if (spell.School == MagicSchool.WarMagic)
                         {
-                            if (LuminanceAugmentWarCount.HasValue && LuminanceAugmentWarCount >= 1)
-                                baseDamage += LuminanceAugmentWarCount.Value;
+                            if (EffectiveWarAugCount >= 1)
+                                baseDamage += EffectiveWarAugCount;
                         }
                         else if (spell.School == MagicSchool.VoidMagic)
                         {
-                            if (LuminanceAugmentVoidCount.HasValue && LuminanceAugmentVoidCount >= 1)
-                                baseDamage += LuminanceAugmentVoidCount.Value;
+                            if (EffectiveVoidAugCount >= 1)
+                                baseDamage += EffectiveVoidAugCount;
                         }
                     }
 

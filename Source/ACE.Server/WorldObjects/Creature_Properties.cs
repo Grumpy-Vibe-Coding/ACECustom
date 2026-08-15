@@ -451,6 +451,40 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyInt64.LumAugLifeCount); else SetProperty(PropertyInt64.LumAugLifeCount, value.Value); }
         }
 
+        public long? TriuneWeaveCount
+        {
+            get => GetProperty(PropertyInt64.TriuneWeaveCount) ?? 0;
+            set { if (!value.HasValue) RemoveProperty(PropertyInt64.TriuneWeaveCount); else SetProperty(PropertyInt64.TriuneWeaveCount, value.Value); }
+        }
+
+        // ── Effective augmentation counts: purchased gems PLUS the growth charms ────────────────
+        //
+        // Passing the 6,000 and 4,000 caps is the POINT of the charms - the caps bound what
+        // luminance can buy, and a charm is a separate, uncapped path bought with Prestige Coins.
+        //
+        // Use these at bonus-application sites ONLY. Gem purchases, the caps themselves, portal
+        // gates, aggro totals and the raw /aug lines all read the underlying LumAug counts, so a
+        // charm can never eat a player's purchase headroom or unlock content gated on bought augs.
+        //
+        // The Triune Weave feeds three schools at once; each school charm feeds only its own.
+        public long EffectiveCreatureAugCount => (LuminanceAugmentCreatureCount ?? 0) + (TriuneWeaveCount ?? 0);
+
+        public long EffectiveItemAugCount => (LuminanceAugmentItemCount ?? 0) + (TriuneWeaveCount ?? 0);
+
+        public long EffectiveLifeAugCount => (LuminanceAugmentLifeCount ?? 0) + (TriuneWeaveCount ?? 0);
+
+        public long EffectiveWarAugCount =>
+            (LuminanceAugmentWarCount ?? 0) + (GetProperty(PropertyInt64.BattlemagesWrathCharmCount) ?? 0);
+
+        public long EffectiveVoidAugCount =>
+            (LuminanceAugmentVoidCount ?? 0) + (GetProperty(PropertyInt64.NetherVeilCharmCount) ?? 0);
+
+        public long EffectiveMeleeAugCount =>
+            (LuminanceAugmentMeleeCount ?? 0) + (GetProperty(PropertyInt64.CrashingSteelCharmCount) ?? 0);
+
+        public long EffectiveMissileAugCount =>
+            (LuminanceAugmentMissileCount ?? 0) + (GetProperty(PropertyInt64.TrueShotCharmCount) ?? 0);
+
         public long? LuminanceAugmentVoidCount
         {
             get => GetProperty(PropertyInt64.LumAugVoidCount) ?? 0;
