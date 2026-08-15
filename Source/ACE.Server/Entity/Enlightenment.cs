@@ -117,9 +117,35 @@ namespace ACE.Server.Entity
                 return false;
             }
 
-            if (player.Teleporting || player.TooBusyToRecall || (!isRevalidation && player.IsAnimating) || player.IsInDeathProcess)
+            if (player.Teleporting || player.TooBusyToRecall || player.IsInDeathProcess)
             {
                 player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Cannot enlighten while teleporting or busy. Complete your movement and try again. Neener neener.", ChatMessageType.System));
+                return false;
+            }
+
+            // Both feet on the ground. This replaces an IsAnimating check that was wrong in BOTH
+            // directions:
+            //
+            //   * It did not stop what it looked like it was for. Jump, let the jump animation
+            //     finish, answer the confirmation while still falling, and the ritual ran in
+            //     mid-air - because falling is not animating. The 14 second chain is a blind timer
+            //     and never verifies the motion played, so the animation was skipped entirely.
+            //   * It DID refuse a character standing perfectly still whose motion flag had gone
+            //     stale. Since the command handler does not check IsAnimating, the server raised
+            //     the confirmation, took the player's Yes, and only then refused - on a flag it had
+            //     never tested before asking.
+            //
+            // Contact rather than OnWalkable on purpose. Contact means "touching something", which
+            // is the exact opposite of airborne. OnWalkable additionally fails on ground too steep
+            // to stand on, and refusing someone for standing on a slope is precisely the kind of
+            // over-strictness being removed here.
+            //
+            // Start only. Jumping mid-ritual is already answered by the distance check at the end,
+            // and re-testing at re-validation would just move the failure to 14 seconds in.
+            if (!isRevalidation && player.PhysicsObj != null
+                && !player.PhysicsObj.TransientState.HasFlag(ACE.Server.Physics.TransientStateFlags.Contact))
+            {
+                player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You cannot begin the enlightenment ritual in mid-air. Find your footing and try again.", ChatMessageType.System));
                 return false;
             }
 
@@ -234,7 +260,12 @@ namespace ACE.Server.Entity
             lumAugCredits += player.LumAugSkilledCraft;
             lumAugCredits += player.LumAugSkilledSpec;
 
-            return lumAugCredits == 65;
+            // >= rather than ==. Exact equality locked out anyone who ever exceeded the total, and
+            // told them to go and buy augmentations they already had. Nothing grants more than 65
+            // today - the custom school charms deliberately add nothing to the capped aug stats -
+            // but the failure mode is silent and confusing, and the gate only ever meant "has all
+            // of them".
+            return lumAugCredits >= 65;
         }
 
         private static void RemoveFromFellowships(Player player)
