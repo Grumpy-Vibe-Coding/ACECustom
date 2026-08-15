@@ -163,7 +163,7 @@ namespace ACE.Server.WorldObjects.Managers
             { "Specialize", 266 },
         };
 
-        /// <summary>Charm of the Triune Weave. The charm must be in inventory to use Remnants; progress lives on the player (PropertyInt64.TriuneWeaveCount), never on the item.</summary>
+        /// <summary>Charm of the Triune Weave. The charm must be in inventory to use Gems; progress lives on the player (PropertyInt64.TriuneWeaveCount), never on the item.</summary>
         private const uint TriuneCharmWcid = 777700030;
 
         private sealed class SchoolCharmDef
@@ -178,7 +178,7 @@ namespace ACE.Server.WorldObjects.Managers
         }
 
         /// <summary>
-        /// School charms keyed by their remnant emote-message prefix. Counters accumulate toward future
+        /// School charms keyed by their gem emote-message prefix. Counters accumulate toward future
         /// ability unlocks only — they add nothing to the capped War/Void/Melee/Missile aug stats.
         /// </summary>
         private static readonly Dictionary<string, SchoolCharmDef> SchoolCharms = new Dictionary<string, SchoolCharmDef>
@@ -3315,7 +3315,7 @@ namespace ACE.Server.WorldObjects.Managers
                             case "Triune50":
                             case "Triune100":
                                 {
-                                    // Remnants are bought with Prestige Coins, so no luminance cost and no cap here.
+                                    // Gems are bought with Prestige Coins, so no luminance cost and no cap here.
                                     int augCount = emote.Message == "Triune" ? 1 :
                                                    emote.Message == "Triune10" ? 10 :
                                                    emote.Message == "Triune50" ? 50 :
@@ -3323,7 +3323,7 @@ namespace ACE.Server.WorldObjects.Managers
 
                                     if (player.GetNumInventoryItemsOfWCID(TriuneCharmWcid) == 0)
                                     {
-                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this remnant.", ChatMessageType.Broadcast));
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this gem.", ChatMessageType.Broadcast));
                                         break;
                                     }
 
@@ -3332,26 +3332,20 @@ namespace ACE.Server.WorldObjects.Managers
                                                  augCount == 50 ? 777700033 :
                                                  augCount == 100 ? 777700034 : 0;
 
-                                    player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
+                                    // No confirmation dialog (owner, 2026-08-15): using the gem is
+                                    // itself the deliberate act, and the gem is bought with coins
+                                    // rather than spent from luminance, so there is nothing to
+                                    // second-guess. Consume before granting, so a failed consume
+                                    // never awards a free point.
+                                    if (moteId == 0 || !player.TryConsumeFromInventoryWithNetworking((uint)moteId, 1))
                                     {
-                                        if (!response) return;
-                                        if (player.GetNumInventoryItemsOfWCID(TriuneCharmWcid) == 0)
-                                        {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a Charm of the Triune Weave to use this remnant.", ChatMessageType.Broadcast));
-                                            return;
-                                        }
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the gem. Please try again.", ChatMessageType.Broadcast));
+                                        break;
+                                    }
 
-                                        // Consume before granting: queued confirms each require their own remnant.
-                                        if (moteId == 0 || !player.TryConsumeFromInventoryWithNetworking((uint)moteId, 1))
-                                        {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the remnant. Please try again.", ChatMessageType.Broadcast));
-                                            return;
-                                        }
-
-                                        player.TriuneWeaveCount = (player.TriuneWeaveCount ?? 0) + augCount;
-                                        player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.TriuneWeaveCount, player.TriuneWeaveCount ?? 0));
-                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Your Triune Weave is empowered to {player.TriuneWeaveCount:N0}, granting +{player.TriuneWeaveCount:N0} Creature, Item, and Life augmentations.", ChatMessageType.Broadcast));
-                                    }), $"You are about to empower your Charm of the Triune Weave by {augCount}, granting +{augCount} to your Creature, Item, and Life augmentations. Are you sure?");
+                                    player.TriuneWeaveCount = (player.TriuneWeaveCount ?? 0) + augCount;
+                                    player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.TriuneWeaveCount, player.TriuneWeaveCount ?? 0));
+                                    player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Your Triune Weave has been empowered by {augCount:N0}, and now stands at {player.TriuneWeaveCount:N0}!", ChatMessageType.Broadcast));
                                 }
                                 break;
                             case "Wrath":
@@ -3382,7 +3376,7 @@ namespace ACE.Server.WorldObjects.Managers
 
                                     if (player.GetNumInventoryItemsOfWCID(charm.CharmWcid) == 0)
                                     {
-                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this remnant.", ChatMessageType.Broadcast));
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this gem.", ChatMessageType.Broadcast));
                                         break;
                                     }
 
@@ -3390,27 +3384,18 @@ namespace ACE.Server.WorldObjects.Managers
                                                   augCount == 10 ? charm.Mote10 :
                                                   augCount == 50 ? charm.Mote50 : charm.Mote100;
 
-                                    player.ConfirmationManager.EnqueueSend(new Confirmation_Custom(player.Guid, (bool response, bool _) =>
+                                    // No confirmation dialog (owner, 2026-08-15) - see the Triune
+                                    // case above. Consume before granting.
+                                    if (!player.TryConsumeFromInventoryWithNetworking(moteId, 1))
                                     {
-                                        if (!response) return;
-                                        if (player.GetNumInventoryItemsOfWCID(charm.CharmWcid) == 0)
-                                        {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You must possess a {charm.FullName} to use this remnant.", ChatMessageType.Broadcast));
-                                            return;
-                                        }
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the gem. Please try again.", ChatMessageType.Broadcast));
+                                        break;
+                                    }
 
-                                        // Consume before granting: queued confirms each require their own remnant.
-                                        if (!player.TryConsumeFromInventoryWithNetworking(moteId, 1))
-                                        {
-                                            player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Failed to consume the remnant. Please try again.", ChatMessageType.Broadcast));
-                                            return;
-                                        }
-
-                                        var newCount = (player.GetProperty(charm.CountProperty) ?? 0) + augCount;
-                                        player.SetProperty(charm.CountProperty, newCount);
-                                        player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, charm.CountProperty, newCount));
-                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Your {charm.FullName} is empowered to {newCount:N0}.", ChatMessageType.Broadcast));
-                                    }), $"You are about to empower your {charm.FullName} by {augCount}. Are you sure?");
+                                    var newCount = (player.GetProperty(charm.CountProperty) ?? 0) + augCount;
+                                    player.SetProperty(charm.CountProperty, newCount);
+                                    player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, charm.CountProperty, newCount));
+                                    player.Session.Network.EnqueueSend(new GameMessageSystemChat($"Your {charm.FullName} has been empowered by {augCount:N0}, and now stands at {newCount:N0}!", ChatMessageType.Broadcast));
                                 }
                                 break;
                             default:

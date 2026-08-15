@@ -319,8 +319,8 @@ namespace ACE.Server.Network.Structure
                 }
             }
 
-            // Growth charms + remnants carry UnlimitedUse only so Gem.ActOnUse does not self-consume
-            // them (remnants are consumed by the confirm handler). It is a mechanical flag, not a use
+            // Growth charms + gems carry UnlimitedUse only so Gem.ActOnUse does not self-consume
+            // them (gems are consumed by the confirm handler). It is a mechanical flag, not a use
             // counter - hide it so the panel shows no "Number of uses remaining" line.
             if ((wo.WeenieClassId >= 777700030 && wo.WeenieClassId <= 777700034) ||
                 (wo.WeenieClassId >= 777700051 && wo.WeenieClassId <= 777700070))
@@ -332,8 +332,8 @@ namespace ACE.Server.Network.Structure
             {
                 var weave = examiner.GetProperty(PropertyInt64.TriuneWeaveCount) ?? 0;
                 var msg = weave > 0
-                    ? $"The weave has been empowered {weave:N0} times:\n   +{weave:N0} Creature Augmentations\n   +{weave:N0} Item Augmentations\n   +{weave:N0} Life Augmentations\n\nFeed it Remnants of the Triune Weave to empower it further."
-                    : "The weave is dormant. Feed it Remnants of the Triune Weave to empower it, granting +1 Creature, Item, and Life augmentation per point.";
+                    ? $"The weave has been empowered {weave:N0} times:\n   +{weave:N0} Creature Augmentations\n   +{weave:N0} Item Augmentations\n   +{weave:N0} Life Augmentations\n\nFeed it Gems of the Triune Weave to empower it further."
+                    : "The weave is dormant. Feed it Gems of the Triune Weave to empower it, granting +1 Creature, Item, and Life augmentation per point.";
 
                 if (PropertiesString.ContainsKey(PropertyString.LongDesc))
                     PropertiesString[PropertyString.LongDesc] += $"\n\n{msg}";
@@ -355,7 +355,7 @@ namespace ACE.Server.Network.Structure
                 var count = examiner.GetProperty(schoolCharmProp.Value) ?? 0;
                 var msg = count > 0
                     ? $"The charm has been empowered {count:N0} times. Its deeper powers remain sealed."
-                    : "The charm is dormant. Feed it Remnants to empower it.";
+                    : "The charm is dormant. Feed it Gems to empower it.";
 
                 if (PropertiesString.ContainsKey(PropertyString.LongDesc))
                     PropertiesString[PropertyString.LongDesc] += $"\n\n{msg}";
