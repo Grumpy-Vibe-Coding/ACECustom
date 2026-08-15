@@ -226,7 +226,8 @@ namespace ACE.Server.WorldObjects
 
             if (advancedMathFail)
             {
-                Self.SendToJail(TimeSpan.FromSeconds(ServerConfig.ucm_advanced_math_jail_seconds.Value));
+                Self.SendToJail(TimeSpan.FromSeconds(ServerConfig.ucm_advanced_math_jail_seconds.Value),
+                                countsTowardTotal: false);
                 PlayerManager.BroadcastToAll(new GameMessageSystemChat($"{Self.Name} could not do basic math and has been jailed.", ChatMessageType.Broadcast));
             }
             else

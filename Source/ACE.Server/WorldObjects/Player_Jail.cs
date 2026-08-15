@@ -30,7 +30,14 @@ namespace ACE.Server.WorldObjects
         /// If the player is already in jail, this will reset their sentence duration.
         /// </summary>
         /// <param name="overrideDuration">Sentence length to serve instead of ucm_jail_duration_seconds. Used by the advanced math UCM check, which carries a much shorter sentence.</param>
-        public void SendToJail(TimeSpan? overrideDuration = null)
+        /// <param name="countsTowardTotal">
+        /// False leaves no permanent record: no TimesJailed increment and no jail quest stamp. The
+        /// advanced math check is a joke that most players are meant to fail, and TimesJailed feeds
+        /// the /top jails leaderboard - letting comedy sentences onto it would make the board
+        /// measure participation in a gag rather than actual discipline. The sentence itself is
+        /// served exactly the same either way.
+        /// </param>
+        public void SendToJail(TimeSpan? overrideDuration = null, bool countsTowardTotal = true)
         {
             TimeSpan jailTime = overrideDuration ?? TimeSpan.FromSeconds(ServerConfig.ucm_jail_duration_seconds.Value);
             DateTime releaseTime = DateTime.UtcNow.Add(jailTime);
@@ -42,11 +49,14 @@ namespace ACE.Server.WorldObjects
             }
 
             // Apply jail effects (newly jailed).
-            var jailCount = GetProperty(PropertyInt.TimesJailed) ?? 0;
-            if (jailCount < int.MaxValue)
-                SetProperty(PropertyInt.TimesJailed, jailCount + 1);
+            if (countsTowardTotal)
+            {
+                var jailCount = GetProperty(PropertyInt.TimesJailed) ?? 0;
+                if (jailCount < int.MaxValue)
+                    SetProperty(PropertyInt.TimesJailed, jailCount + 1);
 
-            QuestManager.Stamp("jail_fresh_meat");
+                QuestManager.Stamp("jail_fresh_meat");
+            }
             RedrawPlayerWithUpdates();
             Teleport(GetJailTeleportLocation());
             Session.Network.EnqueueSend(new GameMessageSystemChat($"You are being punished. You are now in jail for {jailTime.GetFriendlyLongString()} and are attackable by other players.", ChatMessageType.Broadcast));
