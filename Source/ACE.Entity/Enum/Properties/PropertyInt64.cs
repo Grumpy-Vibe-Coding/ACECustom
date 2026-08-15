@@ -56,8 +56,10 @@ namespace ACE.Entity.Enum.Properties
         // 50000+ block (matches the PropertyInt/PropertyBool charm-system ids)
         /// <summary>Charm of the Triune Weave: each point grants +1 Creature, +1 Item, and +1 Life augmentation on top of the (capped) gem-bought counts.</summary>
         TriuneWeaveCount       = 50000,
-        // School charm counters: accumulated strength only — they gate future ability unlocks and
-        // deliberately add NOTHING to the capped War/Void/Melee/Missile aug stats.
+        // School charm counters. Each adds to its own school's effective augmentation count at
+        // bonus-application sites, which is how a player passes the 4,000 cap: the cap bounds what
+        // luminance can buy, and a charm is a separate path bought with Prestige Coins. Purchases,
+        // the caps themselves and progression gates all still read the raw LumAug counts.
         /// <summary>Charm of the Battlemage's Wrath (War).</summary>
         BattlemagesWrathCharmCount = 50001,
         /// <summary>Charm of the Nether Veil (Void).</summary>

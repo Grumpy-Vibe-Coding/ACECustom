@@ -2266,11 +2266,11 @@ namespace ACE.Server.WorldObjects
             {
                 if (spell.School == MagicSchool.VoidMagic)
                 {
-                    lumAug += player.LuminanceAugmentVoidCount ?? 0f;
+                    lumAug += player.EffectiveVoidAugCount;
                 }
                 if (spell.School == MagicSchool.WarMagic)
                 {
-                    lumAug += player.LuminanceAugmentWarCount ?? 0f;
+                    lumAug += player.EffectiveWarAugCount;
                 }
                 if (spell.School == MagicSchool.LifeMagic)
                 {

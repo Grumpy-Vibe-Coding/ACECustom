@@ -178,8 +178,11 @@ namespace ACE.Server.WorldObjects.Managers
         }
 
         /// <summary>
-        /// School charms keyed by their gem emote-message prefix. Counters accumulate toward future
-        /// ability unlocks only — they add nothing to the capped War/Void/Melee/Missile aug stats.
+        /// School charms keyed by their gem emote-message prefix. Each counter feeds its own school's
+        /// Effective*AugCount, which is how a player gets past the 4,000 cap - the cap bounds
+        /// luminance purchases, the charm is a separate path bought with Prestige Coins. The cap
+        /// check below deliberately still reads the RAW count, so a charm never eats purchase
+        /// headroom.
         /// </summary>
         private static readonly Dictionary<string, SchoolCharmDef> SchoolCharms = new Dictionary<string, SchoolCharmDef>
         {

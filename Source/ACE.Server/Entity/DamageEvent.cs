@@ -309,17 +309,18 @@ namespace ACE.Server.Entity
             long? cachedLuminanceAugmentCount = null;
             long damageBonus = 0;
 
+            // Effective counts: purchased gems plus the Charm of the True Shot / Crashing Steel.
             if (isMissile)
             {
-                if (attacker.LuminanceAugmentMissileCount > 0)
+                if (attacker.EffectiveMissileAugCount > 0)
                 {
-                    cachedLuminanceAugmentCount = attacker.LuminanceAugmentMissileCount.Value;
+                    cachedLuminanceAugmentCount = attacker.EffectiveMissileAugCount;
                     damageBonus = cachedLuminanceAugmentCount.Value;
                 }
             }
-            else if (attacker.LuminanceAugmentMeleeCount > 0)
+            else if (attacker.EffectiveMeleeAugCount > 0)
             {
-                cachedLuminanceAugmentCount = attacker.LuminanceAugmentMeleeCount.Value;
+                cachedLuminanceAugmentCount = attacker.EffectiveMeleeAugCount;
                 damageBonus = cachedLuminanceAugmentCount.Value;
             }
 

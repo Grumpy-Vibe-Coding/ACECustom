@@ -362,10 +362,13 @@ namespace ACE.Server.WorldObjects
 
             LuminanceAugmentSummonCount = summonAugCount;
 
-            LuminanceAugmentMeleeCount = Math.Min(summonAugCount, player.LuminanceAugmentMeleeCount ?? 0);
-            LuminanceAugmentMissileCount = Math.Min(summonAugCount, player.LuminanceAugmentMissileCount ?? 0);
-            LuminanceAugmentWarCount = Math.Min(summonAugCount, player.LuminanceAugmentWarCount ?? 0);
-            LuminanceAugmentVoidCount = Math.Min(summonAugCount, player.LuminanceAugmentVoidCount ?? 0);
+            // Effective counts, so a growth charm reaches the pet the same way it reaches its owner -
+            // the Item and Life tracks below already inherit that way. Still capped by summoning:
+            // a charm raises the ceiling the pet can inherit UP TO, it does not bypass the cap.
+            LuminanceAugmentMeleeCount = Math.Min(summonAugCount, player.EffectiveMeleeAugCount);
+            LuminanceAugmentMissileCount = Math.Min(summonAugCount, player.EffectiveMissileAugCount);
+            LuminanceAugmentWarCount = Math.Min(summonAugCount, player.EffectiveWarAugCount);
+            LuminanceAugmentVoidCount = Math.Min(summonAugCount, player.EffectiveVoidAugCount);
             // Match Creature_Combat.GetEffectiveDefenseSkill: flat +MeleeD/+MissileD luminance aug counts (capped like other tracks).
             LuminanceAugmentMeleeDefenseCount = Math.Min(summonAugCount, player.LuminanceAugmentMeleeDefenseCount ?? 0);
             LuminanceAugmentMissileDefenseCount = Math.Min(summonAugCount, player.LuminanceAugmentMissileDefenseCount ?? 0);

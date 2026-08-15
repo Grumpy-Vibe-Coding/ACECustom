@@ -671,18 +671,20 @@ namespace ACE.Server.WorldObjects
 
                 if (sourceCreature != null)
                 {
+                    // Effective counts: purchased gems plus the school's growth charm. Player_Magic's
+                    // smart-ring path mirrors this method and must use the same counts.
                     if (Spell.School == MagicSchool.WarMagic)
                     {
-                        if (sourceCreature.LuminanceAugmentWarCount.HasValue && sourceCreature.LuminanceAugmentWarCount >= 1)
+                        if (sourceCreature.EffectiveWarAugCount >= 1)
                         {
-                            baseDamage += sourceCreature.LuminanceAugmentWarCount.Value;
+                            baseDamage += sourceCreature.EffectiveWarAugCount;
                         }
                     }
                     else if (Spell.School == MagicSchool.VoidMagic)
                     {
-                        if (sourceCreature.LuminanceAugmentVoidCount.HasValue && sourceCreature.LuminanceAugmentVoidCount >= 1)
+                        if (sourceCreature.EffectiveVoidAugCount >= 1)
                         {
-                            baseDamage += sourceCreature.LuminanceAugmentVoidCount.Value;
+                            baseDamage += sourceCreature.EffectiveVoidAugCount;
                         }
                     }
                 }
