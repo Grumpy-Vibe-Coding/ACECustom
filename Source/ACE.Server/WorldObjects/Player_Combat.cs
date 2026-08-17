@@ -453,13 +453,15 @@ namespace ACE.Server.WorldObjects
         {
             if (weapon == null || !weapon.IsRanged)
                 return PowerLevel + 0.5f;
+            else if (ServerConfig.missile_power_bar.Value)
+                return AccuracyLevel + 0.5f;
             else
                 return 1.0f;
         }
 
         public override float GetAccuracyMod(WorldObject weapon)
         {
-            if (weapon != null && weapon.IsRanged)
+            if (weapon != null && weapon.IsRanged && !ServerConfig.missile_power_bar.Value)
                 return AccuracyLevel + 0.6f;
             else
                 return 1.0f;

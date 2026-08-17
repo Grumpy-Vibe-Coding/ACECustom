@@ -64,36 +64,41 @@ namespace ACE.Server.Command.Handlers
                 else
                     ConfigureStatsAndSpells(player);
 
-                CreateCustomBow(player, DamageType.Cold, true);
-                CreateCustomBow(player, DamageType.Fire, true);
-                CreateCustomBow(player, DamageType.Electric, true);
-                CreateCustomBow(player, DamageType.Acid, true);
-                CreateCustomBow(player, DamageType.Slash, true);
-                CreateCustomBow(player, DamageType.Pierce, true);
-                CreateCustomBow(player, DamageType.Bludgeon, true);
-                CreateCustomBow(player, DamageType.Nether, true);
+                // Weapons go into their own pack (owner 08-15)
+                var weaponsPack = GetOrCreatePack(player, "Weapons Pack");
 
-                CreateCustomUA(player, DamageType.Cold);
-                CreateCustomUA(player, DamageType.Fire);
-                CreateCustomUA(player, DamageType.Electric);
-                CreateCustomUA(player, DamageType.Acid);
-                CreateCustomUA(player, DamageType.Slash);
-                CreateCustomUA(player, DamageType.Pierce);
-                CreateCustomUA(player, DamageType.Bludgeon);
-                CreateCustomUA(player, DamageType.Nether);
+                CreateCustomBow(player, DamageType.Cold, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Fire, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Electric, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Acid, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Slash, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Pierce, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Bludgeon, true, weaponsPack);
+                CreateCustomBow(player, DamageType.Nether, true, weaponsPack);
 
-                CreateCustomWand(player, DamageType.Cold);
-                CreateCustomWand(player, DamageType.Fire);
-                CreateCustomWand(player, DamageType.Electric);
-                CreateCustomWand(player, DamageType.Acid);
-                CreateCustomWand(player, DamageType.Slash);
-                CreateCustomWand(player, DamageType.Pierce);
-                CreateCustomWand(player, DamageType.Bludgeon);
-                CreateCustomWand(player, DamageType.Nether);
+                CreateCustomUA(player, DamageType.Cold, weaponsPack);
+                CreateCustomUA(player, DamageType.Fire, weaponsPack);
+                CreateCustomUA(player, DamageType.Electric, weaponsPack);
+                CreateCustomUA(player, DamageType.Acid, weaponsPack);
+                CreateCustomUA(player, DamageType.Slash, weaponsPack);
+                CreateCustomUA(player, DamageType.Pierce, weaponsPack);
+                CreateCustomUA(player, DamageType.Bludgeon, weaponsPack);
+                CreateCustomUA(player, DamageType.Nether, weaponsPack);
 
-                // Spawn booster packs 7 down to 2 empty (Pack 2 used to hold hilts —
-                // hilt spawning removed 2026-08-03, owner)
-                for (int i = 7; i >= 2; i--)
+                CreateCustomWand(player, DamageType.Cold, weaponsPack);
+                CreateCustomWand(player, DamageType.Fire, weaponsPack);
+                CreateCustomWand(player, DamageType.Electric, weaponsPack);
+                CreateCustomWand(player, DamageType.Acid, weaponsPack);
+                CreateCustomWand(player, DamageType.Slash, weaponsPack);
+                CreateCustomWand(player, DamageType.Pierce, weaponsPack);
+                CreateCustomWand(player, DamageType.Bludgeon, weaponsPack);
+                CreateCustomWand(player, DamageType.Nether, weaponsPack);
+
+                // Spawn empty booster packs 5 down to 2. Only 4: the Weapons / Portal
+                // Gems / Ability Charms / Spell Comps packs (owner 08-15) share the 8
+                // pack slots a premade has (7 base + retail PackSlot aug). "Booster
+                // Pack 1" is never spawned empty — it is the legacy gem-bag name.
+                for (int i = 5; i >= 2; i--)
                 {
                     var packName = $"Booster Pack {i}";
                     if (HasItemNamed(player, packName)) continue;
@@ -106,23 +111,9 @@ namespace ACE.Server.Command.Handlers
                     }
                 }
 
-                // Spawn Booster Pack 1 containing portal gems
-                var bag1 = player.GetAllPossessionsDeep().OfType<Container>().FirstOrDefault(c => c.Name == "Booster Pack 1");
-                if (bag1 == null)
-                {
-                    bag1 = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-                    if (bag1 != null)
-                    {
-                        bag1.Name = "Booster Pack 1";
-                        bag1.SetProperty(PropertyString.Name, "Booster Pack 1");
-                        SpawnTeleportGems(player, bag1);
-                        player.TryCreateInInventoryWithNetworking(bag1);
-                    }
-                }
-                else
-                {
-                    SpawnTeleportGems(player, bag1);
-                }
+                // Portal gems go into their own pack (owner 08-15; "Booster Pack 1"
+                // is the legacy name for the same bag on pre-existing test chars)
+                SpawnTeleportGems(player, GetOrCreatePack(player, "Portal Gems Pack", "Booster Pack 1"));
 
                 var gearTier = "T10";
                 SpawnOlthoiShadowArmor(player, gearTier);
@@ -245,7 +236,8 @@ namespace ACE.Server.Command.Handlers
                 }
                 else if (sub == "gems")
                 {
-                    SpawnTeleportGems(player);
+                    // Gems ride Create Premade via this granular verb — pack them (owner 08-15)
+                    SpawnTeleportGems(player, GetOrCreatePack(player, "Portal Gems Pack", "Booster Pack 1"));
                     player.SendMessage("Custom Teleport Gems generated in your inventory.");
                     player.SaveBiotaToDatabase();
                 }
@@ -385,6 +377,17 @@ namespace ACE.Server.Command.Handlers
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSummonCount, 0));
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMeleeCount, 0));
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMissileCount, 0));
+
+            // 7b. Reset growth charm counters to 0 (owner 08-15: /aug kept showing charm
+            // lines after a wipe). Same PropertyInt64 set that /testchar set charms writes.
+            var charmProps = new[] { PropertyInt64.TriuneWeaveCount, PropertyInt64.BattlemagesWrathCharmCount,
+                                     PropertyInt64.NetherVeilCharmCount, PropertyInt64.CrashingSteelCharmCount,
+                                     PropertyInt64.TrueShotCharmCount };
+            foreach (var charmProp in charmProps)
+            {
+                player.SetProperty(charmProp, 0);
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, charmProp, 0));
+            }
 
             // 8. Reset Retail Augmentations to 0
             foreach (var kvp in AugmentationDevice.MaxAugs)
@@ -688,7 +691,8 @@ namespace ACE.Server.Command.Handlers
                         Msg($"extra: {label} could not be added (inventory full?)");
                 }
                 // Stackables top up to the target: possessing 4500 of a 5000 target creates the missing 500.
-                void MintStack(uint wcid, string label, int target)
+                // A pack routes the new stack there (falls back to main pack when full/missing).
+                void MintStack(uint wcid, string label, int target, Container pack = null)
                 {
                     var have = owned.Where(i => i.WeenieClassId == wcid).Sum(i => i.StackSize ?? 1);
                     var missing = target - have;
@@ -697,7 +701,9 @@ namespace ACE.Server.Command.Handlers
                     if (wo == null) { Msg($"extra: {label} (wcid {wcid}) failed to create"); return; }
                     if (missing > 1)
                         wo.SetStackSize(missing);
-                    if (player.TryCreateInInventoryWithNetworking(wo))
+                    if (TryPlaceInPack(player, wo, pack))
+                        Msg($"extra: {label} +{missing} (now {target}) [{pack.Name}]");
+                    else if (player.TryCreateInInventoryWithNetworking(wo))
                         Msg($"extra: {label} +{missing} (now {target})");
                     else
                         Msg($"extra: {label} could not be added (inventory full?)");
@@ -720,17 +726,18 @@ namespace ACE.Server.Command.Handlers
                         case "mmds":     MintStack(20630, "Trade Notes (250k)", 5000); break;
                         case "scarabs":
                             // 100 of each casting scarab, topped up (owner 08-03). Dark Scarab
-                            // (37117) excluded: its max stack is 1 here.
-                            MintStack(691, "Lead Scarabs", 100);
-                            MintStack(689, "Iron Scarabs", 100);
-                            MintStack(686, "Copper Scarabs", 100);
-                            MintStack(688, "Silver Scarabs", 100);
-                            MintStack(687, "Gold Scarabs", 100);
-                            MintStack(690, "Pyreal Scarabs", 100);
-                            MintStack(8897, "Platinum Scarabs", 100);
-                            MintStack(37155, "Mana Scarabs", 100);
-                            MintStack(7299, "Diamond Scarabs", 100);
-                            MintStack(20631, "Prismatic Tapers", 10000);   // max stack, owner 08-03
+                            // (37117) excluded: its max stack is 1 here. Packed (owner 08-15).
+                            var compsPack = GetOrCreatePack(player, "Spell Comps Pack");
+                            MintStack(691, "Lead Scarabs", 100, compsPack);
+                            MintStack(689, "Iron Scarabs", 100, compsPack);
+                            MintStack(686, "Copper Scarabs", 100, compsPack);
+                            MintStack(688, "Silver Scarabs", 100, compsPack);
+                            MintStack(687, "Gold Scarabs", 100, compsPack);
+                            MintStack(690, "Pyreal Scarabs", 100, compsPack);
+                            MintStack(8897, "Platinum Scarabs", 100, compsPack);
+                            MintStack(37155, "Mana Scarabs", 100, compsPack);
+                            MintStack(7299, "Diamond Scarabs", 100, compsPack);
+                            MintStack(20631, "Prismatic Tapers", 10000, compsPack);   // max stack, owner 08-03
                             break;
                         case "aetheria": SpawnAetherias(player); Msg("extra: aetheria set spawned (skips owned pieces)"); break;
                         case "bags":     MintBoosterPacks(player, Msg); break;
@@ -1047,10 +1054,32 @@ namespace ACE.Server.Command.Handlers
         // defensive cantrip cluster worn by virtually every endgame suit.
         private static readonly uint[] ImpenSpells = { 6095 };
         private static readonly uint[] DefensiveCantripSpells = { 6055, 6077, 6102, 6103, 6104, 6105 };
+        // Owner 2026-08-16: the necklace is the ONLY test-gear buff carrier — it consolidates
+        // EVERYTHING the old distributed set granted (all 10 builders' spells + the premade's
+        // ward/lifeprot/defcantrip cards + the old trinket default suite), so one piece equals
+        // the whole historical kit. Impen family (4667/6095) deliberately EXCLUDED — armor is
+        // the impen carrier. Shared by BuildTestNecklace (/testchar) and the /asforge default.
+        private static readonly uint[] NecklaceBuffSpells =
+        {
+            // Curated by owner 2026-08-16 (trimmed from the full historical kit: protections,
+            // VI-era self buffs, blessings, banes, and the trade-skill Epics all cut).
+            3731,                                     // Prodigal Regeneration
+            6079, 6080, 6081, 6082, 6083, 6084, 6085, // Legendary elemental Wards x7
+            6055, 6077, 6102, 6103, 6104, 6105,       // Leg. Invuln/Health Gain/Armor/Coord/End/Focus
+            3694, 3730,                               // Prodigal Coordination / Quickness
+            2059,                                     // Honed Control
+            3569, 3570, 3571,                         // Mana / Stamina / Health Boost
+            5137, 5139, 5141, 5187,                   // Augmented Underst./Dmg/DmgReduction + Rare Dmg X
+            5238, 5253,                               // Sigil of Destruction XV / Defense XV
+            5449, 5450,                               // Surging Strength / Towering Defense
+            6170,                                     // Honeyed Life Mead
+        };
+
         // Owner 2026-08-09: the trinket slot's DEFAULT suite (no card needed) — the 7
         // Legendary Wards + Legendary Armor, Augmented Understanding III, Augmented
         // Damage II, Rare Damage Boost X, Sigil of Defense XV, Sigil of Destruction XV,
         // Honeyed Life Mead, Towering Defense, Health/Stamina/Mana Boost.
+        // UNUSED since 2026-08-16 (trinket mints blank); kept as the historical suite.
         private static readonly uint[] TrinketDefaultSpells =
         {
             6079, 6080, 6081, 6082, 6083, 6084, 6085, 6102,
@@ -1092,6 +1121,12 @@ namespace ACE.Server.Command.Handlers
             item.Name = name;
             item.SetProperty(PropertyString.Name, name);
             item.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
+            // Armor is allowed EXACTLY ONE buff: Legendary Impenetrability (owner 2026-08-16;
+            // matches the /asforge T11+ default). All other buffs live on the necklace only.
+            // /asforge re-clears and re-adds this, so both paths agree.
+            item.Biota.ClearSpells(item.BiotaDatabaseLock);
+            AddForgeSpells(item, ImpenSpells);
+            item.ChangesDetected = true;
             return item;
         }
 
@@ -1162,13 +1197,10 @@ namespace ACE.Server.Command.Handlers
                 shirt.SetProperty(PropertyInt.GearNetherResist, 9);
                 shirt.SetProperty(PropertyInt.GearMaxHealth, 175);
                 
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
+                // ClearSpells stays so base-weenie-authored spells are wiped too.
                 shirt.Biota.ClearSpells(shirt.BiotaDatabaseLock);
-                var shirtSpells = new List<uint>() { 2161, 3694, 4466, 4664, 4667, 5238 };
-                foreach (var spellId in shirtSpells)
-                    shirt.Biota.GetOrAddKnownSpell((int)spellId, shirt.BiotaDatabaseLock, out _);
                 shirt.ChangesDetected = true;
-                shirt.UiEffects = UiEffects.Magical;
             }
             return shirt;
         }
@@ -1201,13 +1233,9 @@ namespace ACE.Server.Command.Handlers
                 pants.SetProperty(PropertyInt.GearNetherResist, 8);
                 pants.SetProperty(PropertyInt.GearMaxHealth, 175);
                 
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 pants.Biota.ClearSpells(pants.BiotaDatabaseLock);
-                var pantsSpells = new List<uint>() { 2157, 3730, 4470, 4667, 4695, 5253 };
-                foreach (var spellId in pantsSpells)
-                    pants.Biota.GetOrAddKnownSpell((int)spellId, pants.BiotaDatabaseLock, out _);
                 pants.ChangesDetected = true;
-                pants.UiEffects = UiEffects.Magical;
             }
             return pants;
         }
@@ -1236,11 +1264,9 @@ namespace ACE.Server.Command.Handlers
                 cloak.SetProperty(PropertyInt.GearNetherResist, 5);
                 cloak.SetProperty(PropertyInt.GearMaxHealth, 10);
                 
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 cloak.Biota.ClearSpells(cloak.BiotaDatabaseLock);
-                cloak.Biota.GetOrAddKnownSpell(5450, cloak.BiotaDatabaseLock, out _); // Towering Defense
                 cloak.ChangesDetected = true;
-                cloak.UiEffects = UiEffects.Magical;
             }
             return cloak;
         }
@@ -1304,13 +1330,9 @@ namespace ACE.Server.Command.Handlers
                 leftBracelet.SetProperty(PropertyInt.GearMaxHealth, 100);
                 leftBracelet.ValidLocations = EquipMask.WristWearLeft;
  
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 leftBracelet.Biota.ClearSpells(leftBracelet.BiotaDatabaseLock);
-                var spells = new List<uint>() { 4291, 4470, 4693, 4712 };
-                foreach (var spellId in spells)
-                    leftBracelet.Biota.GetOrAddKnownSpell((int)spellId, leftBracelet.BiotaDatabaseLock, out _);
                 leftBracelet.ChangesDetected = true;
-                leftBracelet.UiEffects = UiEffects.Magical;
             }
             return leftBracelet;
         }
@@ -1340,13 +1362,9 @@ namespace ACE.Server.Command.Handlers
                 rightBracelet.SetProperty(PropertyInt.GearMaxHealth, 100);
                 rightBracelet.ValidLocations = EquipMask.WristWearRight;
  
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 rightBracelet.Biota.ClearSpells(rightBracelet.BiotaDatabaseLock);
-                var spells = new List<uint>() { 2059, 4693, 6067 };
-                foreach (var spellId in spells)
-                    rightBracelet.Biota.GetOrAddKnownSpell((int)spellId, rightBracelet.BiotaDatabaseLock, out _);
                 rightBracelet.ChangesDetected = true;
-                rightBracelet.UiEffects = UiEffects.Magical;
             }
             return rightBracelet;
         }
@@ -1376,13 +1394,9 @@ namespace ACE.Server.Command.Handlers
                 leftRing.SetProperty(PropertyInt.GearMaxHealth, 100);
                 leftRing.ValidLocations = EquipMask.FingerWearLeft;
  
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 leftRing.Biota.ClearSpells(leftRing.BiotaDatabaseLock);
-                var spells = new List<uint>() { 2197, 2251, 4686, 4708 };
-                foreach (var spellId in spells)
-                    leftRing.Biota.GetOrAddKnownSpell((int)spellId, leftRing.BiotaDatabaseLock, out _);
                 leftRing.ChangesDetected = true;
-                leftRing.UiEffects = UiEffects.Magical;
             }
             return leftRing;
         }
@@ -1412,13 +1426,9 @@ namespace ACE.Server.Command.Handlers
                 rightRing.SetProperty(PropertyInt.GearMaxHealth, 100);
                 rightRing.ValidLocations = EquipMask.FingerWearRight;
  
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 rightRing.Biota.ClearSpells(rightRing.BiotaDatabaseLock);
-                var spells = new List<uint>() { 279, 2153, 4701, 6041 };
-                foreach (var spellId in spells)
-                    rightRing.Biota.GetOrAddKnownSpell((int)spellId, rightRing.BiotaDatabaseLock, out _);
                 rightRing.ChangesDetected = true;
-                rightRing.UiEffects = UiEffects.Magical;
             }
             return rightRing;
         }
@@ -1440,18 +1450,21 @@ namespace ACE.Server.Command.Handlers
                 necklace.SetProperty(PropertyInt.WieldDifficulty, 725);
                 necklace.SetProperty(PropertyInt.ItemWorkmanship, 8);
                 necklace.SetProperty(PropertyInt.ItemSpellcraft, 4370);
-                necklace.SetProperty(PropertyInt.ItemCurMana, 2138);
-                necklace.SetProperty(PropertyInt.ItemMaxMana, 2560);
+                // The consolidated ~50-spell suite needs a pool that never runs dry (each item
+                // spell activation draws item mana) — test gear must not fizzle mid-session.
+                necklace.SetProperty(PropertyInt.ItemCurMana, 100000);
+                necklace.SetProperty(PropertyInt.ItemMaxMana, 100000);
                 necklace.SetProperty(PropertyInt.ItemDifficulty, 1935);
                 necklace.SetProperty(PropertyInt.GemCount, 3);
                 necklace.SetProperty(PropertyInt.GemType, 49);
                 necklace.SetProperty(PropertyInt.GearMaxHealth, 100);
                 necklace.ValidLocations = EquipMask.NeckWear;
  
-                // Spells
+                // Spells — THE buff carrier: the necklace is the ONLY test-gear piece that carries
+                // buffs (owner 2026-08-16); armor additionally carries Legendary Impen only.
+                // Suite shared with the /asforge default (NecklaceBuffSpells).
                 necklace.Biota.ClearSpells(necklace.BiotaDatabaseLock);
-                var spells = new List<uint>() { 4462, 4466, 4703, 6079, 6085 };
-                foreach (var spellId in spells)
+                foreach (var spellId in NecklaceBuffSpells)
                     necklace.Biota.GetOrAddKnownSpell((int)spellId, necklace.BiotaDatabaseLock, out _);
                 necklace.ChangesDetected = true;
                 necklace.UiEffects = UiEffects.Magical;
@@ -1484,13 +1497,9 @@ namespace ACE.Server.Command.Handlers
                 trinket.SetProperty(PropertyInt.GearMaxHealth, 100);
                 trinket.ValidLocations = EquipMask.TrinketOne;
  
-                // Spells
+                // BLANK by design (owner 2026-08-16): only the necklace carries buffs.
                 trinket.Biota.ClearSpells(trinket.BiotaDatabaseLock);
-                var spells = new List<uint>() { 1450, 2281, 4698, 5137, 5139, 5141, 5449, 6081 };
-                foreach (var spellId in spells)
-                    trinket.Biota.GetOrAddKnownSpell((int)spellId, trinket.BiotaDatabaseLock, out _);
                 trinket.ChangesDetected = true;
-                trinket.UiEffects = UiEffects.Magical;
             }
             return trinket;
         }
@@ -1679,13 +1688,14 @@ namespace ACE.Server.Command.Handlers
                 if (defcantrips)
                     AddForgeSpells(wo, DefensiveCantripSpells);
 
-                // Owner defaults 2026-08-09 (no card required): T11+ armor pieces carry
-                // Legendary Impenetrability; the trinket carries its full default suite.
+                // Owner defaults (2026-08-16): armor carries Legendary Impenetrability at EVERY
+                // tier (was T11+); the NECKLACE carries the shared buff suite (the only buff
+                // carrier — the trinket's old default suite is gone). Cards stay opt-in.
                 // GetOrAddKnownSpell dedups if the matching cards are also on.
-                if (isVodArmor && tier >= 11)
+                if (isVodArmor)
                     AddForgeSpells(wo, ImpenSpells);
-                if (wo.WeenieClassId == 41483)
-                    AddForgeSpells(wo, TrinketDefaultSpells);
+                if (wo.WeenieClassId == 27445)
+                    AddForgeSpells(wo, NecklaceBuffSpells);
                 wo.ChangesDetected = true;
 
                 // VoD armor pieces: per-tier AL baseline (tier x 100) + albonus card on top;
@@ -1723,13 +1733,7 @@ namespace ACE.Server.Command.Handlers
         {
             if (HasItemNamed(player, "Ability Charms Pack")) return;
 
-            var rucksack = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-            if (rucksack != null)
-            {
-                rucksack.Name = "Ability Charms Pack";
-                rucksack.SetProperty(PropertyString.Name, "Ability Charms Pack");
-                rucksack.SetProperty(PropertyInt.MaterialType, 0);
-            }
+            var rucksack = GetOrCreatePack(player, "Ability Charms Pack");
 
             var charmWcids = new List<uint>()
             {
@@ -1753,12 +1757,7 @@ namespace ACE.Server.Command.Handlers
             {
                 var charm = WorldObjectFactory.CreateNewWorldObject(wcid);
                 if (charm != null)
-                {
-                    if (rucksack != null)
-                        rucksack.TryAddToInventory(charm);
-                    else
-                        player.TryCreateInInventoryWithNetworking(charm);
-                }
+                    PlaceInPackOrLoose(player, charm, rucksack);
             }
 
             // 1000x Charm Catalyst
@@ -1767,15 +1766,7 @@ namespace ACE.Server.Command.Handlers
             {
                 catalyst.SetProperty(PropertyInt.StackSize, 1000);
                 catalyst.SetProperty(PropertyInt.EncumbranceVal, (catalyst.StackUnitEncumbrance ?? 5) * 1000);
-                if (rucksack != null)
-                    rucksack.TryAddToInventory(catalyst);
-                else
-                    player.TryCreateInInventoryWithNetworking(catalyst);
-            }
-
-            if (rucksack != null)
-            {
-                player.TryCreateInInventoryWithNetworking(rucksack);
+                PlaceInPackOrLoose(player, catalyst, rucksack);
             }
 
             SpawnSpellcastingConsumables(player);
@@ -1784,6 +1775,11 @@ namespace ACE.Server.Command.Handlers
         private static void SpawnSpellcastingConsumables(Player player)
         {
             var possessions = player.GetAllPossessionsDeep().ToList();
+
+            // Comps go into their own pack (owner 08-15)
+            var compsPack = GetOrCreatePack(player, "Spell Comps Pack");
+
+            void AddComp(WorldObject item) => PlaceInPackOrLoose(player, item, compsPack);
 
             // 1. Tapers (1000 Prismatic Tapers)
             var targetTapers = 1000;
@@ -1798,7 +1794,7 @@ namespace ACE.Server.Command.Handlers
                     var maxStack = taper.MaxStackSize ?? 1000;
                     var toSpawn = Math.Min(needed, maxStack);
                     taper.SetStackSize(toSpawn);
-                    player.TryCreateInInventoryWithNetworking(taper);
+                    AddComp(taper);
                     needed -= toSpawn;
                 }
             }
@@ -1820,16 +1816,60 @@ namespace ACE.Server.Command.Handlers
                         var maxStack = scarab.MaxStackSize ?? 100;
                         var toSpawn = Math.Min(needed, maxStack);
                         scarab.SetStackSize(toSpawn);
-                        player.TryCreateInInventoryWithNetworking(scarab);
+                        AddComp(scarab);
                         needed -= toSpawn;
                     }
                 }
             }
+
         }
 
         private static void AddItemToInventory(Player player, WorldObject item)
         {
             player.TryCreateInInventoryWithNetworking(item);
+        }
+
+        /// <summary>Finds an existing 102-slot pack (wcid 310025) by name anywhere in the player's
+        /// possessions, or creates one IN the player's inventory (wsforge GetOrCreateForgePack
+        /// pattern — the pack must be live before TryPlaceInPack's client messages make sense).
+        /// Returns null when no pack slot is free — callers fall back to the main pack.</summary>
+        private static Container GetOrCreatePack(Player player, string name, string legacyName = null)
+        {
+            var pack = player.GetAllPossessionsDeep().OfType<Container>()
+                .FirstOrDefault(c => c.Name == name || (legacyName != null && c.Name == legacyName));
+            if (pack != null) return pack;
+
+            if (!(WorldObjectFactory.CreateNewWorldObject(310025) is Container bag)) return null;
+            bag.Name = name;
+            bag.SetProperty(PropertyString.Name, name);
+            bag.SetProperty(PropertyInt.MaterialType, 0);
+            if (player.TryCreateInInventoryWithNetworking(bag))
+                return bag;
+            bag.Destroy();   // no free pack slot
+            return null;
+        }
+
+        /// <summary>Place a freshly minted item into a pack the player already holds. Same as
+        /// WeaponScalingCommands.TryPlaceInPack: TryCreateInInventoryWithNetworking only targets
+        /// "main pack, else first side pack with room", so the client updates are sent by hand.</summary>
+        private static bool TryPlaceInPack(Player player, WorldObject wo, Container pack)
+        {
+            if (pack == null || !pack.TryAddToInventory(wo))
+                return false;
+
+            player.Session.Network.EnqueueSend(new GameMessageCreateObject(wo));
+            player.Session.Network.EnqueueSend(
+                new GameEventItemServerSaysContainId(player.Session, wo, pack),
+                new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.EncumbranceVal, player.EncumbranceVal ?? 0));
+            wo.SaveBiotaToDatabase();
+            return true;
+        }
+
+        /// <summary>Pack an item, falling back loose to the main pack when the pack is missing/full.</summary>
+        private static void PlaceInPackOrLoose(Player player, WorldObject wo, Container pack)
+        {
+            if (!TryPlaceInPack(player, wo, pack))
+                player.TryCreateInInventoryWithNetworking(wo);
         }
 
         private static bool HasItemNamed(Player player, string name)
@@ -1940,13 +1980,7 @@ namespace ACE.Server.Command.Handlers
         {
             var rucksackName = "Weapons Pack";
             if (HasItemNamed(player, rucksackName)) return;
-            var rucksack = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-            if (rucksack != null)
-            {
-                rucksack.Name = rucksackName;
-                rucksack.SetProperty(PropertyString.Name, rucksackName);
-                rucksack.SetProperty(PropertyInt.MaterialType, 0);
-            }
+            var rucksack = GetOrCreatePack(player, rucksackName);
 
             var weaponBases = new Dictionary<string, (uint wcid, string baseName)>()
             {
@@ -2003,19 +2037,12 @@ namespace ACE.Server.Command.Handlers
                             weapon.Name = $"{elementLabel} {label} (Test)";
                             weapon.SetProperty(PropertyString.Name, $"{elementLabel} {label} (Test)");
                             weapon.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
-                            if (rucksack != null)
-                                rucksack.TryAddToInventory(weapon);
-                            else
-                                player.TryCreateInInventoryWithNetworking(weapon);
+                            PlaceInPackOrLoose(player, weapon, rucksack);
                         }
                     }
                 }
             }
 
-            if (rucksack != null)
-            {
-                player.TryCreateInInventoryWithNetworking(rucksack);
-            }
         }
 
         private static void CreateCustomBow(Player player, DamageType element, bool includeRend = true, Container destination = null)
@@ -2125,10 +2152,7 @@ namespace ACE.Server.Command.Handlers
             bow.ChangesDetected = true;
             bow.UiEffects = UiEffects.Magical;
 
-            if (destination != null)
-                destination.TryAddToInventory(bow);
-            else
-                player.TryCreateInInventoryWithNetworking(bow);
+            PlaceInPackOrLoose(player, bow, destination);
         }
 
         private static void CreateCustomUA(Player player, DamageType element, Container destination = null)
@@ -2242,10 +2266,7 @@ namespace ACE.Server.Command.Handlers
             claw.ChangesDetected = true;
             claw.UiEffects = UiEffects.Magical;
 
-            if (destination != null)
-                destination.TryAddToInventory(claw);
-            else
-                player.TryCreateInInventoryWithNetworking(claw);
+            PlaceInPackOrLoose(player, claw, destination);
         }
 
         private static void CreateCustomWand(Player player, DamageType element, Container destination = null)
@@ -2335,10 +2356,7 @@ namespace ACE.Server.Command.Handlers
             wand.ChangesDetected = true;
             wand.UiEffects = UiEffects.Magical;
 
-            if (destination != null)
-                destination.TryAddToInventory(wand);
-            else
-                player.TryCreateInInventoryWithNetworking(wand);
+            PlaceInPackOrLoose(player, wand, destination);
         }
 
         private static string GetElementLabel(DamageType element)
@@ -2407,12 +2425,7 @@ namespace ACE.Server.Command.Handlers
 
                 var gem = WorldObjectFactory.CreateNewWorldObject(wcid);
                 if (gem != null)
-                {
-                    if (destination != null)
-                        destination.TryAddToInventory(gem);
-                    else
-                        player.TryCreateInInventoryWithNetworking(gem);
-                }
+                    PlaceInPackOrLoose(player, gem, destination);
             }
         }
     }

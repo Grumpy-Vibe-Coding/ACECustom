@@ -124,6 +124,19 @@ namespace ACE.Server.Managers.ZoneControl
         /// Stamina/Mana drain those pools; Health = "drained"; percent mode forces Health.</summary>
         public int? DotDamageType { get; set; }
 
+        // ── Suppression (regen) ──
+        /// <summary>Master switch for the Suppression card: regen suppression for players in the zone.</summary>
+        public bool? SuppressEnabled { get; set; }
+
+        /// <summary>When true (the default while suppression is on), the Prodigal regen enchantment line
+        /// (Regeneration 3731 / Rejuvenation 3732 / Mana Renewal 3725) is excluded from the player's regen
+        /// math — a retail regen buff underneath still applies. Computed per vital tick, never cached.</summary>
+        public bool? SuppressProdigal { get; set; }
+
+        /// <summary>Scales players' natural POSITIVE regen ticks (all three vitals). 1 = normal, 0 = no regen.
+        /// Never scales a negative (degen) tick — suppression must not become a shield.</summary>
+        public double? SuppressRegenMult { get; set; }
+
         // ── Reserved for later slices (NOT applied yet) ──
         public bool? SlowEnabled { get; set; }
         public double? SlowPercent { get; set; }
@@ -136,18 +149,25 @@ namespace ACE.Server.Managers.ZoneControl
         public double EffectiveDotIntervalSeconds => DotIntervalSeconds ?? 5.0;
         public int EffectiveDotDamageType => DotDamageType ?? 0x10;
 
+        public bool EffectiveSuppressEnabled => SuppressEnabled == true;
+        public bool EffectiveSuppressProdigal => SuppressProdigal ?? true;
+        public double EffectiveSuppressRegenMult => System.Math.Clamp(SuppressRegenMult ?? 1.0, 0.0, 1.0);
+
         /// <summary>True if any effect is active — used to skip zones that author no effects during resolution.</summary>
-        public bool AnyActive => DotEnabled == true || SlowEnabled == true || CharmEnabled == true;
+        public bool AnyActive => DotEnabled == true || SuppressEnabled == true || SlowEnabled == true || CharmEnabled == true;
 
         /// <summary>True when nothing at all is authored at this layer.</summary>
         public bool IsEmpty =>
             DotEnabled == null && DotDamage == null && DotPercent == null && DotIntervalSeconds == null
-            && DotDamageType == null && SlowEnabled == null && SlowPercent == null && CharmEnabled == null;
+            && DotDamageType == null && SuppressEnabled == null && SuppressProdigal == null
+            && SuppressRegenMult == null && SlowEnabled == null && SlowPercent == null && CharmEnabled == null;
 
         public ZoneEffects Clone() => new ZoneEffects
         {
             DotEnabled = DotEnabled, DotDamage = DotDamage, DotPercent = DotPercent,
             DotIntervalSeconds = DotIntervalSeconds, DotDamageType = DotDamageType,
+            SuppressEnabled = SuppressEnabled, SuppressProdigal = SuppressProdigal,
+            SuppressRegenMult = SuppressRegenMult,
             SlowEnabled = SlowEnabled, SlowPercent = SlowPercent, CharmEnabled = CharmEnabled,
         };
 
@@ -164,6 +184,9 @@ namespace ACE.Server.Managers.ZoneControl
                 DotPercent = upper.DotPercent ?? lower.DotPercent,
                 DotIntervalSeconds = upper.DotIntervalSeconds ?? lower.DotIntervalSeconds,
                 DotDamageType = upper.DotDamageType ?? lower.DotDamageType,
+                SuppressEnabled = upper.SuppressEnabled ?? lower.SuppressEnabled,
+                SuppressProdigal = upper.SuppressProdigal ?? lower.SuppressProdigal,
+                SuppressRegenMult = upper.SuppressRegenMult ?? lower.SuppressRegenMult,
                 SlowEnabled = upper.SlowEnabled ?? lower.SlowEnabled,
                 SlowPercent = upper.SlowPercent ?? lower.SlowPercent,
                 CharmEnabled = upper.CharmEnabled ?? lower.CharmEnabled,

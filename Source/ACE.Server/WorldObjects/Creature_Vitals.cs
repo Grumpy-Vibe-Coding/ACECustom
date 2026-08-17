@@ -134,6 +134,8 @@ namespace ACE.Server.WorldObjects
             var enchantmentMod = EnchantmentManager.GetRegenerationMod(vital);
 
             var augMod = 1.0f;
+            var zoneRegenMult = 1.0f;
+            var zoneProdigalBlocked = false;
             if (this is Player player)
             {
                 if (player.AugmentationFasterRegen > 0)
@@ -150,10 +152,41 @@ namespace ACE.Server.WorldObjects
                 };
                 if (regenProp != 0)
                     augMod += player.GetZoneCantripBonus(regenProp);
+
+                // Zone Control Suppression: recompute the enchantment mod without the Prodigal regen line
+                // (uncached path — the cached mod can't know about zone borders), and pick up the regen tuner.
+                try
+                {
+                    var zfx = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveEffectsForPlayer(player);
+                    if (zfx != null && zfx.EffectiveSuppressEnabled)
+                    {
+                        if (zfx.EffectiveSuppressProdigal)
+                        {
+                            enchantmentMod = EnchantmentManager.GetRegenerationMod(vital,
+                                ACE.Server.Managers.ZoneControl.ZoneEffectManager.ProdigalRegenSpells);
+                            zoneProdigalBlocked = true;
+                        }
+                        zoneRegenMult = (float)zfx.EffectiveSuppressRegenMult;
+                    }
+                }
+                catch
+                {
+                    // never let zone resolution break vital ticks
+                }
             }
 
             // cap rate?
             var currentTick = vital.RegenRate * attributeMod * stanceMod * enchantmentMod * augMod;
+
+            // Suppression regen tuner: shrink POSITIVE regen only (a degen tick is never softened).
+            if (zoneRegenMult != 1.0f && currentTick > 0)
+                currentTick *= zoneRegenMult;
+
+            if (ACE.Server.Managers.ServerConfig.regen_diag_verbose.Value && this is Player)
+                log.Warn($"[RegenDiag] {Name} {vital.Vital}: {vitalCurrent}/{vitalMax} rate={vital.RegenRate} " +
+                         $"attr={attributeMod:F3} stance={stanceMod:F3} ench={enchantmentMod:F3}" +
+                         $"{(zoneProdigalBlocked ? " PRODIGAL-BLOCKED" : "")} aug={augMod:F3} " +
+                         $"zoneRegenMult={zoneRegenMult:F2} tick={currentTick:F3}");
 
             // add in partially accumulated / rounded vitals from previous tick(s)
             var totalTick = currentTick + vital.PartialRegen;

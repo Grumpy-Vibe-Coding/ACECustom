@@ -1202,6 +1202,12 @@ namespace ACE.Server.Network.Structure
                 weapon.WieldSkillType == (int)PropertyInt64.LumAugItemCount)
                 effectDescriptions.Add($"- Wield requires: {weapon.WieldDifficulty ?? 0:N0} Item Augmentations");
 
+            // T16+ charm wield gates in slots 3/4 (owner 2026-08-15)
+            if (weapon.WieldRequirements3 == WieldRequirement.Int64Stat && weapon.WieldSkillType3 != null)
+                effectDescriptions.Add($"- Wield requires: {weapon.WieldDifficulty3 ?? 0:N0} {CharmCounterName((PropertyInt64)weapon.WieldSkillType3.Value)}");
+            if (weapon.WieldRequirements4 == WieldRequirement.Int64Stat && weapon.WieldSkillType4 != null)
+                effectDescriptions.Add($"- Wield requires: {weapon.WieldDifficulty4 ?? 0:N0} {CharmCounterName((PropertyInt64)weapon.WieldSkillType4.Value)}");
+
             // Property Details renders via the LONG DESCRIPTION, not the Use string (owner
             // 2026-08-01): the client draws its native caster sections (Mana Conversion, "Damage
             // bonus for X spells") AFTER the Use text, so a Use-carried block sat ABOVE them on
@@ -1215,6 +1221,20 @@ namespace ACE.Server.Network.Structure
 
             // item enchantments can also be on wielder currently
             AddEnchantments(weapon);
+        }
+
+        /// <summary>Display name for a growth-charm counter used as a T16+ wield gate.</summary>
+        private static string CharmCounterName(PropertyInt64 prop)
+        {
+            switch (prop)
+            {
+                case PropertyInt64.TriuneWeaveCount: return "Triune Weave";
+                case PropertyInt64.BattlemagesWrathCharmCount: return "Battlemage's Wrath";
+                case PropertyInt64.NetherVeilCharmCount: return "Nether Veil";
+                case PropertyInt64.CrashingSteelCharmCount: return "Crashing Steel";
+                case PropertyInt64.TrueShotCharmCount: return "True Shot";
+                default: return prop.ToString();
+            }
         }
 
         private void BuildHookProfile(WorldObject hookedItem)

@@ -17,6 +17,11 @@ namespace ACE.Server.Managers.ZoneControl
     {
         private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
+        /// <summary>The Prodigal regen enchantment line, excluded from players' regen math by the Suppression
+        /// card's Prodigal block: Regeneration 3731 (health), Rejuvenation 3732 (stamina), Mana Renewal 3725.
+        /// Consumed by Creature_Vitals.VitalHeartBeat via the uncached GetRegenerationMod overload.</summary>
+        public static readonly System.Collections.Generic.HashSet<int> ProdigalRegenSpells = new() { 3731, 3732, 3725 };
+
         /// <summary>How often to re-check a player who isn't currently taking a zone tick (entering-zone latency cap).</summary>
         private const double IdleRecheckSeconds = 1.0;
         /// <summary>Floor on the authored interval so a misconfigured 0 can't hammer every frame.</summary>

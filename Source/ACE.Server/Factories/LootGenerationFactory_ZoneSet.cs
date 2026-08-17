@@ -144,11 +144,61 @@ namespace ACE.Server.Factories
             wo.WieldSkillType = (int)PropertyInt64.LumAugItemCount;
             wo.WieldDifficulty = minWield;
 
+            // T16+ charm gates (owner 2026-08-15): the item-aug ladder purchase-caps at 4,000
+            // (reached at T15), so higher tiers freeze the item req and gate on growth charm
+            // counters instead — Triune Weave plus the weapon-family charm, both +500/tier.
+            // WEAPONS ONLY, and slots 3/4: slot 2 belongs to the forge's training requirement.
+            var isWeapon = wo is MeleeWeapon || wo is MissileLauncher || wo is Caster;
+            if (isWeapon && tierRow != null && tierRow.MinWieldTriune > 0)
+            {
+                wo.WieldRequirements3 = ACE.Entity.Enum.WieldRequirement.Int64Stat;
+                wo.WieldSkillType3 = (int)PropertyInt64.TriuneWeaveCount;
+                wo.WieldDifficulty3 = tierRow.MinWieldTriune;
+            }
+            if (isWeapon && tierRow != null && tierRow.MinWieldSkillCharm > 0)
+            {
+                wo.WieldRequirements4 = ACE.Entity.Enum.WieldRequirement.Int64Stat;
+                wo.WieldSkillType4 = (int)GetWieldCharmProperty(wo);
+                wo.WieldDifficulty4 = tierRow.MinWieldSkillCharm;
+            }
+
             // The client cannot render Int64Stat requirements. WEAPONS show the gate in the
             // Property Details section instead (AppraiseInfo, pinned bottom - owner 2026-08-01);
             // armor/jewelry have no such section, so they keep this LongDesc line.
-            if (!(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
+            if (!isWeapon)
                 AppendLongDescLine(wo, $"Wield requires: {minWield:N0} Item Augmentations");
+        }
+
+        /// <summary>Standard weapon mods (owner 2026-08-15): every T10+ weapon and wand leaves
+        /// the loot/forge pipeline with EXACTLY +20 pct attack mod and +20 pct melee defense
+        /// (wands additionally 20 pct mana conversion), replacing the rolled values — so tier
+        /// difficulty can be tuned against KNOWN player mods ("predictable hit or not hit
+        /// levers"). New drops/forges only; existing items keep what they rolled.</summary>
+        public static void ApplyStandardWeaponMods(WorldObject wo, int tier)
+        {
+            if (wo == null || tier < 10)
+                return;
+            if (!(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
+                return;
+
+            wo.WeaponOffense = 1.20;
+            wo.WeaponDefense = 1.20;
+            if (wo is Caster)
+                wo.ManaConversionMod = 0.20;
+        }
+
+        /// <summary>The weapon-family growth charm whose counter gates T16+ wield (owner
+        /// 2026-08-15): melee = Crashing Steel, launchers = True Shot, nether casters =
+        /// Nether Veil, every other caster = Battlemage's Wrath.</summary>
+        public static PropertyInt64 GetWieldCharmProperty(WorldObject wo)
+        {
+            if (wo is MissileLauncher)
+                return PropertyInt64.TrueShotCharmCount;
+            if (wo is Caster)
+                return wo.W_DamageType == ACE.Entity.Enum.DamageType.Nether
+                    ? PropertyInt64.NetherVeilCharmCount
+                    : PropertyInt64.BattlemagesWrathCharmCount;
+            return PropertyInt64.CrashingSteelCharmCount;
         }
 
         /// <summary>Append one line to an item's LongDesc (the LIVE description path - the

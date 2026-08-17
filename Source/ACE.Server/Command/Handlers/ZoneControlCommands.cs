@@ -2144,7 +2144,7 @@ namespace ACE.Server.Command.Handlers
 
                     case "effect":
                     {
-                        if (args.Count < 2) { Msg("Usage: effect <name> [show | dot on|off | dmg <amount> | type <fire|cold|acid|electric|nether|stamina|mana|health|percent> | interval <seconds>]"); return; }
+                        if (args.Count < 2) { Msg("Usage: effect <name> [show | dot on|off | dmg <amount> | type <fire|cold|acid|electric|nether|stamina|mana|health|percent> | interval <seconds> | suppress on|off | suppress prodigal on|off | suppress regen <pct 0-100>]"); return; }
                         var name = args[1];
                         var area = ZoneControlManager.GetArea(name);
                         if (area == null) { Msg($"No zone '{name}'."); return; }
@@ -2185,8 +2185,34 @@ namespace ACE.Server.Command.Handlers
                                     apply = e => { e.DotPercent = false; e.DotDamageType = (int)dt; };
                                 else { Msg("type must be 'percent' or one of: " + string.Join(", ", DamageTypeNames)); return; }
                                 break;
+                            case "suppress":
+                            {
+                                if (args.Count < 4) { Msg("Usage: effect <name> suppress on|off | suppress prodigal on|off | suppress regen <pct 0-100>"); return; }
+                                var supField = args[3].ToLowerInvariant();
+                                if (supField == "on" || supField == "off" || supField == "1" || supField == "0" || supField == "true" || supField == "false")
+                                {
+                                    var supOn = supField == "on" || supField == "1" || supField == "true";
+                                    apply = e => e.SuppressEnabled = supOn;
+                                }
+                                else if (supField == "prodigal")
+                                {
+                                    if (args.Count < 5) { Msg("Usage: effect <name> suppress prodigal on|off"); return; }
+                                    var prodOn = args[4].Equals("on", StringComparison.OrdinalIgnoreCase) || args[4] == "1"
+                                                 || args[4].Equals("true", StringComparison.OrdinalIgnoreCase);
+                                    apply = e => e.SuppressProdigal = prodOn;
+                                }
+                                else if (supField == "regen")
+                                {
+                                    if (args.Count < 5 || !TryDouble(args[4], out var pct) || pct < 0 || pct > 100)
+                                    { Msg("regen must be a percent 0-100 (100 = normal regen, 0 = no regen)."); return; }
+                                    var mult = pct / 100.0;
+                                    apply = e => e.SuppressRegenMult = mult;
+                                }
+                                else { Msg("Usage: effect <name> suppress on|off | suppress prodigal on|off | suppress regen <pct 0-100>"); return; }
+                                break;
+                            }
                             default:
-                                Msg("Unknown effect field. Use: dot on|off | dmg <amount> | type <name|percent> | interval <seconds> | show");
+                                Msg("Unknown effect field. Use: dot on|off | dmg <amount> | type <name|percent> | interval <seconds> | suppress ... | show");
                                 return;
                         }
 
@@ -2312,13 +2338,20 @@ namespace ACE.Server.Command.Handlers
 
             // Live diagnostics-bool states so the plugin's Log-section toggles show truth.
             // Fixed order: damage_event_debug_server_log, damage_event_debug_only_nonplayer_attackers,
-            // spawn_diag_verbose, generator_diag_verbose, visibility_create_object_diag_verbose.
+            // spawn_diag_verbose, generator_diag_verbose, visibility_create_object_diag_verbose,
+            // regen_diag_verbose. APPEND-ONLY: the plugin indexes this list positionally.
             sb.Append("|diagdefs=")
               .Append(ServerConfig.damage_event_debug_server_log.Value ? '1' : '0').Append(',')
               .Append(ServerConfig.damage_event_debug_only_nonplayer_attackers.Value ? '1' : '0').Append(',')
               .Append(ServerConfig.spawn_diag_verbose.Value ? '1' : '0').Append(',')
               .Append(ServerConfig.generator_diag_verbose.Value ? '1' : '0').Append(',')
-              .Append(ServerConfig.visibility_create_object_diag_verbose.Value ? '1' : '0');
+              .Append(ServerConfig.visibility_create_object_diag_verbose.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.regen_diag_verbose.Value ? '1' : '0');
+
+            // Live combat-rule bool states so the plugin's GM Tools toggles show truth.
+            // Fixed order: missile_power_bar. APPEND-ONLY: the plugin indexes this list positionally.
+            sb.Append("|combatdefs=")
+              .Append(ServerConfig.missile_power_bar.Value ? '1' : '0');
 
             // Body-part overrides: bp_<key>=<armor|->,<damage|->,<variance|->,<dmgtype|-> ('-' = not overridden)
             if (vp?.BodyParts is { Count: > 0 })
@@ -2491,7 +2524,20 @@ namespace ACE.Server.Command.Handlers
               .Append("|fx_dotdmg=").Append(effects.EffectiveDotDamage.ToString(CultureInfo.InvariantCulture))
               .Append("|fx_dottype=").Append(effects.EffectiveDotDamageType)
               .Append("|fx_dotpercent=").Append(effects.EffectiveDotPercent ? 1 : 0)
-              .Append("|fx_dotinterval=").Append(effects.EffectiveDotIntervalSeconds.ToString(CultureInfo.InvariantCulture));
+              .Append("|fx_dotinterval=").Append(effects.EffectiveDotIntervalSeconds.ToString(CultureInfo.InvariantCulture))
+              .Append("|fx_sup=").Append(effects.EffectiveSuppressEnabled ? 1 : 0)
+              .Append("|fx_supprod=").Append(effects.EffectiveSuppressProdigal ? 1 : 0)
+              .Append("|fx_supregen=").Append(effects.EffectiveSuppressRegenMult.ToString(CultureInfo.InvariantCulture));
+
+            // Session-state flags for the GM Tools On/Off highlight — server truth, fixed order:
+            // adminvision, attackable, unkillable, cloak (any cloaked state), portal bypass.
+            var sp = session?.Player;
+            if (sp != null)
+                sb.Append("|sess=").Append(sp.Adminvision ? 1 : 0).Append(',')
+                  .Append(sp.Attackable ? 1 : 0).Append(',')
+                  .Append(sp.IsUnkillable ? 1 : 0).Append(',')
+                  .Append(sp.CloakStatus != CloakStatus.Off ? 1 : 0).Append(',')
+                  .Append(sp.IgnorePortalRestrictions ? 1 : 0);
 
             // Live hints from the admin's in-game target. When the plugin is watching a SPECIFIC monster
             // (--wcid), only send them if the in-game target IS that monster — otherwise targeting some other
@@ -2807,11 +2853,22 @@ namespace ACE.Server.Command.Handlers
         /// <summary>Human-readable one-liner for a zone's DoT config (command echoes + show).</summary>
         private static string DescribeDot(ZoneEffects e)
         {
-            if (!e.EffectiveDotEnabled) return "DoT off";
-            var amount = e.EffectiveDotPercent
-                ? $"{e.EffectiveDotDamage:0.##} pct max health"
-                : $"{e.EffectiveDotDamage:0.##} {(DamageType)e.EffectiveDotDamageType}";
-            return $"DoT ON: {amount} every {Math.Max(1.0, e.EffectiveDotIntervalSeconds):0.##}s";
+            string dot;
+            if (!e.EffectiveDotEnabled) dot = "DoT off";
+            else
+            {
+                var amount = e.EffectiveDotPercent
+                    ? $"{e.EffectiveDotDamage:0.##} pct max health"
+                    : $"{e.EffectiveDotDamage:0.##} {(DamageType)e.EffectiveDotDamageType}";
+                dot = $"DoT ON: {amount} every {Math.Max(1.0, e.EffectiveDotIntervalSeconds):0.##}s";
+            }
+
+            string sup;
+            if (!e.EffectiveSuppressEnabled) sup = "Suppression off";
+            else sup = $"Suppression ON: Prodigal regen {(e.EffectiveSuppressProdigal ? "blocked" : "allowed")}, " +
+                       $"regen {e.EffectiveSuppressRegenMult * 100.0:0.##} pct";
+
+            return dot + "; " + sup;
         }
 
         private static readonly string[] DamageTypeNames =

@@ -1316,6 +1316,26 @@ namespace ACE.Server.WorldObjects.Managers
             return modifier;
         }
 
+        /// <summary>
+        /// Regen mod with specific spell ids excluded BEFORE top-layer selection (a retail regen buff underneath
+        /// an excluded one still applies). Zone Control Suppression (Prodigal block) calls this per vital tick.
+        /// DELIBERATELY non-virtual and uncached: EnchantmentManagerWithCaching's regen cache only invalidates on
+        /// enchantment change, not movement, so a cached zone-dependent value would go stale at zone borders.
+        /// </summary>
+        public float GetRegenerationMod(CreatureVital vital, HashSet<int> excludeSpellIds)
+        {
+            var typeFlags = EnchantmentTypeFlags.Float | EnchantmentTypeFlags.SingleStat | EnchantmentTypeFlags.Multiplicative;
+            var vitalKey = GetVitalRateKey(vital);
+            var enchantments = WorldObject.Biota.PropertiesEnchantmentRegistry.GetEnchantmentsTopLayerByStatModType(
+                typeFlags, (uint)vitalKey, WorldObject.BiotaDatabaseLock, SpellSet.SetSpells, excludeSpellIds);
+
+            var modifier = 1.0f;
+            foreach (var enchantment in enchantments)
+                modifier *= enchantment.StatModValue;
+
+            return modifier;
+        }
+
 
         /// <summary>
         /// Returns the weapon damage bonus, ie. Blood Drinker

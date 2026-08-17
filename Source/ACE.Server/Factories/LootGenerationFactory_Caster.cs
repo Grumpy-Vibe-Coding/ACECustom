@@ -198,6 +198,9 @@ namespace ACE.Server.Factories
                 MutateItemLevel(wo, profile);
             }
 
+            // standard T10+ mods override the rolled offense/defense/manac (owner 2026-08-15)
+            ApplyStandardWeaponMods(wo, profile.Tier);
+
             // long description
             wo.LongDesc = GetLongDesc(wo);
         }

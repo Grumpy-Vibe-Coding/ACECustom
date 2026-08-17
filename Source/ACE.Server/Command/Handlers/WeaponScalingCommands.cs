@@ -117,8 +117,9 @@ namespace ACE.Server.Command.Handlers
             sb.Append("|grades=").Append(string.Join(",",
                 Managers.WeaponScaling.WeaponScalingManager.GradeBands
                     .Select(b => $"{b.Grade}~{F(cfg.GradeWeights != null && cfg.GradeWeights.TryGetValue(b.Grade, out var gw) ? gw : 0)}")));
+            // 5-field tier rows since 2026-08-15 (charm gates); the plugin parses 3 or 5.
             sb.Append("|tiers=").Append(string.Join(",",
-                cfg.Tiers.Select(t => $"{t.Tier}~{t.Cap}~{t.MinWieldAugs}")));
+                cfg.Tiers.Select(t => $"{t.Tier}~{t.Cap}~{t.MinWieldAugs}~{t.MinWieldTriune}~{t.MinWieldSkillCharm}")));
             sb.Append("|scripts=").Append(string.Join(",",
                 cfg.Scripts.OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase)
                     .Select(s => $"{s.Key}~{F(s.Value.KMin)}~{F(s.Value.KMax)}~{F(s.Value.Variance)}")));
@@ -147,7 +148,7 @@ namespace ACE.Server.Command.Handlers
 
         [CommandHandler("weaponscale", AccessLevel.Developer, CommandHandlerFlag.None, 0,
             "Weapon Scaling config (plugin fallback).",
-            "show | enable on|off | tier <t> cap|minwield <n> | tier add <t> [cap] [minwield] | tier remove <t> | "
+            "show | enable on|off | tier <t> cap|minwield|minwieldtriune|minwieldskillcharm <n> | tier add <t> [cap] [minwield] | tier remove <t> | "
             + "script <name> kmin|kmax <v> | script add <name> [kmin] [kmax] | script remove <name> | "
             + "kc min|max <v> | sync on|off | reset | reload")]
         public static void HandleWeaponScale(Session session, params string[] parameters)
@@ -161,6 +162,8 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /weaponscale enable on|off       master switch; off = static-base-only combat (current behavior)");
                 Msg("  /weaponscale tier <t> cap <n>    scaling stops growing at n item augs for tier-t weapons");
                 Msg("  /weaponscale tier <t> minwield <n>   item augs required to WIELD tier-t weapons (economy gate)");
+                Msg("  /weaponscale tier <t> minwieldtriune <n>   Triune Weave count required to wield (T16+ charm gate)");
+                Msg("  /weaponscale tier <t> minwieldskillcharm <n>   weapon-family charm count required to wield (T16+)");
                 Msg("  /weaponscale tier add <t> [cap] [minwield] | tier remove <t>");
                 Msg("  /weaponscale script <name> kmin <v> | kmax <v> | variance <v>   per-loot-script k range + Scheme C family variance");
                 Msg("  /weaponscale script <name> ladder <anchorS> | ladder clear   seed/drop the 16-rung grade ladder (+18 pct per grade)");
@@ -202,9 +205,9 @@ namespace ACE.Server.Command.Handlers
                     var cfg = WeaponScalingManager.Current;
                     var sb = new StringBuilder();
                     sb.AppendLine($"Weapon Scaling: {(cfg.Enabled ? "Enabled" : "Disabled")} (kc {cfg.KcMin:0.###}-{cfg.KcMax:0.###}, tighten {cfg.TightenStrength:0.###})");
-                    sb.AppendLine("  tier | cap | minwield");
+                    sb.AppendLine("  tier | cap | minwield | triune | skillcharm");
                     foreach (var t in cfg.Tiers)
-                        sb.AppendLine($"  T{t.Tier} | {t.Cap:N0} | {t.MinWieldAugs:N0}");
+                        sb.AppendLine($"  T{t.Tier} | {t.Cap:N0} | {t.MinWieldAugs:N0} | {t.MinWieldTriune:N0} | {t.MinWieldSkillCharm:N0}");
                     sb.AppendLine("  script | kmin | kmax | variance | ladder");
                     foreach (var s in cfg.Scripts.OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase))
                         sb.AppendLine($"  {s.Key} | {s.Value.KMin:0.###} | {s.Value.KMax:0.###} | {s.Value.Variance:0.###} | "
@@ -314,9 +317,9 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
                     var field = args[2].ToLowerInvariant();
-                    if (field != "cap" && field != "minwield")
+                    if (field != "cap" && field != "minwield" && field != "minwieldtriune" && field != "minwieldskillcharm")
                     {
-                        Msg("tier: field must be cap or minwield.");
+                        Msg("tier: field must be cap, minwield, minwieldtriune, or minwieldskillcharm.");
                         return;
                     }
                     var found = false;
@@ -326,7 +329,9 @@ namespace ACE.Server.Command.Handlers
                         if (row == null) return;
                         found = true;
                         if (field == "cap") row.Cap = value;
-                        else row.MinWieldAugs = value;
+                        else if (field == "minwield") row.MinWieldAugs = value;
+                        else if (field == "minwieldtriune") row.MinWieldTriune = value;
+                        else row.MinWieldSkillCharm = value;
                     });
                     Msg(found ? $"Tier T{tier} {field} = {value:N0}." : $"Tier T{tier} not found (use tier add).");
                     return;
@@ -910,6 +915,10 @@ namespace ACE.Server.Command.Handlers
                 return $"forge: could not create wcid {wcid}";
 
             ACE.Server.Factories.LootGenerationFactory.StripWieldRequirements(wo);
+            // Standard T10+ mods: 20 pct attack / 20 pct melee d (wands +20 pct mana c), same as
+            // every loot drop (owner 2026-08-15). The T10 CreateAndMutateWcid path already stamped
+            // them in mutation; this covers the T11+ bench path.
+            ACE.Server.Factories.LootGenerationFactory.ApplyStandardWeaponMods(wo, tier);
             // T10 = the basic tier, no aug wield gate (same rule as /asforge armor). A minwield-0
             // tier row would NOT give that: ApplyT11WieldRequirement falls back to the global gate.
             if (tier >= 11)

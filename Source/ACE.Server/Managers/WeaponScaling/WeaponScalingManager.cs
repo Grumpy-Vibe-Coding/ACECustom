@@ -20,6 +20,14 @@ namespace ACE.Server.Managers.WeaponScaling
         public int Tier { get; set; }
         public int Cap { get; set; }
         public int MinWieldAugs { get; set; }
+
+        // Charm wield gates (owner 2026-08-15): item augs purchase-cap at 4,000, so T16+ weapons
+        // can't keep climbing the item-aug ladder. From T16 the item req FREEZES at 4,000 and
+        // these two climb instead, +500/tier each: Triune Weave, plus the weapon-family charm
+        // (Crashing Steel melee / True Shot launchers / Battlemage's Wrath elemental casters /
+        // Nether Veil nether casters). 0 = no charm gate (all tiers through T15).
+        public int MinWieldTriune { get; set; }
+        public int MinWieldSkillCharm { get; set; }
     }
 
     /// <summary>Per-loot-script k roll range. A weapon's stored QUALITY (0-1000) lerps between
@@ -263,11 +271,17 @@ namespace ACE.Server.Managers.WeaponScaling
             // requires it, and ApplyT11WieldRequirement now reads this table per tier.
             for (var tier = 11; tier <= 25; tier++)
             {
+                // Item augs purchase-cap at 4,000 (EmoteManager.AugmentationCaps), which the
+                // ladder reaches at T15. T16+ freezes the item req there and gates on charm
+                // counters instead: Triune Weave + the weapon-family charm, 500 each at T16,
+                // +500/tier (owner 2026-08-15).
                 cfg.Tiers.Add(new WeaponScalingTier
                 {
                     Tier = tier,
                     Cap = 2500 + 500 * (tier - 11),
-                    MinWieldAugs = tier == 11 ? 2000 : 2500 + 500 * (tier - 12),
+                    MinWieldAugs = tier == 11 ? 2000 : Math.Min(4000, 2500 + 500 * (tier - 12)),
+                    MinWieldTriune = tier >= 16 ? 500 * (tier - 15) : 0,
+                    MinWieldSkillCharm = tier >= 16 ? 500 * (tier - 15) : 0,
                 });
             }
 
@@ -528,6 +542,18 @@ namespace ACE.Server.Managers.WeaponScaling
             {
                 t.Cap = Math.Max(0, t.Cap);
                 t.MinWieldAugs = Math.Max(0, t.MinWieldAugs);
+                t.MinWieldTriune = Math.Max(0, t.MinWieldTriune);
+                t.MinWieldSkillCharm = Math.Max(0, t.MinWieldSkillCharm);
+
+                // Migration for stores saved before the charm gates existed (owner 2026-08-15):
+                // a T16+ row with BOTH charm fields 0 predates the feature — seed the +500/tier
+                // ladders and pull the item req back to the 4,000 purchase cap it can't exceed.
+                if (t.Tier >= 16 && t.MinWieldTriune == 0 && t.MinWieldSkillCharm == 0)
+                {
+                    t.MinWieldTriune = 500 * (t.Tier - 15);
+                    t.MinWieldSkillCharm = 500 * (t.Tier - 15);
+                    t.MinWieldAugs = Math.Min(4000, t.MinWieldAugs);
+                }
             }
 
             var scripts = new Dictionary<string, WeaponScalingScript>(StringComparer.OrdinalIgnoreCase);
