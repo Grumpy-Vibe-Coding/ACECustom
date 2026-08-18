@@ -229,7 +229,9 @@ namespace ACE.Server.Command.Handlers
 
                     case "get":
                     {
-                        if (args.Count < 2) { Msg("Usage: get <name> [--wcid <id>]"); return; }
+                        // Bare get = the GM Tools state alone (session flags + shard-combat rules).
+                        // Those are not zone state, so the plugin asks for them zoneless.
+                        if (args.Count < 2) { Msg(BuildSessionPayload(session)); return; }
                         Msg(BuildZonePayload(args[1], wcid, session));
                         return;
                     }
@@ -2244,6 +2246,40 @@ namespace ACE.Server.Command.Handlers
         /// <summary>"[[ZCD]]var=..|found=..|&lt;stat&gt;=defined,value|.." - one variation Default's stats,
         /// in the same wire shape as [[ZC]] so the plugin's grid parser is shared. Stats only: a Default
         /// also carries Effects/Appearance, which the editor does not author (owner 2026-08-11).</summary>
+        /// <summary>"|sess=..." — session-state flags for the GM Tools On/Off highlight, server truth.
+        /// Fixed order: adminvision, attackable, unkillable, cloak (any cloaked state), portal bypass.
+        /// Shared by the zone payload and the session-only payload so the two can never drift.</summary>
+        private static void AppendSessionState(StringBuilder sb, Session session)
+        {
+            var sp = session?.Player;
+            if (sp != null)
+                sb.Append("|sess=").Append(sp.Adminvision ? 1 : 0).Append(',')
+                  .Append(sp.Attackable ? 1 : 0).Append(',')
+                  .Append(sp.IsUnkillable ? 1 : 0).Append(',')
+                  .Append(sp.CloakStatus != CloakStatus.Off ? 1 : 0).Append(',')
+                  .Append(sp.IgnorePortalRestrictions ? 1 : 0);
+        }
+
+        /// <summary>"|combatdefs=..." — live combat-rule bool states so the plugin's GM Tools toggles
+        /// show truth. Fixed order: missile_power_bar. APPEND-ONLY: the plugin indexes positionally.</summary>
+        private static void AppendCombatDefs(StringBuilder sb)
+        {
+            sb.Append("|combatdefs=")
+              .Append(ServerConfig.missile_power_bar.Value ? '1' : '0');
+        }
+
+        /// <summary>"[[ZCSESS]]|sess=..|combatdefs=.." — the GM Tools state alone, for a bare
+        /// "/zonecontrol get" with no zone name. Session flags and shard-combat rules are not zone
+        /// state, so the plugin must be able to fetch them with no Zone loaded (owner 2026-08-17:
+        /// the GM Tools toggles sat on "--" until a zone sync happened to run).</summary>
+        private static string BuildSessionPayload(Session session)
+        {
+            var sb = new StringBuilder("[[ZCSESS]]");
+            AppendSessionState(sb, session);
+            AppendCombatDefs(sb);
+            return sb.ToString();
+        }
+
         private static string BuildVariationDefaultPayload(int variation)
         {
             var d = ZoneControlManager.GetVariationDefault(variation);
@@ -2348,10 +2384,7 @@ namespace ACE.Server.Command.Handlers
               .Append(ServerConfig.visibility_create_object_diag_verbose.Value ? '1' : '0').Append(',')
               .Append(ServerConfig.regen_diag_verbose.Value ? '1' : '0');
 
-            // Live combat-rule bool states so the plugin's GM Tools toggles show truth.
-            // Fixed order: missile_power_bar. APPEND-ONLY: the plugin indexes this list positionally.
-            sb.Append("|combatdefs=")
-              .Append(ServerConfig.missile_power_bar.Value ? '1' : '0');
+            AppendCombatDefs(sb);
 
             // Body-part overrides: bp_<key>=<armor|->,<damage|->,<variance|->,<dmgtype|-> ('-' = not overridden)
             if (vp?.BodyParts is { Count: > 0 })
@@ -2529,15 +2562,7 @@ namespace ACE.Server.Command.Handlers
               .Append("|fx_supprod=").Append(effects.EffectiveSuppressProdigal ? 1 : 0)
               .Append("|fx_supregen=").Append(effects.EffectiveSuppressRegenMult.ToString(CultureInfo.InvariantCulture));
 
-            // Session-state flags for the GM Tools On/Off highlight — server truth, fixed order:
-            // adminvision, attackable, unkillable, cloak (any cloaked state), portal bypass.
-            var sp = session?.Player;
-            if (sp != null)
-                sb.Append("|sess=").Append(sp.Adminvision ? 1 : 0).Append(',')
-                  .Append(sp.Attackable ? 1 : 0).Append(',')
-                  .Append(sp.IsUnkillable ? 1 : 0).Append(',')
-                  .Append(sp.CloakStatus != CloakStatus.Off ? 1 : 0).Append(',')
-                  .Append(sp.IgnorePortalRestrictions ? 1 : 0);
+            AppendSessionState(sb, session);
 
             // Live hints from the admin's in-game target. When the plugin is watching a SPECIFIC monster
             // (--wcid), only send them if the in-game target IS that monster — otherwise targeting some other
