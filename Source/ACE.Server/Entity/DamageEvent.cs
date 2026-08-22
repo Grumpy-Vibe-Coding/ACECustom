@@ -325,6 +325,14 @@ namespace ACE.Server.Entity
                 damageBonus = cachedLuminanceAugmentCount.Value;
             }
 
+            // Zone Control cantrip gear: Melee/Missile augs summed across equipped items. LIVE per
+            // swing, deliberately NOT an Effective*AugCount read - stays out of the enchantment
+            // bake, the relief axis and every wield gate. Kept out of cachedLuminanceAugmentCount
+            // so the gear flat stays crit-blind like the purchased-aug flat. 0 on mobs (cache null).
+            damageBonus += attacker.GetZoneCantripBonus(isMissile
+                ? Managers.ZoneControl.ZoneCantrips.MissileAugBonus
+                : Managers.ZoneControl.ZoneCantrips.MeleeAugBonus);
+
             BaseDamage += damageBonus;
             DebugLuminanceFlatDamageBonus = damageBonus;
 
@@ -605,7 +613,12 @@ namespace ACE.Server.Entity
 
             // v11+ percent-HP floor: a high-variation monster always deals at least a %HP chunk to a player,
             // bypassing life-aug damage reduction. Whichever is larger — normal mitigated damage or the floor — wins.
-            if (defender is Player pctHpPlayer && attacker != null)
+            // Stamina/Mana guard FIXED 2026-08-21 (owner ruling): the magic path already
+            // excludes vital-drain damage types (SpellProjectile.cs) but this one did not, so
+            // a mob whose melee attack is Stamina- or Mana-typed applied a HEALTH-percent
+            // floor to the wrong vital.
+            if (defender is Player pctHpPlayer && attacker != null
+                && DamageType != DamageType.Stamina && DamageType != DamageType.Mana)
             {
                 var pctHpFloor = Creature.GetPercentHpFloorDamage(attacker, pctHpPlayer, IsCritical);
                 if (pctHpFloor > Damage)
@@ -637,6 +650,13 @@ namespace ACE.Server.Entity
             }
 
             DamageMitigated = DamageBeforeMitigation - Damage;
+
+            // Zone Control pct-HP damage special (key 44, gauntlets): flat pct of the defender's max HP,
+            // added AFTER DamageMitigated is booked so no crit/armor/DRR/pet mitigation touches it (and the
+            // mitigation figure does not go negative). Player attacker vs a zone-profiled monster only;
+            // the NO-KILL rule, immune bool and per-character cooldown live in Player.ZcTryPctHpDamage.
+            if (Damage > 0 && playerAttacker != null && playerDefender == null)
+                Damage += playerAttacker.ZcTryPctHpDamage(defender);
 
             //Console.WriteLine($"[DEBUG] Final Damage: {Damage}");
             return Damage;

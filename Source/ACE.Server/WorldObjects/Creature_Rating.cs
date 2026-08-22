@@ -217,7 +217,7 @@ namespace ACE.Server.WorldObjects
             var enchantments = EnchantmentManager.GetRating(PropertyInt.DamageRating);
 
             // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearDamage);
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearDamage, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapLine, 2500);
 
             // weakness as negative damage rating?
             // TODO: this should be factored in as a separate weakness rating...
@@ -267,8 +267,11 @@ namespace ACE.Server.WorldObjects
             // additive enchantments
             var enchantments = EnchantmentManager.GetRating(PropertyInt.DamageResistRating);
 
-            // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearDamageResist);
+            // equipment ratings - worn sum HARD-CAPPED at gear_cap_dr (owner 2026-08-21: 2500 means EXACTLY 2500;
+            // the flat bands give 18 x 139 = 2502 at T25). Equipment term only; everything below stacks untouched.
+            // CritDmgResist / CritResist / NetherResist cap at gear_cap_cdr, the Dmg / CritDmg / MaxHP / HealBoost
+            // lines at gear_cap_line, all via GetEquippedItemsRatingSumCapped (Creature_Equipment).
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearDamageResist, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapDr, 2500);
 
             // nether DoTs as negative DRR?
             // TODO: this should be factored in as a separate nether damage rating...
@@ -357,7 +360,7 @@ namespace ACE.Server.WorldObjects
             var enchantments = EnchantmentManager.GetRating(PropertyInt.CritDamageRating);
 
             // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearCritDamage);
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearCritDamage, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapLine, 2500);
 
             // augmentations
             var augBonus = 0;
@@ -383,7 +386,7 @@ namespace ACE.Server.WorldObjects
             var enchantments = EnchantmentManager.GetRating(PropertyInt.CritResistRating);
 
             // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearCritResist);
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearCritResist, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapCdr, 1500);
 
             // no augs / lum augs?
             return critResistRating + enchantments + equipment;
@@ -398,7 +401,7 @@ namespace ACE.Server.WorldObjects
             var enchantments = EnchantmentManager.GetRating(PropertyInt.CritDamageResistRating);
 
             // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearCritDamageResist);
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearCritDamageResist, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapCdr, 1500);
 
             var lumAugBonus = 0;
             if (this is Player player)
@@ -416,7 +419,7 @@ namespace ACE.Server.WorldObjects
             var enchantments = EnchantmentManager.GetRating(PropertyInt.HealingBoostRating);
 
             // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearHealingBoost);
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearHealingBoost, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapLine, 2500);
 
             var lumAugBonus = 0;
             if (this is Player player)
@@ -483,7 +486,7 @@ namespace ACE.Server.WorldObjects
             var enchantments = EnchantmentManager.GetRating(PropertyInt.NetherResistRating);
 
             // equipment ratings
-            var equipment = GetEquippedItemsRatingSum(PropertyInt.GearNetherResist);
+            var equipment = GetEquippedItemsRatingSumCapped(PropertyInt.GearNetherResist, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapCdr, 1500);
 
             return netherResistRating + equipment + enchantments;
         }
@@ -499,7 +502,7 @@ namespace ACE.Server.WorldObjects
 
         public int GetGearMaxHealth()
         {
-            return GetEquippedItemsRatingSum(PropertyInt.GearMaxHealth);
+            return GetEquippedItemsRatingSumCapped(PropertyInt.GearMaxHealth, ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapLine, 2500);
         }
 
         public int GetPKDamageRating()

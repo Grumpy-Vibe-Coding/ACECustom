@@ -114,8 +114,10 @@ namespace ACE.Server.WorldObjects
                     }
 
                     // 3. Damage: Force update vital (Direct HP reduction)
+                    // Zone Control Cheat Death window (ZcDamageImmune): warning + wisp still fire, no HP loss.
                     var dmg = (int)(Health.MaxValue * 0.05f);
                     if (dmg < 10) dmg = 10;
+                    if (ZcDamageImmune) dmg = 0;
 
                     UpdateVitalDelta(Health, -dmg);
                     Session.Network.EnqueueSend(new GameMessagePrivateUpdateVital(this, Health));

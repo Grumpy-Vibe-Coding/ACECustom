@@ -244,6 +244,7 @@ namespace ACE.Server.Managers.ZoneControl
                 && (vp.PropFloats == null || vp.PropFloats.Count == 0)
                 && (vp.PropBools == null || vp.PropBools.Count == 0)
                 && (vp.CustomCantrips == null || vp.CustomCantrips.Count == 0)
+                && (vp.CustomCantripBands == null || vp.CustomCantripBands.Count == 0)
                 && (vp.CurrencyDrops == null || vp.CurrencyDrops.Count == 0)
                 && (vp.SpellRules == null || vp.SpellRules.Count == 0);
         }
@@ -456,6 +457,7 @@ namespace ACE.Server.Managers.ZoneControl
             Dictionary<int, double> propFloats = null;
             Dictionary<int, bool> propBools = null;
             List<int> customCantrips = null;
+            Dictionary<int, CantripBand> cantripBands = null;
             List<ZoneCurrencyDrop> currencyDrops = null;
             List<ZoneSpellRule> spellRules = null;
 
@@ -478,6 +480,14 @@ namespace ACE.Server.Managers.ZoneControl
                 if (variantProfile.PropBools is { Count: > 0 }) propBools = new Dictionary<int, bool>(variantProfile.PropBools);
                 if (variantProfile.CustomCantrips is { Count: > 0 }) customCantrips = new List<int>(variantProfile.CustomCantrips);
 
+                if (variantProfile.CustomCantripBands is { Count: > 0 })
+                {
+                    cantripBands = new Dictionary<int, CantripBand>(variantProfile.CustomCantripBands.Count);
+                    foreach (var kvp in variantProfile.CustomCantripBands)
+                        if (kvp.Value != null)
+                            cantripBands[kvp.Key] = kvp.Value.Clone();
+                }
+
                 if (variantProfile.CurrencyDrops is { Count: > 0 })
                 {
                     currencyDrops = new List<ZoneCurrencyDrop>(variantProfile.CurrencyDrops.Count);
@@ -495,7 +505,7 @@ namespace ACE.Server.Managers.ZoneControl
                 }
             }
 
-            return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops, spellRules);
+            return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops, spellRules, cantripBands);
         }
 
         // CopyEffects removed 2026-07-30 — ZoneEffects.Merge(default, zone) both layers AND clones.
@@ -583,6 +593,37 @@ namespace ACE.Server.Managers.ZoneControl
                 return null;
 
             var effVar = GetEffectiveVariation(creature);
+
+            ZoneRef best = null;
+            foreach (var zr in list)
+            {
+                if (zr.Variation != effVar)
+                    continue;
+                if (best == null || zr.LandblockCount < best.LandblockCount)
+                    best = zr;
+            }
+
+            return best?.Default;
+        }
+
+        /// <summary>
+        /// Resolves the winning zone's DEFAULT stat profile for a PLAYER standing somewhere - the
+        /// player-side twin of <see cref="ResolveZoneDefaultForCreature"/> (same landblock + variation
+        /// gating, same most-specific-wins, no per-WCID bucket). Used for the gear_cap_* knobs: the
+        /// caller falls back to its C# default when this is null, so a knob read through here applies
+        /// everywhere and a zone merely re-tunes it. Lock-free snapshot read; safe on the rating hot path.
+        /// </summary>
+        public static EvaluatedProfile ResolveZoneDefaultForPlayer(Player player)
+        {
+            if (player == null)
+                return null;
+
+            var snap = _snapshot;
+            var landblock = player.Location?.LandblockId.Landblock ?? 0;
+            if (!snap.EnabledLandblocks.Contains(landblock) || !snap.ByLandblock.TryGetValue(landblock, out var list))
+                return null;
+
+            var effVar = GetEffectiveVariation(player);
 
             ZoneRef best = null;
             foreach (var zr in list)

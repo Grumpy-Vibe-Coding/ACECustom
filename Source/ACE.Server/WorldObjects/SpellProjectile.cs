@@ -383,6 +383,7 @@ namespace ACE.Server.WorldObjects
 
             var forkEligibleOnImpact = creatureTarget.IsAlive
                 && !(targetPlayer?.Invincible ?? false)
+                && !(targetPlayer?.ZcDamageImmune ?? false)
                 && !(targetPlayer?.UnderLifestoneProtection ?? false);
 
             var pkError = ProjectileSource?.CheckPKStatusVsTarget(creatureTarget, Spell);
@@ -503,7 +504,7 @@ namespace ACE.Server.WorldObjects
             var sourcePlayer = source as Player;
             var targetPlayer = target as Player;
 
-            if (source == null || !target.IsAlive || targetPlayer != null && targetPlayer.Invincible)
+            if (source == null || !target.IsAlive || targetPlayer != null && (targetPlayer.Invincible || targetPlayer.ZcDamageImmune))
                 return null;
 
             // check lifestone protection
@@ -710,6 +711,9 @@ namespace ACE.Server.WorldObjects
                         {
                             baseDamage += sourceCreature.EffectiveWarAugCount;
                         }
+                        // Zone Control cantrip gear (War) - live equipped sum, outside the >=1 guard
+                        // so a caster with no purchased augs still gets it. Mirrored in Player_Magic.
+                        baseDamage += sourceCreature.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.WarAugBonus);
                     }
                     else if (Spell.School == MagicSchool.VoidMagic)
                     {
@@ -717,6 +721,8 @@ namespace ACE.Server.WorldObjects
                         {
                             baseDamage += sourceCreature.EffectiveVoidAugCount;
                         }
+                        // Zone Control cantrip gear (Void) - see the War branch note.
+                        baseDamage += sourceCreature.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.VoidAugBonus);
                     }
                 }
 
@@ -1064,7 +1070,7 @@ namespace ACE.Server.WorldObjects
         {
             var targetPlayer = target as Player;
 
-            if (targetPlayer != null && targetPlayer.Invincible || target.IsDead)
+            if (targetPlayer != null && (targetPlayer.Invincible || targetPlayer.ZcDamageImmune) || target.IsDead)
                 return;
 
             var sourceCreature = ProjectileSource as Creature;
@@ -1178,6 +1184,12 @@ namespace ACE.Server.WorldObjects
                     }
                 }
 
+                // Zone Control pct-HP damage special (key 44): flat pct of the mob's max HP, added AFTER
+                // every rating/mitigation step so nothing scales it (mirrors DamageEvent.cs). Player
+                // caster vs a zone-profiled monster only; NO-KILL + cooldown inside.
+                if (damage > 0 && sourcePlayer != null && targetPlayer == null)
+                    damage += sourcePlayer.ZcTryPctHpDamage(target);
+
                 percent = damage / target.Health.MaxValue;
 
                 //Console.WriteLine($"Damage rating: " + Creature.ModToRating(damageRatingMod));
@@ -1212,11 +1224,21 @@ namespace ACE.Server.WorldObjects
                 else
                 {
                     spellPreHitHealth = (uint)Math.Max(0, target.Health.Current);
-                    amount = (uint)-target.UpdateVitalDelta(target.Health, (int)-Math.Round(damage));
-                    spellRoundedDamage = (uint)Math.Round(damage);
+                    var roundedDamage = (uint)Math.Round(damage);
+
+                    // Zone Control Cheat Death (key 45): lethal hit -> land on 1 HP + immunity window
+                    if (targetPlayer != null)
+                        roundedDamage = targetPlayer.ZcTryCheatDeath(ProjectileSource, roundedDamage);
+
+                    amount = (uint)-target.UpdateVitalDelta(target.Health, (int)-roundedDamage);
+                    spellRoundedDamage = roundedDamage;
                 }
 
                 target.DamageHistory.Add(ProjectileSource, Spell.DamageType, amount);
+
+                // Zone Control Battle Mending (key 42): survived, but under the threshold -> heal to full
+                if (targetPlayer != null && !mbResult.FullyAbsorbed)
+                    targetPlayer.ZcTryBattleMend(ProjectileSource);
                 // ───────────────────────────────────────────────────────────────────
 
                 if (target is CombatPet spellPet)

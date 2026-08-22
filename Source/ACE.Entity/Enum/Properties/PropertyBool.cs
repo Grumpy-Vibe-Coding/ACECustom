@@ -1,4 +1,4 @@
-namespace ACE.Entity.Enum.Properties
+﻿namespace ACE.Entity.Enum.Properties
 {
     public enum PropertyBool : ushort
     {
@@ -350,6 +350,18 @@ namespace ACE.Entity.Enum.Properties
         /// weenie stats/loot) even inside a scaled zone/landblock. Set on event NPCs, vendors, quest mobs, or any
         /// creature that must not be auto-scaled. Default (unset) = the mob IS scaled by any matching zone profile.</summary>
         ExemptFromZoneScaling = 50047,
+
+        /// <summary>ZONE CONTROL rank flags (owner block, 2026-08-21): authored in ace_world on the Tou Tou
+        /// mobs (ZcRankFlags_2026-08-21.sql). Boss / leader multiply the per-kill slot-special odds
+        /// (special_boss_mult / special_leader_mult); minion is the explicit baseline marker.</summary>
+        IsZcBoss = 50048,
+        IsZcLeader = 50049,
+        IsZcMinion = 50050,
+
+        /// <summary>ZONE CONTROL opt-out for the pct-HP-damage slot special (key 44): TRUE = this creature
+        /// takes no flat pct-of-max-HP add. Only mobs carrying a zone profile are eligible in the first
+        /// place; this bool exempts a zone boss from it.</summary>
+        ZcPctHpImmune = 50051,
 
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }

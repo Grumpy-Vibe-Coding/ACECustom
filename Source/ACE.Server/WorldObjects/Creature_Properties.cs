@@ -163,6 +163,13 @@ namespace ACE.Server.WorldObjects
                 }
             }
 
+            // Zone Control cantrip gear: Life augs summed from equipped items, applied LIVE here.
+            // Never baked into enchantment StatModValue (no freeze-at-cast swap) and never written to
+            // LumAugLifeCount, so it cannot reach the v11 relief x-axis (Creature_PercentHpDamage:139).
+            var gearLifeAugs = GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.LifeAugBonus);
+            if (gearLifeAugs > 0)
+                protMod *= 1.0f - ACE.Server.WorldObjects.Managers.EnchantmentManager.GetGearLifeAugProtectRating(gearLifeAugs, this as Creature);
+
             // vulnerability mod becomes either life vuln or weapon resistance mod,
             // whichever is more powerful
             if (vulnMod < weaponResistanceMod)

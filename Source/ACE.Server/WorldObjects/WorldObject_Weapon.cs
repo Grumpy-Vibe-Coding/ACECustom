@@ -419,8 +419,15 @@ namespace ACE.Server.WorldObjects
             // TODO : merge with above function
 
             if (weapon == null)
-                // wandless casters (most monsters): zone-authored crit chance still replaces the default
-                return GetZoneCritChanceOverride(wielder) ?? defaultMagicCritFrequency;
+            {
+                // Wandless casters = MONSTERS only (players cannot cast without a wielded caster).
+                // FIXED 2026-08-21 (owner ruling): the target's Crit Resist now applies on this
+                // branch too - it was silently skipped, making mob-caster crits un-resistable
+                // while the same mob's MELEE crits were reduced. Zone-authored crit chance still
+                // replaces the default first, same as the with-wand path below.
+                var wandlessRate = GetZoneCritChanceOverride(wielder) ?? defaultMagicCritFrequency;
+                return wandlessRate * Creature.GetNegativeRatingMod(target.GetCritResistRating());
+            }
 
             var critRate = (float)(weapon.GetProperty(PropertyFloat.CriticalFrequency) ?? defaultMagicCritFrequency);
 

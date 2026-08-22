@@ -23,7 +23,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Boost character stats/gear/weapons to Tier 11 or Tier 10, or reset to Tier 0.",
             "Usage: /testchar <T11|T10|T0>  |  /testchar stats <T11|T10>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>  |  /testchar charms\n" +
-            "Granular (Character tab): /testchar set attrs|vitals|level|enl|augs|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar extra <keys>  |  /testchar save")]
+            "Granular (Character tab): /testchar set attrs|vitals|level|enl|augs|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar extra <keys>  |  /testchar save  |  /testchar report")]
         public static void HandleTestChar(Session session, params string[] parameters)
         {
             var player = session.Player;
@@ -33,7 +33,7 @@ namespace ACE.Server.Command.Handlers
             // plugin applies a tier preset as a short batch of these. Dispatched BEFORE the
             // tier parsing below, which would reject them as bad tiers.
             var sub0 = parameters[0].ToLowerInvariant();
-            if (sub0 == "set" || sub0 == "apply" || sub0 == "save" || sub0 == "extra")
+            if (sub0 == "set" || sub0 == "apply" || sub0 == "save" || sub0 == "extra" || sub0 == "report")
             {
                 HandleCharacterSetter(session, player, parameters);
                 return;
@@ -634,6 +634,55 @@ namespace ACE.Server.Command.Handlers
                 return;
             }
 
+            // /testchar report - read-only. Emits the LIVE character as a [[ZCCHAR]] wire payload
+            // so the plugin's Character tab can show real values beside the preset (owner
+            // 2026-08-20: "add our real aug counts and attribute count, so we can compare
+            // quickly"). The plugin has no other route to this - it never touches Decal's
+            // WorldFilter; every number it draws arrives as chat wire.
+            //
+            // Values are the exact ones the setters target, so preset and live are comparable
+            // without conversion: attr.Base (SetChAttribute writes StartingValue + ranks to hit
+            // it), vital.MaxValue (what SetChVital back-solves for), and the RAW lum aug counts
+            // (NOT the Effective* accessors - charms scale those past the caps by design, and
+            // the preset is raw).
+            if (sub == "report")
+            {
+                var attrOrder = new[] { PropertyAttribute.Strength, PropertyAttribute.Endurance,
+                                        PropertyAttribute.Coordination, PropertyAttribute.Quickness,
+                                        PropertyAttribute.Focus, PropertyAttribute.Self };
+                var attrs = new List<string>();
+                foreach (var a in attrOrder)
+                    attrs.Add(player.Attributes.TryGetValue(a, out var at) ? at.Base.ToString() : "0");
+
+                var vitalOrder = new[] { PropertyAttribute2nd.MaxHealth, PropertyAttribute2nd.MaxStamina,
+                                         PropertyAttribute2nd.MaxMana };
+                var vitals = new List<string>();
+                foreach (var vt in vitalOrder)
+                    vitals.Add(player.Vitals.TryGetValue(vt, out var vi) ? vi.MaxValue.ToString() : "0");
+
+                // Same order as `/testchar set augs`, so the plugin can index one against the other.
+                var augs = new[]
+                {
+                    player.LuminanceAugmentCreatureCount ?? 0,
+                    player.LuminanceAugmentItemCount ?? 0,
+                    player.LuminanceAugmentLifeCount ?? 0,
+                    player.LuminanceAugmentWarCount ?? 0,
+                    player.LuminanceAugmentVoidCount ?? 0,
+                    player.LuminanceAugmentSpellDurationCount ?? 0,
+                    player.LuminanceAugmentSpecializeCount ?? 0,
+                    player.LuminanceAugmentSummonCount ?? 0,
+                    player.LuminanceAugmentMeleeCount ?? 0,
+                    player.LuminanceAugmentMissileCount ?? 0,
+                };
+
+                Msg("[[ZCCHAR]]attr=" + string.Join(",", attrs)
+                    + "|vital=" + string.Join(",", vitals)
+                    + "|level=" + (player.Level ?? 0)
+                    + "|enl=" + player.Enlightenment
+                    + "|augs=" + string.Join(",", augs));
+                return;
+            }
+
             if (sub == "apply")
             {
                 if (parameters.Length < 2)
@@ -1028,6 +1077,123 @@ namespace ACE.Server.Command.Handlers
             ("sollerets", 3110270, "Sollerets"),
         };
 
+        // ── Premade suits (owner 2026-08-21, PremadeSuits_Design/Math_2026-08-21.md) ──
+        // /asforge premade <tier> <avg|bis> [melee|caster]: the 18-piece `all` roster with the
+        // cantrip lines written EXPLICITLY instead of rolled, so a tester can wear "the average
+        // T-whatever suit" or "the best possible one" without farming. Two presets:
+        //   BiS     = core four at window cap, the tier's MAX line count, every line at band MAX,
+        //             lines in the fixed order below (melee: Melee Aug first; caster: War Aug).
+        //   Average = core four at window midpoint, floor(expected) lines per piece dealt
+        //             round-robin from the class-weight mix (trash 10 / mid 6 / chase 1), every
+        //             line at band MIDPOINT.
+        // Line count ladder (max / guaranteed): T11 2/0, T12-14 3/1, T15-17 4/2, T18-20 5/3,
+        // T21-24 6/4, T25 7/5 (owner ruling 08-21 late: T25 = 5 guaranteed, BiS 7th = 34 Item Aug).
+        private static readonly int[] PremadeBisLinesMelee = { 39, 43, 28, 29, 33, 19, 34 };
+        private static readonly int[] PremadeBisLinesCaster = { 37, 43, 28, 29, 33, 19, 31 };
+        // Average mix - deal order. 43 All Attributes = the one chase line per suit; 25 Aegis is
+        // armor-only; 33 Crit Rating ladders by COUNT through the per-tier chance, so an average
+        // suit carries none of it (Math file section 2).
+        private static readonly int[] PremadeAvgTrashKeys = { 20, 21, 32 };
+        private static readonly int[] PremadeAvgMidKeys = { 19, 28, 29, 31, 34, 35, 36, 37, 38, 39, 40 };
+        private const int PremadeAvgChaseKey = 43;
+        private const int PremadeArmorOnlyKey = 25;
+
+        private static int PremadeLineMax(int tier) =>
+            tier <= 11 ? 2 : tier <= 14 ? 3 : tier <= 17 ? 4 : tier <= 20 ? 5 : tier <= 24 ? 6 : 7;
+
+        /// <summary>The effective roll band for a cantrip key at a tier: the live Default-layer band
+        /// authored on variation = tier wins (what real drops there roll from); otherwise the Armor v2
+        /// formula - 1250-class keys max = 1250/18 x f, min = 20 pct; key 25 max 250 x f / min 50 x f;
+        /// keys 32/33 pinned 1-3. Unrounded so the midpoint rounds ONCE (Math file section 1).</summary>
+        private static (double Min, double Max) PremadeBand(int key, int tier)
+        {
+            var vd = ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier);
+            if (vd?.Profile?.CustomCantripBands != null
+                && vd.Profile.CustomCantripBands.TryGetValue(key, out var live)
+                && live != null && live.Max >= live.Min && live.Max > 0)
+                return (live.Min, live.Max);
+
+            var f = 1.0 + (tier - 11) / 14.0;
+            switch (key)
+            {
+                case 32:
+                case 33: return (1, 3);
+                case PremadeArmorOnlyKey: return (50 * f, 250 * f);
+                default:
+                    var max = 1250.0 / 18.0 * f;
+                    return (0.2 * max, max);
+            }
+        }
+
+        private static int PremadeBandMax(int key, int tier) => (int)Math.Round(PremadeBand(key, tier).Max);
+        private static int PremadeBandMid(int key, int tier)
+        {
+            var (min, max) = PremadeBand(key, tier);
+            return (int)Math.Round((min + max) / 2.0);
+        }
+
+        /// <summary>Deal the Average suit's lines: per-piece count = guaranteed (max - 2) plus one
+        /// extra on pieces 1,3,5,...,15 (the 8 leftover lines of 18 x 0.44); keys pulled round-robin
+        /// from the class-weight multiset (trash round(L x 10/108) each, Aegis half of that on armor,
+        /// one 43, the rest mid keys ascending), distinct per piece, key 25 only where there is AL.
+        /// Returns one key list per roster index.</summary>
+        private static List<int>[] PremadeDealAverage(int tier, bool[] hasArmorLevel)
+        {
+            var pieces = hasArmorLevel.Length;
+            var guaranteed = Math.Max(0, PremadeLineMax(tier) - 2);
+            var counts = new int[pieces];
+            var total = 0;
+            for (var i = 0; i < pieces; i++)
+            {
+                counts[i] = guaranteed + (i % 2 == 0 && i < 16 ? 1 : 0);
+                total += counts[i];
+            }
+
+            // the multiset, by class weight over the 108-point armor pool
+            var trashEach = (int)Math.Round(total * 10.0 / 108.0);
+            var aegis = trashEach / 2;                                   // armor is half the roster
+            var chase = total >= 18 ? 1 : 0;                             // T11's 8 lines carry no chase
+            var mid = Math.Max(0, total - trashEach * PremadeAvgTrashKeys.Length - aegis - chase);
+
+            var remaining = new Dictionary<int, int>();
+            if (chase > 0) remaining[PremadeAvgChaseKey] = chase;
+            if (aegis > 0) remaining[PremadeArmorOnlyKey] = aegis;
+            foreach (var k in PremadeAvgTrashKeys) remaining[k] = trashEach;
+            for (var i = 0; i < mid; i++)
+            {
+                var k = PremadeAvgMidKeys[i % PremadeAvgMidKeys.Length];
+                remaining[k] = remaining.TryGetValue(k, out var c) ? c + 1 : 1;
+            }
+
+            // deal order: cycle the key list, one of each per pass, so every key spreads across pieces
+            var order = new List<int> { PremadeAvgChaseKey, PremadeArmorOnlyKey };
+            order.AddRange(PremadeAvgTrashKeys);
+            order.AddRange(PremadeAvgMidKeys);
+            var queue = new List<int>();
+            var left = remaining.Values.Sum();
+            while (left > 0)
+                foreach (var k in order)
+                {
+                    if (!remaining.TryGetValue(k, out var c) || c <= 0) continue;
+                    queue.Add(k);
+                    remaining[k] = c - 1;
+                    left--;
+                }
+
+            var dealt = new List<int>[pieces];
+            for (var i = 0; i < pieces; i++) dealt[i] = new List<int>();
+            for (var round = 0; queue.Count > 0 && round < 8; round++)
+                for (var i = 0; i < pieces && queue.Count > 0; i++)
+                {
+                    if (counts[i] <= round) continue;
+                    var idx = queue.FindIndex(k => !dealt[i].Contains(k) && (k != PremadeArmorOnlyKey || hasArmorLevel[i]));
+                    if (idx < 0) continue;                               // nothing this piece can take - it runs short
+                    dealt[i].Add(queue[idx]);
+                    queue.RemoveAt(idx);
+                }
+            return dealt;
+        }
+
         // The eight per-element armor resistance mods (mirrors LootGenerationFactory's
         // private list) — the loadout "prot" card overrides all of them uniformly.
         private static readonly ACE.Entity.Enum.Properties.PropertyFloat[] ForgeArmorModVsProps =
@@ -1112,6 +1278,58 @@ namespace ACE.Server.Command.Handlers
             PropertyInt.GearMaxHealth, PropertyInt.GearPKDamageRating, PropertyInt.GearPKDamageResistRating,
             PropertyInt.GearOverpower, PropertyInt.GearOverpowerResist,
         };
+
+        /// <summary>
+        /// The `yardstick` card (owner 2026-08-20): re-applies the exact per-piece rating spread
+        /// that /testchar gear carries, after /asforge's bare strip. Premades are the reference
+        /// character every damage measurement is taken on, and every PRE-forge measurement was
+        /// taken on /testchar gear — without this a premade came out with 960 less max health,
+        /// so the two paths were not comparable.
+        ///
+        /// It has to live server-side: the `cards:` clause is applied UNIFORMLY to every piece
+        /// in the batch, but this spread is per-piece (shirt/pants 175, each jewel 100, cloak
+        /// 10). GearNetherResist and EquipmentSetId also have no card at all.
+        ///
+        /// Values below are the builders' own (BuildTestShirt/Pants/Cloak/Ring/Bracelet/Necklace
+        /// /Trinket). If a builder's rating changes, change it HERE too — same-file, so keep
+        /// them adjacent. VoD armor is absent on purpose: /testchar armor carries no ratings.
+        /// Total GearMaxHealth = 175 + 175 + 10 + (6 x 100) = 960.
+        /// </summary>
+        private static void ApplyYardstickRatings(WorldObject wo)
+        {
+            switch (wo.WeenieClassId)
+            {
+                case 28607:     // shirt
+                    wo.SetProperty(PropertyInt.GearDamage, 13);
+                    wo.SetProperty(PropertyInt.GearDamageResist, 4);
+                    wo.SetProperty(PropertyInt.GearCritDamage, 13);
+                    wo.SetProperty(PropertyInt.GearCritDamageResist, 4);
+                    wo.SetProperty(PropertyInt.GearNetherResist, 9);
+                    wo.SetProperty(PropertyInt.GearMaxHealth, 175);
+                    break;
+                case 2599:      // pants
+                    wo.SetProperty(PropertyInt.GearDamage, 14);
+                    wo.SetProperty(PropertyInt.GearDamageResist, 4);
+                    wo.SetProperty(PropertyInt.GearCritDamage, 13);
+                    wo.SetProperty(PropertyInt.GearCritDamageResist, 4);
+                    wo.SetProperty(PropertyInt.GearNetherResist, 8);
+                    wo.SetProperty(PropertyInt.GearMaxHealth, 175);
+                    break;
+                case 227190032: // cloak — also the only piece with an equipment set
+                    wo.SetProperty(PropertyInt.GearDamageResist, 5);
+                    wo.SetProperty(PropertyInt.GearCritDamageResist, 3);
+                    wo.SetProperty(PropertyInt.GearNetherResist, 5);
+                    wo.SetProperty(PropertyInt.GearMaxHealth, 10);
+                    wo.SetProperty(PropertyInt.EquipmentSetId, 71);
+                    break;
+                case 21392:     // bracelet (both wrists)
+                case 21394:     // ring (both fingers)
+                case 27445:     // necklace
+                case 41483:     // trinket
+                    wo.SetProperty(PropertyInt.GearMaxHealth, 100);
+                    break;
+            }
+        }
 
         private static WorldObject BuildVodArmorPiece(uint wcid, string label, string tier)
         {
@@ -1512,13 +1730,16 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("asforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges VoD test armor/clothing/jewelry (the /testchar look) at a chosen tier. All pieces Attuned + Bonded.",
             "<piece|suit|jewel|all> [tier 10-25, default 11] [cards:key=val,key,...]\n" +
+            "premade <tier 11-25> <avg|bis> [melee|caster] [force] = the 18-piece suit with EXPLICIT cantrip lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted into a 'T<tier> <Avg|BiS> Suit' bag.\n" +
             "Pieces: helm coat pauldrons bracers gloves girth tassets greaves sollerets shirt pants cloak neck ring bracelet trinket\n" +
             "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
             "ring/bracelet mint the left + right pair.\n" +
             "cards: albonus=N (AL over tier baseline) prot=X (uniform 8-element mod) dresist/cdresist/maxhp/drating/cdrating=N (Gear ratings)\n" +
             "ward (adds the 7 Legendary elemental Wards) lifeprot (adds the 7 life Protections)\n" +
             "impen (Legendary Impenetrability) defcantrips (Legendary Armor/Invuln/Coord/Endurance/Focus/Health Gain) - all on every minted piece\n" +
-            "Defaults (no card): T11+ armor gets Legendary Impen; the trinket gets wards/Leg Armor/Aug Understanding III/Aug Damage II/Rare Dmg Boost X/Sigils XV/Life Mead/Towering Defense/HP-Stam-Mana Boost")]
+            "yardstick (per-piece: restores the exact /testchar Gear rating spread, 960 total max health, incl. nether resist + the cloak's set 71)\n" +
+            "Defaults (no card): VoD armor gets Legendary Impen at EVERY tier; the necklace gets the full buff suite. Everything else mints blank.\n" +
+            "force = mint even if you already hold that piece (default is to skip it, so repeat presses cannot stack suits).")]
         public static void HandleAsForge(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -1528,6 +1749,12 @@ namespace ACE.Server.Command.Handlers
                 return;
 
             var key = parameters[0].ToLowerInvariant();
+
+            if (key == "premade")
+            {
+                HandleAsForgePremade(session, player, parameters);
+                return;
+            }
 
             var tier = 11;
             if (parameters.Length > 1 && int.TryParse(parameters[1], out var t))
@@ -1543,7 +1770,16 @@ namespace ACE.Server.Command.Handlers
             var lifeprot = false;
             var impen = false;
             var defcantrips = false;
+            var yardstick = false;
             var loadoutDesc = "";
+
+            // Owner 2026-08-20: pressing Create Premade twice used to hand you a second full
+            // suit, because this command always minted. It now skips a piece the character
+            // already holds, the same deep-possession convention /testchar extra and the
+            // jewelry spawn already use. `force` is the deliberate re-forge (after a card
+            // change, say) - without it a re-press is a no-op and SAYS so.
+            var force = parameters.Skip(1).Any(a => a.Equals("force", StringComparison.OrdinalIgnoreCase));
+
             foreach (var p in parameters.Skip(1))
             {
                 if (!p.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
@@ -1572,8 +1808,9 @@ namespace ACE.Server.Command.Handlers
                         case "lifeprot": lifeprot = true; break;
                         case "impen": impen = true; break;
                         case "defcantrips": defcantrips = true; break;
+                        case "yardstick": yardstick = true; break;
                         default:
-                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot dresist cdresist maxhp drating cdrating ward lifeprot impen defcantrips");
+                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot dresist cdresist maxhp drating cdrating ward lifeprot impen defcantrips yardstick");
                             return;
                     }
                 }
@@ -1640,11 +1877,22 @@ namespace ACE.Server.Command.Handlers
             }
 
             var minted = 0;
+            var skipped = 0;
             foreach (var wo in items)
             {
                 if (wo == null)
                 {
                     Msg("asforge: a piece failed to create (missing weenie?)");
+                    continue;
+                }
+
+                // Already held? Skip it. Every forged piece carries a unique tier-prefixed name
+                // ("T12 Ring 1", "T12 Helm (Test)"), so presence is an exact test - and the pair
+                // pieces cannot collide with each other.
+                if (!force && HasItemNamed(player, wo.Name))
+                {
+                    skipped++;
+                    wo.Destroy();
                     continue;
                 }
 
@@ -1669,6 +1917,17 @@ namespace ACE.Server.Command.Handlers
                 foreach (var ratingProp in ForgeStrippedRatings)
                     wo.RemoveProperty(ratingProp);
                 wo.RemoveProperty(PropertyInt.EquipmentSetId);
+
+                // T11+ deterministic per-tier budget - the SAME shared helper the loot path
+                // uses, so premades match drops exactly (owner 2026-08-21). Runs BEFORE the
+                // yardstick/rating cards so cards still win. Also stamps AL (doubling ladder)
+                // and the gear Creature Augs gate base. Tier 10 keeps the legacy path below.
+                if (tier >= 11)
+                    ACE.Server.Factories.LootGenerationFactory.ApplyT11GearStats(wo, tier, forceMax: true);   // forge = core four at window cap
+
+                // The yardstick card goes FIRST so an explicit rating card on the same line still
+                // wins (e.g. cards:yardstick,maxhp=50 gives 50, not 100).
+                if (yardstick) ApplyYardstickRatings(wo);
 
                 // rating cards (any piece — jewelry carries ratings in the real game too)
                 if (dresist.HasValue) wo.SetProperty(PropertyInt.GearDamageResist, dresist.Value);
@@ -1703,8 +1962,17 @@ namespace ACE.Server.Command.Handlers
                 // card's uniform override.
                 if (isVodArmor)
                 {
-                    wo.SetProperty(PropertyInt.ArmorLevel, tier * 100 + albonus);
-                    ACE.Server.Factories.LootGenerationFactory.EqualizeT11ArmorResists(wo);
+                    if (tier >= 11)
+                    {
+                        // AL came from the shared budget (1100 doubling); albonus adds on top
+                        if (albonus != 0)
+                            wo.SetProperty(PropertyInt.ArmorLevel, (wo.ArmorLevel ?? 0) + albonus);
+                    }
+                    else
+                    {
+                        wo.SetProperty(PropertyInt.ArmorLevel, tier * 100 + albonus);
+                        ACE.Server.Factories.LootGenerationFactory.EqualizeT11ArmorResists(wo);
+                    }
                     if (protOverride.HasValue)
                         foreach (var modProp in ForgeArmorModVsProps)
                             wo.SetProperty(modProp, protOverride.Value);
@@ -1727,6 +1995,186 @@ namespace ACE.Server.Command.Handlers
             Msg($"asforged: {minted} item(s) at tier {tier} (attuned + bonded"
                 + (tier >= 11 ? ", item-aug wield gate" : ", basic set - no aug gate")
                 + (loadoutDesc.Length > 0 ? $") loadout: {loadoutDesc}" : ") bare"));
+
+            // Said plainly, because a silent no-op reads as a broken command.
+            if (skipped > 0)
+                Msg($"asforge: skipped {skipped} piece(s) you already hold. "
+                    + (minted == 0
+                        ? "Nothing was made. Trash the old set first, or add 'force' to mint anyway."
+                        : "Add 'force' to mint duplicates."));
+        }
+
+        /// <summary>`/asforge premade <tier 11-25> <avg|bis> [melee|caster] [force]` (owner 2026-08-21):
+        /// the 18-piece roster with the cantrip lines written from the preset tables above instead of
+        /// rolled. Same bare-strip pipeline as the main verb (no cards), then the shared gear helper
+        /// (bis = core at cap, avg = core at the window midpoint), then explicit ZoneCantrips.Stamp
+        /// per line, FinalizeT11LongDesc (asforge proper never runs it - the stamps would otherwise
+        /// sit under inherited flavor text), then the forge provenance. Minted into a dedicated bag:
+        /// 18 items in one frame through the main-pack path is the silent-loss window.</summary>
+        private static void HandleAsForgePremade(Session session, Player player, string[] parameters)
+        {
+            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
+
+            const string usage = "asforge premade <tier 11-25> <avg|bis> [melee|caster] [force]";
+            if (parameters.Length < 3 || !int.TryParse(parameters[1], out var tier) || tier < 11 || tier > 25)
+            {
+                Msg($"Usage: {usage}");
+                return;
+            }
+            var modeArg = parameters[2].ToLowerInvariant();
+            bool bis;
+            switch (modeArg)
+            {
+                case "bis": case "best": bis = true; break;
+                case "avg": case "average": bis = false; break;
+                default:
+                    Msg($"asforge premade: mode must be avg or bis. {usage}");
+                    return;
+            }
+            var caster = false;
+            var force = false;
+            foreach (var a in parameters.Skip(3))
+            {
+                switch (a.ToLowerInvariant())
+                {
+                    case "melee": caster = false; break;
+                    case "caster": caster = true; break;
+                    case "force": force = true; break;
+                    default:
+                        Msg($"asforge premade: unknown option '{a}'. {usage}");
+                        return;
+                }
+            }
+
+            var tierLabel = $"T{tier}";
+            var modeTag = bis ? "BiS" : "Avg";
+            var buildTag = caster ? "caster" : "melee";
+
+            // the `all` roster, in deal order (armor first so the Aegis lines land where AL lives)
+            var roster = new List<(string Piece, WorldObject Wo)>();
+            foreach (var p in VodArmorPieces)
+                roster.Add((p.Label, BuildVodArmorPiece(p.Wcid, p.Label, tierLabel)));
+            roster.Add(("Shirt", BuildTestShirt(tierLabel)));
+            roster.Add(("Pants", BuildTestPants(tierLabel)));
+            roster.Add(("Cloak", BuildTestCloak(tierLabel)));
+            roster.Add(("Necklace", BuildTestNecklace(tierLabel)));
+            roster.Add(("Ring 1", BuildTestRing1(tierLabel)));
+            roster.Add(("Ring 2", BuildTestRing2(tierLabel)));
+            roster.Add(("Bracelet 1", BuildTestBracelet1(tierLabel)));
+            roster.Add(("Bracelet 2", BuildTestBracelet2(tierLabel)));
+            roster.Add(("Trinket", BuildTestTrinket(tierLabel)));
+
+            // names carry the mode so Avg and BiS at one tier never collide on the duplicate guard
+            foreach (var (piece, wo) in roster)
+            {
+                if (wo == null) continue;
+                var name = $"{tierLabel} {piece} ({modeTag})";
+                wo.Name = name;
+                wo.SetProperty(PropertyString.Name, name);
+            }
+
+            // Average deal needs to know which pieces carry AL BEFORE the gear helper runs: only
+            // ItemType.Armor gets the flat ladder (clothing never, jewelry by engine rule).
+            var hasAl = roster.Select(r => r.Wo != null && r.Wo.ItemType == ItemType.Armor).ToArray();
+            var avgDeal = bis ? null : PremadeDealAverage(tier, hasAl);
+            var bisKeys = caster ? PremadeBisLinesCaster : PremadeBisLinesMelee;
+            var bisCount = Math.Min(PremadeLineMax(tier), bisKeys.Length);
+
+            var bagName = $"{tierLabel} {modeTag} Suit";
+            Container bag = null;
+
+            var minted = 0;
+            var skipped = 0;
+            var failed = 0;
+            var lines = 0;
+            for (var i = 0; i < roster.Count; i++)
+            {
+                var (piece, wo) = roster[i];
+                if (wo == null)
+                {
+                    Msg($"asforge premade: {piece} failed to create (missing weenie?)");
+                    failed++;
+                    continue;
+                }
+
+                if (!force && HasItemNamed(player, wo.Name))
+                {
+                    skipped++;
+                    wo.Destroy();
+                    continue;
+                }
+
+                // per-tier item-aug wield gate like real drops (the helper appends its own LongDesc line)
+                ACE.Server.Factories.LootGenerationFactory.StripWieldRequirements(wo);
+                ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
+
+                wo.Attuned = AttunedStatus.Attuned;
+                wo.Bonded = BondedStatus.Bonded;
+
+                // bare first, exactly as the main verb: spells, every Gear* rating, set membership
+                wo.Biota.ClearSpells(wo.BiotaDatabaseLock);
+                foreach (var ratingProp in ForgeStrippedRatings)
+                    wo.RemoveProperty(ratingProp);
+                wo.RemoveProperty(PropertyInt.EquipmentSetId);
+
+                // core four: bis = window cap (forceMax), avg = window midpoint (coreFrac 0.5);
+                // also AL ladder + the gear Creature Augs base
+                ACE.Server.Factories.LootGenerationFactory.ApplyT11GearStats(wo, tier,
+                    forceMax: bis, p: null, coreFrac: bis ? null : 0.5);
+
+                // the explicit lines - Stamp is ADDITIVE, so each key at most once per piece
+                var keys = bis ? bisKeys.Take(bisCount) : avgDeal[i];
+                var stamped = new HashSet<int>();
+                foreach (var k in keys)
+                {
+                    if (!stamped.Add(k)) continue;
+                    if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(k, out var def) || def.Retired || def.SlotSpecial)
+                    {
+                        Msg($"asforge premade: key {k} is not a live pool line - skipped on {piece}");
+                        continue;
+                    }
+                    if (def.ArmorOnly && !(wo.ArmorLevel > 0))
+                        continue;                                            // Aegis needs an AL piece
+                    var (bMin, bMax) = PremadeBand(k, tier);
+                    var value = bis ? PremadeBandMax(k, tier) : PremadeBandMid(k, tier);
+                    // key 35 lands on 50213 here, BEFORE Finalize regenerates the "Creature Augmentation" line
+                    ACE.Server.Managers.ZoneControl.ZoneCantrips.Stamp(wo, def, value,
+                        band: ((int)Math.Round(bMin), (int)Math.Round(bMax), def.ProcMin, def.ProcMax));
+                    lines++;
+                }
+
+                // owner defaults as the main verb: armor carries Legendary Impen, the necklace the buff suite
+                if (VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId))
+                    AddForgeSpells(wo, ImpenSpells);
+                if (wo.WeenieClassId == 27445)
+                    AddForgeSpells(wo, NecklaceBuffSpells);
+                wo.ChangesDetected = true;
+
+                // drop-style description: known lines in stamp order, inherited flavor text gone.
+                // Provenance goes AFTER - Finalize's whitelist would discard it.
+                ACE.Server.Factories.LootGenerationFactory.FinalizeT11LongDesc(wo);
+                var provenance = $"Created by: {player.Name}\nTier: {tier}\nPremade: {modeTag} {buildTag}";
+                wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? provenance : wo.LongDesc + "\n\n" + provenance;
+
+                // the bag is created lazily so a fully-skipped re-press leaves no empty bag behind
+                bag ??= GetOrCreatePack(player, bagName);
+                if (TryPlaceInPack(player, wo, bag))
+                {
+                    minted++;
+                }
+                else
+                {
+                    Msg($"asforge premade: could not place {wo.Name} in {bagName} (full?)");
+                    wo.Destroy();
+                    failed++;
+                }
+            }
+
+            Msg($"Premade {tierLabel} {modeTag} {buildTag} suit: {minted} pieces created"
+                + (lines > 0 ? $", {lines} cantrip lines" : "")
+                + (failed > 0 ? $", {failed} failed" : "")
+                + (skipped > 0 ? $", {skipped} skipped (already held - add 'force' to re-mint)" : "")
+                + (minted > 0 ? $" - in '{bagName}'." : "."));
         }
 
         private static void SpawnCharms(Player player)

@@ -159,7 +159,11 @@ namespace ACE.Server.Managers.WeaponScaling
                 return 0f;
 
             var augs = wielder.LuminanceAugmentItemCount ?? 0;
-            return (float)(k * Math.Min(augs, tierRow.Cap)) * EvNormalization(weapon);
+            // Zone Control cantrip gear (Item track): added OUTSIDE the purchase cap on purpose -
+            // endgame wielders sit at/over tierRow.Cap, so inside the min() the gear line would be
+            // a no-op for exactly the players it is designed for.
+            var gearAugs = wielder.GetZoneCantripBonus(ZoneControl.ZoneCantrips.ItemAugBonus);
+            return (float)(k * (Math.Min(augs, tierRow.Cap) + gearAugs)) * EvNormalization(weapon);
         }
 
         /// <summary>LIVE EV normalization (owner 2026-08-03): editing a family's Variance

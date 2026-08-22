@@ -122,6 +122,11 @@ namespace ACE.Server.Network.Structure
             if (wo.Damage != null && !(wo is Clothing) || wo is MeleeWeapon || wo is Missile || wo is MissileLauncher || wo is Ammunition || wo is Caster)
                 BuildWeapon(wo, examiner);
 
+            // Owner 2026-08-22: Zone Cantrip lines belong in the Property Details section, not
+            // adrift in the description block. Runs here so downstream LongDesc edits see the same
+            // shape they always have (a block already pinned to the top).
+            PromoteZoneCantripLines();
+
             // TODO: Resolve this issue a better way?
             // Because of the way ACE handles default base values in recipe system (or rather the lack thereof)
             // we need to check the following weapon properties to see if they're below expected minimum and adjust accordingly
@@ -870,6 +875,105 @@ namespace ACE.Server.Network.Structure
                     }
                 }
             }
+        }
+
+        private const string ZoneCantripPrefix = "Zone Cantrip:";
+        private const string CreatureAugPrefix = "Creature Augmentation:";
+        private const string CantripSectionHeader = "Cantrips:";
+        private const string WeaponDetailsHeader = "Property Details:";
+
+        /// <summary>
+        /// Cantrip lines are baked into wo.LongDesc at stamp time (ZoneCantrips.Stamp), so on
+        /// armor / clothing / shields / jewelry they render as raw description text - none of those
+        /// build a details section, only BuildWeapon does. Owner 2026-08-22: they get their own
+        /// "Cantrips:" section, and Creature Augmentation belongs in it (key 35 adds to the same
+        /// prop 50213 the fixed gear base writes).
+        ///
+        /// Lifts them out of the APPRAISAL copy only - wo.LongDesc, the stamped source of truth,
+        /// is never touched, so nothing is re-rolled and existing drops re-render correctly on the
+        /// next appraise. Bullets stay in STAMP ORDER (owner: no sorting - two identical pieces
+        /// must read identically). The "Zone Cantrip:" prefix is a MARKER, not decoration -
+        /// FinalizeT11LongDesc's whitelist deletes any line that lacks it - so it stays in the
+        /// stored text and is dropped from the render only.
+        ///
+        /// Weapons carry their own "Property Details:" block pinned to the top; the cantrip group
+        /// becomes a SEPARATE section right after it, never folded in. Armor has no other details
+        /// entries, so it gets "Cantrips:" alone rather than an empty outer header (owner ruling).
+        /// </summary>
+        private void PromoteZoneCantripLines()
+        {
+            if (!PropertiesString.TryGetValue(PropertyString.LongDesc, out var ld) || string.IsNullOrEmpty(ld))
+                return;
+            if (ld.IndexOf(ZoneCantripPrefix, StringComparison.Ordinal) < 0
+                && ld.IndexOf(CreatureAugPrefix, StringComparison.Ordinal) < 0)
+                return;
+
+            var cantrips = new List<string>();
+            var rest = new List<string>();
+            foreach (var raw in ld.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.StartsWith(ZoneCantripPrefix, StringComparison.Ordinal))
+                {
+                    var name = line.Substring(ZoneCantripPrefix.Length).Trim();
+                    if (name.Length > 0)
+                        cantrips.Add("- " + name);
+                }
+                else if (line.StartsWith(CreatureAugPrefix, StringComparison.Ordinal))
+                {
+                    // Colon dropped so it reads like its neighbours, which carry no colon either.
+                    var val = line.Substring(CreatureAugPrefix.Length).Trim();
+                    cantrips.Add(val.Length > 0 ? "- Creature Augmentation " + val : "- Creature Augmentation");
+                }
+                else
+                    rest.Add(raw);
+            }
+
+            if (cantrips.Count == 0)
+                return;
+
+            // Collapse the blank runs the pulled lines leave behind: the slot-special stamp joins
+            // with a blank line, so removing one can leave three consecutive newlines.
+            var body = string.Join("\n", rest);
+            while (body.Contains("\n\n\n"))
+                body = body.Replace("\n\n\n", "\n\n");
+            body = body.Trim('\n');
+
+            var block = CantripSectionHeader + "\n" + string.Join("\n", cantrips);
+
+            if (body.StartsWith(WeaponDetailsHeader, StringComparison.Ordinal))
+            {
+                var split = body.IndexOf("\n\n", StringComparison.Ordinal);
+                PropertiesString[PropertyString.LongDesc] = split >= 0
+                    ? body.Substring(0, split) + "\n\n" + block + body.Substring(split)
+                    : body + "\n\n" + block;
+                return;
+            }
+
+            // Non-weapon: the block goes in the USE string, not LongDesc. That is the position
+            // lever (owner 2026-08-22 - the section read too low): the client draws Use ABOVE its
+            // native sections and LongDesc BELOW them, which is why the original implementation
+            // (Ruggan, PR #327) used Use and why moving it to LongDesc pushed it under Spell
+            // Descriptions. The wand problem that forced that move does not apply here - armor,
+            // clothing, shields and jewelry have no native caster sections to sit on top of.
+            PropertiesString[PropertyString.LongDesc] = body;
+            if (string.IsNullOrEmpty(body))
+                PropertiesString.Remove(PropertyString.LongDesc);
+
+            var useParts = new List<string> { block };
+            if (PropertiesString.TryGetValue(PropertyString.Use, out var existingUse) && !string.IsNullOrWhiteSpace(existingUse))
+                useParts.Add(existingUse);
+
+            var use = string.Join("\n\n", useParts);
+
+            // Keep a break between the block and whatever the client draws next (same guard the
+            // original carried - without it the section runs straight into the following text).
+            if (PropertiesInt.ContainsKey(PropertyInt.ItemMaxLevel) ||
+                PropertiesInt.ContainsKey(PropertyInt.ItemSpellcraft) ||
+                PropertiesInt.ContainsKey(PropertyInt.WieldRequirements))
+                use += "\n";
+
+            PropertiesString[PropertyString.Use] = use;
         }
 
         private void BuildArmor(WorldObject wo)

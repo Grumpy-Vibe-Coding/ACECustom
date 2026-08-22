@@ -108,7 +108,7 @@ namespace ACE.Server.Command.Handlers
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
             + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | seticon <wcid> <iconDid|clear> [layer] | "
-            + "cantrip <name> <add|remove|list> [spellId] [--wcid <id>] | "
+            + "cantrip <name> <add|remove|list|catalog|band|draws> [args] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
@@ -146,7 +146,12 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol seticon <wcid> <iconDid|clear> [icon|overlay|overlay2|underlay]   (PERMANENT world-db icon change, layer defaults to icon; logged to zc_seticon_<date>.sql. 'appearance icon' is the zone-only version)");
                 Msg("  /zonecontrol listparts <wcid | 0xSetupId>   (dump a mob's body-part layout: index -> model piece; head = index 16)");
                 Msg("  /zonecontrol appearance <name> animpart <index> <gfxObjHex> [--wcid <id>]   (swap ONE body part, e.g. animpart 16 = head; clear with clearappearance <name> animpart <index>)");
-                Msg("  /zonecontrol cantrip <name> <add|remove|list> [spellId] [--wcid <id>]   (custom cantrip pool for the extra-loot-cantrip roll)");
+                Msg("  /zonecontrol cantrip <name> <add|remove|list|catalog> [key] [--wcid <id>]   (custom Zone Cantrip pool for the extra-loot-cantrip roll; Retired keys are rejected)");
+                Msg("  /zonecontrol cantrip <name> band <key> <min> <max> [procMin procMax]   (override a key's roll band; 'band <key> clear' drops the override; 'cantrip default <var> band ...' authors the variation Default)");
+                Msg("  /zonecontrol cantrip <name> draws <bucket> <n>   (LEGACY bucket draws - still stored, no longer read since Armor v2)");
+                Msg("  /zonecontrol cantrip <name> lines <min> <max> [c1] [c2] [c3]   (Armor v2 line ladder: min guaranteed, extra slots up to max roll c1/c2/c3 in order, first miss stops; writes cantrip_lines_*)");
+                Msg("  /zonecontrol cantrip <name> weight <trash|mid|chase|crit> <n>   (key pick weight per class; crit = key 33 alone; writes cantrip_weight_* / cantrip_crit_weight)");
+                Msg("  /zonecontrol cantrip <name> special <odds|bossmult|leadermult> <n>   (slot specials: 1-in-odds per KILL, boss/leader divide the odds; writes special_*)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
                 Msg("  /zonecontrol survey <name> [lbHex]   (per-landblock content: generator + creature summary; lbHex = full detail for one landblock)");
@@ -613,12 +618,202 @@ namespace ACE.Server.Command.Handlers
 
                     case "cantrip":
                     {
-                        // Custom cantrip pool for the extra-loot-cantrip roll (weapon/armor_cantrip_chance).
-                        if (args.Count < 3) { Msg("Usage: cantrip <name> <add|remove|list> [spellId] [--wcid <id>]"); return; }
-                        var name = args[1];
-                        var area = ZoneControlManager.GetArea(name);
-                        if (area == null) { Msg($"No zone '{name}' (create it first)."); return; }
-                        var op = args[2].ToLowerInvariant();
+                        // Custom cantrip pool + banded rolls for the extra-loot-cantrip roll
+                        // (weapon/armor_cantrip_chance). Scope is a zone (+ optional --wcid), or
+                        // 'cantrip default <var> ...' = the variation Default layer (band/draws only —
+                        // the pool itself stays zone-scope).
+                        if (args.Count < 3) { Msg("Usage: cantrip <name> <add|remove|list|catalog|band|draws> [args] [--wcid <id>]"); return; }
+
+                        var isDefaultScope = args[1].Equals("default", StringComparison.OrdinalIgnoreCase);
+                        var defaultVar = -1;
+                        var opIdx = 2;
+                        string name = null;
+                        if (isDefaultScope)
+                        {
+                            if (args.Count < 4 || !int.TryParse(args[2].TrimStart('v', 'V'), out defaultVar) || defaultVar < 0)
+                            { Msg("Usage: cantrip default <variation> <band|draws> ..."); return; }
+                            opIdx = 3;
+                        }
+                        else
+                        {
+                            name = args[1];
+                            if (ZoneControlManager.GetArea(name) == null) { Msg($"No zone '{name}' (create it first)."); return; }
+                        }
+
+                        var op = args[opIdx].ToLowerInvariant();
+                        var scopeTag = isDefaultScope
+                            ? $"Default v{defaultVar}"
+                            : $"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")}";
+
+                        // One writer for both scopes: variation Default / zone default / --wcid bucket.
+                        void MutateScope(Action<ZoneVariantProfile> edit)
+                        {
+                            if (isDefaultScope)
+                                ZoneControlManager.MutateVariationDefault(defaultVar, d => edit(d.Profile));
+                            else
+                                ZoneControlManager.MutateArea(name, a =>
+                                    edit(wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion));
+                        }
+
+                        if (op == "catalog")
+                        {
+                            // Retired keys (bucket 2 masteries) are hidden — they survive only in saved pools.
+                            foreach (var d in ZoneCantrips.Catalog.Values)
+                                if (!d.Retired)
+                                    Msg($"  {d.Key,3}  {d.Name} - {d.Effect}  [rolls {d.Min}-{d.Max}{(d.ProcMax > 0 ? $", proc {d.ProcMin}-{d.ProcMax} pct" : "")}]");
+                            return;
+                        }
+
+                        if (op == "band")
+                        {
+                            // cantrip <scope> band <key> clear — drop the override, back to the catalog band.
+                            if (args.Count >= opIdx + 3 && int.TryParse(args[opIdx + 1], out var clearKey)
+                                && args[opIdx + 2].Equals("clear", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!ZoneCantrips.TryGet(clearKey, out var clearDef))
+                                { Msg($"No Zone Cantrip with key {clearKey}. See 'cantrip <name> catalog'."); return; }
+                                MutateScope(vp => vp.CustomCantripBands.Remove(clearKey));
+                                // do not claim the catalog band applies - a lower layer (variation
+                                // Default) may still author this key; the merge decides per key
+                                Msg($"{scopeTag} cantrip band: {clearDef.Name} override cleared at this scope - drops roll the next authored layer, or the catalog band {clearDef.Min}-{clearDef.Max}.");
+                                return;
+                            }
+
+                            // cantrip <scope> band <key> <min> <max> [procMin procMax] — override the roll band.
+                            if (args.Count < opIdx + 4
+                                || !int.TryParse(args[opIdx + 1], out var bandKey)
+                                || !int.TryParse(args[opIdx + 2], out var bandMin)
+                                || !int.TryParse(args[opIdx + 3], out var bandMax))
+                            { Msg("Usage: cantrip <name> band <key> <min> <max> [procMin procMax]"); return; }
+                            if (!ZoneCantrips.TryGet(bandKey, out var bandDef))
+                            { Msg($"No Zone Cantrip with key {bandKey}. See 'cantrip <name> catalog'."); return; }
+                            if (bandDef.Retired)
+                            { Msg($"Zone Cantrip {bandKey} ({bandDef.Name}) is Retired - it cannot be banded."); return; }
+                            if (bandMin < 0) { Msg("min must be >= 0."); return; }
+                            if (bandMin > bandMax) { Msg("min must be <= max."); return; }
+
+                            int procMin = 0, procMax = 0;
+                            if (args.Count > opIdx + 4)
+                            {
+                                if (bandDef.ProcChancePropId == 0)
+                                { Msg($"Zone Cantrip {bandKey} ({bandDef.Name}) is a passive line - it takes no proc band."); return; }
+                                if (args.Count < opIdx + 6
+                                    || !int.TryParse(args[opIdx + 4], out procMin)
+                                    || !int.TryParse(args[opIdx + 5], out procMax))
+                                { Msg("procMin and procMax must be given as a PAIR of numbers."); return; }
+                                if (procMin > procMax) { Msg("procMin must be <= procMax."); return; }
+                            }
+                            else if (bandDef.ProcChancePropId != 0)
+                            {
+                                // proc line with the pair omitted: inherit the catalog proc band -
+                                // storing 0/0 would overwrite it and permanently dead the proc
+                                procMin = bandDef.ProcMin;
+                                procMax = bandDef.ProcMax;
+                            }
+
+                            MutateScope(vp => vp.CustomCantripBands[bandKey] =
+                                new CantripBand { Min = bandMin, Max = bandMax, ProcMin = procMin, ProcMax = procMax });
+                            Msg($"{scopeTag} cantrip band: {bandDef.Name} rolls {bandMin}-{bandMax}"
+                                + (procMax > 0 ? $", proc {procMin}-{procMax} pct." : "."));
+                            return;
+                        }
+
+                        if (op == "draws")
+                        {
+                            // cantrip <scope> draws <bucket> <n> — distinct picks per catalog bucket (default 2).
+                            if (args.Count < opIdx + 3
+                                || !int.TryParse(args[opIdx + 1], out var drawBucket)
+                                || !int.TryParse(args[opIdx + 2], out var drawCount))
+                            { Msg("Usage: cantrip <name> draws <bucket> <n>   (bucket 1|3|4|5, n 0-8)"); return; }
+                            var drawStat = drawBucket switch
+                            {
+                                1 => ZoneStat.CantripDrawsB1,
+                                3 => ZoneStat.CantripDrawsB3,
+                                4 => ZoneStat.CantripDrawsB4,
+                                5 => ZoneStat.CantripDrawsB5,
+                                _ => null,
+                            };
+                            if (drawStat == null) { Msg("Bucket must be 1, 3, 4 or 5 (bucket 2 masteries are Retired)."); return; }
+                            if (drawCount < 0 || drawCount > 8) { Msg("Draw count must be 0-8."); return; }
+
+                            // the normal set path: a flat StatCurve on the scope's stat dictionary
+                            MutateScope(vp => vp.Stats[drawStat] = new StatCurve { Base = drawCount, Growth = 1.0, Additive = false });
+                            Msg($"{scopeTag} {drawStat} = {drawCount}.");
+                            return;
+                        }
+
+                        // Armor v2 (2026-08-21): the line-count ladder, class weights and special odds are plain
+                        // stats on the scope - same StatCurve write as 'draws' (and as 'default <var> set').
+                        void SetStat(string stat, double value)
+                            => MutateScope(vp => vp.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false });
+
+                        if (op == "lines")
+                        {
+                            // cantrip <scope> lines <min> <max> [c1] [c2] [c3]
+                            if (args.Count < opIdx + 3
+                                || !int.TryParse(args[opIdx + 1], out var linesMin)
+                                || !int.TryParse(args[opIdx + 2], out var linesMax))
+                            { Msg("Usage: cantrip <name> lines <min> <max> [c1] [c2] [c3]   (min/max 0-8; c1..c3 = 0..1 chance per extra slot)"); return; }
+                            if (linesMin < 0 || linesMax > 8 || linesMin > linesMax) { Msg("lines: need 0 <= min <= max <= 8."); return; }
+                            var chances = new double?[3];
+                            for (int ci = 0; ci < 3; ci++)
+                            {
+                                if (args.Count <= opIdx + 3 + ci) break;
+                                if (!double.TryParse(args[opIdx + 3 + ci], NumberStyles.Float, CultureInfo.InvariantCulture, out var c) || c < 0 || c > 1)
+                                { Msg($"c{ci + 1} must be a chance in 0..1."); return; }
+                                chances[ci] = c;
+                            }
+                            SetStat(ZoneStat.CantripLinesMin, linesMin);
+                            SetStat(ZoneStat.CantripLinesMax, linesMax);
+                            if (chances[0].HasValue) SetStat(ZoneStat.CantripLinesChance1, chances[0].Value);
+                            if (chances[1].HasValue) SetStat(ZoneStat.CantripLinesChance2, chances[1].Value);
+                            if (chances[2].HasValue) SetStat(ZoneStat.CantripLinesChance3, chances[2].Value);
+                            Msg($"{scopeTag} cantrip lines: {linesMin} guaranteed, up to {linesMax}"
+                                + (chances[0].HasValue ? $", extra slot chances {string.Join(" / ", chances.Where(c => c.HasValue).Select(c => c.Value.ToString("0.###", CultureInfo.InvariantCulture)))}" : " (slot chances unchanged)") + ".");
+                            return;
+                        }
+
+                        if (op == "weight")
+                        {
+                            // cantrip <scope> weight <trash|mid|chase|crit> <n>
+                            if (args.Count < opIdx + 3
+                                || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var weight) || weight < 0)
+                            { Msg("Usage: cantrip <name> weight <trash|mid|chase|crit> <n>   (n >= 0)"); return; }
+                            var weightStat = args[opIdx + 1].ToLowerInvariant() switch
+                            {
+                                "trash" => ZoneStat.CantripWeightTrash,
+                                "mid" => ZoneStat.CantripWeightMid,
+                                "chase" => ZoneStat.CantripWeightChase,
+                                "crit" => ZoneStat.CantripCritWeight,
+                                _ => null,
+                            };
+                            if (weightStat == null) { Msg("Class must be trash, mid, chase or crit."); return; }
+                            SetStat(weightStat, weight);
+                            Msg($"{scopeTag} {weightStat} = {weight.ToString("0.###", CultureInfo.InvariantCulture)}.");
+                            return;
+                        }
+
+                        if (op == "special")
+                        {
+                            // cantrip <scope> special <odds|bossmult|leadermult> <n>
+                            if (args.Count < opIdx + 3
+                                || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var sv) || sv < 1)
+                            { Msg("Usage: cantrip <name> special <odds|bossmult|leadermult> <n>   (odds = 1-in-n per kill; mults divide the odds; all >= 1)"); return; }
+                            var specialStat = args[opIdx + 1].ToLowerInvariant() switch
+                            {
+                                "odds" => ZoneStat.SpecialOdds,
+                                "bossmult" => ZoneStat.SpecialBossMult,
+                                "leadermult" => ZoneStat.SpecialLeaderMult,
+                                _ => null,
+                            };
+                            if (specialStat == null) { Msg("Special knob must be odds, bossmult or leadermult."); return; }
+                            SetStat(specialStat, sv);
+                            Msg($"{scopeTag} {specialStat} = {sv.ToString("0.###", CultureInfo.InvariantCulture)}.");
+                            return;
+                        }
+
+                        if (isDefaultScope)
+                        { Msg("Default scope supports band | draws | lines | weight | special only (the pool add | remove | list are zone-scope)."); return; }
 
                         if (op == "list")
                         {
@@ -631,13 +826,6 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        if (op == "catalog")
-                        {
-                            foreach (var d in ZoneCantrips.Catalog.Values)
-                                Msg($"  {d.Key,3}  {d.Name} - {d.Effect}");
-                            return;
-                        }
-
                         if (args.Count < 4 || !int.TryParse(args[3], out var cantripKey) || cantripKey <= 0)
                         { Msg("Usage: cantrip <name> add|remove <key>  (see 'cantrip <name> catalog')"); return; }
 
@@ -645,6 +833,8 @@ namespace ACE.Server.Command.Handlers
                         {
                             if (!ZoneCantrips.TryGet(cantripKey, out var def))
                             { Msg($"No zone cantrip with key {cantripKey}. See 'cantrip <name> catalog'."); return; }
+                            if (def.Retired)
+                            { Msg($"Zone Cantrip {cantripKey} ({def.Name}) is Retired - it cannot be added to a pool."); return; }
                             ZoneControlManager.MutateArea(name, a =>
                             {
                                 var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
@@ -663,7 +853,7 @@ namespace ACE.Server.Command.Handlers
                             Msg(removed ? $"'{name}' zone cantrip {cantripKey} removed." : "That key wasn't in the pool.");
                         }
                         else
-                            Msg("op must be add | remove | list | catalog");
+                            Msg("op must be add | remove | list | catalog | band | draws");
                         return;
                     }
 
@@ -2517,6 +2707,57 @@ namespace ACE.Server.Command.Handlers
             if (vp?.CustomCantrips is { Count: > 0 })
                 sb.Append("|cantrips=").Append(string.Join(",", vp.CustomCantrips));
 
+            // Banded cantrips (sparse, rebuilt each sync like the pool): the EVALUATED/merged view —
+            // vp is ResolveProfileForDisplay, so Default-layer bands sync too; a key absent here
+            // rolls the catalog band. cantrips=<key>:<min>:<max>:<procMin>:<procMax>;...
+            // Entries carry ':' / ';' so the parser can tell them from the legacy comma pool list above.
+            if (vp?.CustomCantripBands is { Count: > 0 })
+            {
+                sb.Append("|cantrips=");
+                bool firstCb = true;
+                foreach (var b in vp.CustomCantripBands)
+                {
+                    if (b.Value == null) continue;
+                    if (!firstCb) sb.Append(';');
+                    firstCb = false;
+                    sb.Append(b.Key).Append(':').Append(b.Value.Min).Append(':').Append(b.Value.Max)
+                      .Append(':').Append(b.Value.ProcMin).Append(':').Append(b.Value.ProcMax);
+                }
+            }
+
+            // Per-bucket draw counts (sparse, EVALUATED view like the bands): ctdraws=<bucket>:<n>;...
+            // — only buckets some layer authors; absent = default 2 everywhere.
+            if (vp?.Stats != null)
+            {
+                bool firstCt = true;
+                foreach (var (drawBucket, drawStat) in new[]
+                {
+                    (1, ZoneStat.CantripDrawsB1), (3, ZoneStat.CantripDrawsB3),
+                    (4, ZoneStat.CantripDrawsB4), (5, ZoneStat.CantripDrawsB5),
+                })
+                {
+                    if (!vp.Stats.TryGetValue(drawStat, out var drawCurve)) continue;
+                    sb.Append(firstCt ? "|ctdraws=" : ";");
+                    firstCt = false;
+                    sb.Append(drawBucket).Append(':').Append(Math.Clamp((int)Math.Round(drawCurve.Base), 0, 8));
+                }
+            }
+
+            // Armor v2 line ladder (2026-08-21): ctlines=<min>:<max>:<c1>:<c2>:<c3> - EVALUATED view
+            // (unauthored fields show the C# defaults the mutator uses), always emitted for a T11+ scope
+            // so the plugin's Cantrips tab can render the ladder without knowing the defaults.
+            if (vp?.Stats != null)
+            {
+                double Ladder(string stat, double fallback)
+                    => vp.Stats.TryGetValue(stat, out var c) ? c.Base : fallback;
+                sb.Append("|ctlines=")
+                  .Append(Math.Clamp((int)Math.Round(Ladder(ZoneStat.CantripLinesMin, 0)), 0, 8)).Append(':')
+                  .Append(Math.Clamp((int)Math.Round(Ladder(ZoneStat.CantripLinesMax, 2)), 0, 8)).Append(':')
+                  .Append(Ladder(ZoneStat.CantripLinesChance1, 0.40).ToString("0.####", CultureInfo.InvariantCulture)).Append(':')
+                  .Append(Ladder(ZoneStat.CantripLinesChance2, 0.10).ToString("0.####", CultureInfo.InvariantCulture)).Append(':')
+                  .Append(Ladder(ZoneStat.CantripLinesChance3, 0.01).ToString("0.####", CultureInfo.InvariantCulture));
+            }
+
             // Spell-book rules (sparse, rebuilt each sync): sprules=id~disabled~chancePct,...
             // chance blank = book default (or 2 for added spells).
             if (vp?.SpellRules is { Count: > 0 })
@@ -2930,7 +3171,10 @@ namespace ACE.Server.Command.Handlers
         ///   * relief_* curve anchors — they are (x,y) points on a progression curve, not magnitudes
         ///   * *_chance rolls — probabilities in 0..1
         ///   * loot_slot_* counts and loot_*/weapon_*/armor_*/qb_* knobs — item counts and roll shaping
-        /// Set those individually.
+        ///   * cantrip_*/core_anchor_*/special_*/battlemend_*/pcthp_*/cheatdeath_*/regen_special_*
+        ///     (Armor v2 loot knobs, 2026-08-21) — line ladders, anchors, odds and cooldowns
+        ///   * gear_cap_* worn-gear hard caps (2026-08-21) — a blanket 1100 would silently clip every suit
+        /// Set those individually. This is a WHITELIST: a stat not listed here is skipped by construction.
         /// </summary>
         private static readonly string[] SetAllStats =
         {

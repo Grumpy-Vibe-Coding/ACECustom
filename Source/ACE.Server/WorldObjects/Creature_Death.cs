@@ -964,6 +964,60 @@ namespace ACE.Server.WorldObjects
                 if (slotCounts.Any)
                     items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, slotCounts));
 
+                // Armor v2 slot special (owner 2026-08-21): ONE roll per KILL, retail-rare model
+                // (1 in special_odds; IsZcBoss divides by special_boss_mult, IsZcLeader by
+                // special_leader_mult). On a hit pick one launch special at random and stamp the
+                // dropped piece of its slot (spawn one if the set has none). That piece becomes a
+                // PERFECT piece: core four + every line at band MAX (forceMax below). The flag is a
+                // LOCAL, never a prop - a 50200+ marker would be summed into the worn cache.
+                WorldObject specialPiece = null;
+                ACE.Server.Managers.ZoneControl.ZoneCantrips.Def specialDef = null;
+                if (zoneLoot != null && effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
+                {
+                    var odds = zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialOdds, 750000.0);
+                    if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true)
+                        odds /= Math.Max(1.0, zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialBossMult, 3.0));
+                    else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true)
+                        odds /= Math.Max(1.0, zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialLeaderMult, 2.0));
+                    var denom = Math.Max(1, (int)Math.Round(odds));
+
+                    if (ACE.Common.ThreadSafeRandom.Next(1, denom) == 1)
+                    {
+                        var specials = ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotSpecials();
+                        if (specials.Count > 0)
+                        {
+                            specialDef = specials[ACE.Common.ThreadSafeRandom.Next(0, specials.Count - 1)];
+                            var mask = specialDef.SpecialSlot;
+                            specialPiece = items.FirstOrDefault(i => i.ClothingPriority.HasValue && (i.ClothingPriority.Value & mask) != 0 && (i.ArmorLevel ?? 0) > 0);
+                            if (specialPiece == null)
+                            {
+                                // the set rolled no piece for that slot (zone turned it off) - spawn exactly one
+                                var one = new LootGenerationFactory.ZoneLootSetCounts();
+                                switch (mask)
+                                {
+                                    case CoverageMask.Head: one.Helm = 1; break;
+                                    case CoverageMask.OuterwearChest: one.Chest = 1; break;
+                                    case CoverageMask.Hands: one.Glove = 1; break;
+                                    case CoverageMask.Feet: one.Boot = 1; break;
+                                    case CoverageMask.OuterwearLowerArms: one.Bracer = 1; break;
+                                    default: one.Chest = 1; break;
+                                }
+                                var spawned = LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, one);
+                                specialPiece = spawned.FirstOrDefault(i => i.ClothingPriority.HasValue && (i.ClothingPriority.Value & mask) != 0);
+                                items.AddRange(spawned);
+                            }
+
+                            if (specialPiece != null)
+                                log.Info($"[ZONELOOT] SLOT SPECIAL: {killer?.Name ?? "(unknown)"} killed {Name} ({WeenieClassId}) -> {specialDef.Name} (key {specialDef.Key}, {mask}) on {specialPiece.Name}, odds 1 in {denom}");
+                            else
+                            {
+                                log.Warn($"[ZONELOOT] SLOT SPECIAL won by {killer?.Name ?? "(unknown)"} on {Name} ({WeenieClassId}) but no {mask} piece could be found or spawned");
+                                specialDef = null;
+                            }
+                        }
+                    }
+                }
+
                 // Corpse display order (owner 2026-07-20): casters, missiles, UA, sword, other
                 // melee, then armor/shields/jewelry/cloaks. The client's loot window shows items
                 // in REVERSE insertion order, so insert in exact reverse of the desired display
@@ -977,9 +1031,26 @@ namespace ACE.Server.WorldObjects
                     if (tier > 0)
                         PrestigeManager.ApplyLootScaling(wo, tier);
 
+                    // T11+ deterministic per-slot gear budget (fixed base; cantrips carry the
+                    // variance). BEFORE MutateLootItem so armor_al_bonus/mult and the cantrip
+                    // stamps layer ON TOP of it rather than being clobbered.
+                    var isSpecial = specialPiece != null && ReferenceEquals(wo, specialPiece);
+                    if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
+                        LootGenerationFactory.ApplyT11GearStats(wo, effectiveTreasure.Tier, forceMax: isSpecial, p: zoneLoot);
+
                     // Zone Control loot: post-roll per-item mutations (weapon stats, AL, workmanship, coins,
                     // value, and the low-chance special-property rolls)
-                    ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateLootItem(wo, zoneLoot, this, effectiveTreasure.Tier);
+                    ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateLootItem(wo, zoneLoot, this, effectiveTreasure.Tier, forceMax: isSpecial);
+
+                    // the slot special itself (Armor v2): rolled in ITS band (zone override wins), stamped
+                    // after the lines so it reads last among the "Zone Cantrip:" lines
+                    if (isSpecial && specialDef != null)
+                    {
+                        var (sMin, sMax, _, _) = zoneLoot.CantripBands.TryGetValue(specialDef.Key, out var sBand)
+                            ? sBand : (specialDef.Min, specialDef.Max, specialDef.ProcMin, specialDef.ProcMax);
+                        if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
+                        ACE.Server.Managers.ZoneControl.ZoneCantrips.Stamp(wo, specialDef, ACE.Common.ThreadSafeRandom.Next(sMin, sMax));
+                    }
 
                     // Tier 11+ presentation sweep. Runs LAST so it also covers values that came
                     // from the base weenie or any mutation above.

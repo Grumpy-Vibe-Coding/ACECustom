@@ -153,6 +153,12 @@ namespace ACE.Server.WorldObjects
                 if (regenProp != 0)
                     augMod += player.GetZoneCantripBonus(regenProp);
 
+                // Zone Control Regen slot special (key 46, bracers; prop 50231 = the stamped MULTIPLIER,
+                // default band 3): MAX-wins across worn pieces and against the aug/legacy-line augMod -
+                // whichever is larger applies, they never stack. Prodigal suppression + the zone regen
+                // tuner below stay exactly as they are.
+                augMod = Math.Max(augMod, player.GetZoneCantripMax(50231));
+
                 // Zone Control Suppression: recompute the enchantment mod without the Prodigal regen line
                 // (uncached path — the cached mod can't know about zone borders), and pick up the regen tuner.
                 try

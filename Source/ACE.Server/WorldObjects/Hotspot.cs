@@ -210,6 +210,7 @@ namespace ACE.Server.WorldObjects
                 default:
 
                     if (creature.Invincible) return;
+                    if (player != null && player.ZcDamageImmune) return;   // Zone Control Cheat Death window
 
                     amount *= creature.GetResistanceMod(DamageType, this, null);
 
@@ -255,12 +256,12 @@ namespace ACE.Server.WorldObjects
 
         private void Activate(Creature creature)
         {
-            ActivateCommon(creature, IsHot, (Creature c) => !c.Invincible && !c.IsDead);
+            ActivateCommon(creature, IsHot, (Creature c) => !c.Invincible && !c.IsDead && !(c is Player p && p.ZcDamageImmune));
         }
 
         private void ActivateEnragedHotspot(Creature creature)
         {
-            ActivateCommon(creature, EnragedHotspot, (Creature c) => !c.Invincible && !c.IsDead);
+            ActivateCommon(creature, EnragedHotspot, (Creature c) => !c.Invincible && !c.IsDead && !(c is Player p && p.ZcDamageImmune));
         }
     }
 }

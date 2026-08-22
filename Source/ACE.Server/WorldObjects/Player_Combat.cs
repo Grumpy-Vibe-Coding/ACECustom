@@ -47,6 +47,165 @@ namespace ACE.Server.WorldObjects
             set { if (value == 0) RemoveProperty(PropertyFloat.PkTimestamp); else SetProperty(PropertyFloat.PkTimestamp, value); }
         }
 
+        #region Zone Control slot specials (armor v2, 2026-08-21)
+
+        // Cantrip props the specials are keyed on (ZoneCantrips block 50200-50399; literal ints here so
+        // this file does not chase the catalog's constant names): 50227/50228 = key 42 Battle Mending
+        // (chance / heal - either marks the piece; the magnitude is ignored, the save heals to full),
+        // 50229 = key 44 pct-HP damage in TENTHS of a pct, 50230 = key 45 Cheat Death flag (stamp 1),
+        // 50231 = key 46 Regen multiplier (read in Creature_Vitals).
+        private const int ZcBattleMendChanceProp = 50227;
+        private const int ZcBattleMendHealProp = 50228;
+        private const int ZcPctHpDamageProp = 50229;
+        private const int ZcCheatDeathProp = 50230;
+
+        // TRANSIENT per-session timers (unix seconds). Never persisted, never exposed as properties:
+        // a relog resets them, which is the accepted cost of keeping them out of the biota.
+        public double ZcBattleMendReadyAt;
+        public double ZcPctHpReadyAt;
+        public double ZcCheatDeathReadyAt;
+        public double ZcCheatDeathImmuneUntil;
+
+        /// <summary>Cheat Death window: TRUE while the player is immune to ALL damage. OR'd into every
+        /// Invincible guard and unguarded HP writer (melee/missile/magic/DoT/zone tick/hotspot/falling/
+        /// boundary drain). Deliberately NOT PropertyBool.Invincible - that one is persisted and admin-owned.
+        /// Nothing the player does clears the window; it simply expires.</summary>
+        public bool ZcDamageImmune => Time.GetUnixTime() < ZcCheatDeathImmuneUntil;
+
+        /// <summary>
+        /// Per-zone tuning knob for the specials, read from the governing zone's DEFAULT profile
+        /// (ResolveZoneDefaultForCreature - the same layer the relief curves use, so a per-WCID stat
+        /// override never hides the knob). There is no player-side stat resolver, so the zone is found
+        /// through the OTHER creature in the exchange: the monster hitting us, or the monster we hit.
+        /// No creature (falling, zone DoT) or no zone -> the C# default.
+        /// </summary>
+        private static double ZcSpecialKnob(WorldObject other, string stat, double fallback)
+        {
+            try
+            {
+                if (other is Creature c && c is not Player)
+                {
+                    var profile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveZoneDefaultForCreature(c);
+                    if (profile != null)
+                        return profile.Get(stat, fallback);
+                }
+            }
+            catch
+            {
+                // never let zone resolution break a damage path
+            }
+            return fallback;
+        }
+
+        /// <summary>
+        /// Cheat Death (key 45, boots). Call with the FINAL incoming health amount, AFTER Mana Barrier and
+        /// BEFORE the health delta. If the wearer carries the flag, the cooldown is ready and the hit would
+        /// be lethal, the amount is clamped so Health lands on exactly 1, a full-damage immunity window
+        /// opens (cheatdeath_immunity, default 5 s) and the per-character cooldown starts
+        /// (cheatdeath_cooldown, default 600 s). Returns the amount to actually apply.
+        /// </summary>
+        public uint ZcTryCheatDeath(WorldObject source, uint amount)
+        {
+            if (IsDead || Health.Current <= 0 || amount < Health.Current)
+                return amount;
+
+            if (GetZoneCantripMax(ZcCheatDeathProp) <= 0)
+                return amount;
+
+            var now = Time.GetUnixTime();
+            if (now < ZcCheatDeathReadyAt)
+                return amount;
+
+            var immunity = ZcSpecialKnob(source, "cheatdeath_immunity", 5.0);
+            var cooldown = ZcSpecialKnob(source, "cheatdeath_cooldown", 600.0);
+
+            ZcCheatDeathImmuneUntil = now + immunity;
+            ZcCheatDeathReadyAt = now + cooldown;
+
+            SendMessage($"Cheat Death! You are immune to all damage for {immunity:0} seconds.", ChatMessageType.Broadcast);
+
+            // land on 1 HP, never below
+            return (uint)(Health.Current - 1);
+        }
+
+        /// <summary>
+        /// Battle Mending (key 42, chest) death save. Call AFTER a health delta has been applied and BEFORE
+        /// the death check: if the wearer is still alive but under battlemend_threshold (default 0.25) of
+        /// max health and the cooldown (battlemend_cooldown, default 60 s) is ready, heal to full. The
+        /// piece's rolled chance/heal magnitudes are ignored - the special has no magnitude.
+        /// </summary>
+        public void ZcTryBattleMend(WorldObject source)
+        {
+            if (IsDead || Health.Current <= 0)
+                return;
+
+            if (GetZoneCantripMax(ZcBattleMendHealProp) <= 0 && GetZoneCantripMax(ZcBattleMendChanceProp) <= 0)
+                return;
+
+            var now = Time.GetUnixTime();
+            if (now < ZcBattleMendReadyAt)
+                return;
+
+            var threshold = ZcSpecialKnob(source, "battlemend_threshold", 0.25);
+            if (Health.Current >= threshold * Health.MaxValue)
+                return;
+
+            var missing = (int)Math.Min(int.MaxValue, (long)Health.MaxValue - Health.Current);
+            if (missing <= 0)
+                return;
+
+            // UpdateVital sends the client vital update itself (Player_Vitals.UpdateVital)
+            var healed = UpdateVitalDelta(Health, missing);
+            if (healed > 0)
+                DamageHistory.OnHeal((uint)healed);
+
+            ZcBattleMendReadyAt = now + ZcSpecialKnob(source, "battlemend_cooldown", 60.0);
+
+            SendMessage("Battle Mending restores you to full health.", ChatMessageType.Broadcast);
+        }
+
+        /// <summary>
+        /// pct-HP damage (key 44, gauntlets): the FLAT add (no crit, no mitigation) to put on a landed hit
+        /// against <paramref name="defender"/>, or 0. Fires only vs monsters carrying a Zone Control
+        /// variation profile (everything else immune by default), never vs a mob flagged
+        /// PropertyBool.ZcPctHpImmune (50051), on a per-character cooldown (pcthp_cooldown, default 2 s),
+        /// and under the NO-KILL rule: only while the mob's health fraction is above the rolled pct, so the
+        /// add can never be the killing blow. The cooldown starts only when it actually fires.
+        /// </summary>
+        public float ZcTryPctHpDamage(Creature defender)
+        {
+            if (defender == null || defender is Player || defender is CombatPet || defender.IsDead || defender.Health == null)
+                return 0.0f;
+
+            var tenths = GetZoneCantripMax(ZcPctHpDamageProp);
+            if (tenths <= 0)
+                return 0.0f;
+
+            var now = Time.GetUnixTime();
+            if (now < ZcPctHpReadyAt)
+                return 0.0f;
+
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(defender) == null)
+                return 0.0f;
+
+            if (defender.GetProperty(PropertyBool.ZcPctHpImmune) == true)
+                return 0.0f;
+
+            var max = defender.Health.MaxValue;
+            if (max == 0)
+                return 0.0f;
+
+            var frac = tenths / 1000.0;
+            if ((double)defender.Health.Current / max <= frac)
+                return 0.0f;
+
+            ZcPctHpReadyAt = now + ZcSpecialKnob(defender, "pcthp_cooldown", 2.0);
+
+            return (float)(frac * max);
+        }
+
+        #endregion
+
         /// <summary>
         /// Returns the current attack skill for the player
         /// </summary>
@@ -490,7 +649,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public override void TakeDamageOverTime(float _amount, DamageType damageType)
         {
-            if (Invincible || IsDead) return;
+            if (Invincible || ZcDamageImmune || IsDead) return;
 
             // check lifestone protection
             if (UnderLifestoneProtection)
@@ -514,7 +673,12 @@ namespace ACE.Server.WorldObjects
 
             // update health (skip if fully absorbed)
             if (!mbDotResult.FullyAbsorbed)
+            {
+                // Zone Control Cheat Death (key 45) / Battle Mending (key 42) - DoT ticks bypass TakeDamageInternal
+                amount = ZcTryCheatDeath(DamageHistory.LastDamager?.TryGetAttacker(), amount);
                 UpdateVitalDelta(Health, (int)-amount);
+                ZcTryBattleMend(DamageHistory.LastDamager?.TryGetAttacker());
+            }
 
             // update stamina
             //UpdateVitalDelta(Stamina, -1);
@@ -564,7 +728,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void TakeZoneEffectDamage(uint amount, DamageType damageType)
         {
-            if (Invincible || IsDead || amount == 0)
+            if (Invincible || ZcDamageImmune || IsDead || amount == 0)
                 return;
 
             if (UnderLifestoneProtection)
@@ -597,7 +761,10 @@ namespace ACE.Server.WorldObjects
                 }
                 default:
                 {
+                    // Zone Control Cheat Death (key 45) / Battle Mending (key 42) - zone ticks bypass TakeDamageInternal
+                    amount = ZcTryCheatDeath(null, amount);
                     UpdateVitalDelta(Health, -(int)amount);
+                    ZcTryBattleMend(null);
 
                     string text;
                     ChatMessageType chan;
@@ -650,7 +817,7 @@ namespace ACE.Server.WorldObjects
         private int TakeDamageInternal(WorldObject source, DamageType damageType, float _amount, BodyPart bodyPart, out uint amountAbsorbed, bool crit, AttackConditions attackConditions)
         {
             amountAbsorbed = 0;
-            if (Invincible || IsDead) return 0;
+            if (Invincible || ZcDamageImmune || IsDead) return 0;
 
             if (source is Creature creatureAttacker)
                 SetCurrentAttacker(creatureAttacker);
@@ -704,8 +871,14 @@ namespace ACE.Server.WorldObjects
                 damageTaken = 0;
                 if (!mbResult.FullyAbsorbed)
                 {
+                    // Zone Control Cheat Death (key 45): lethal hit -> land on 1 HP + immunity window
+                    amount = ZcTryCheatDeath(source, amount);
+
                     damageTaken = (uint)-UpdateVitalDelta(Health, (int)-amount);
                     DamageHistory.Add(source, damageType, damageTaken);
+
+                    // Zone Control Battle Mending (key 42): survived, but under the threshold -> heal to full
+                    ZcTryBattleMend(source);
                 }
             }
 

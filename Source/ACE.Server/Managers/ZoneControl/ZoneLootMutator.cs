@@ -22,9 +22,10 @@ namespace ACE.Server.Managers.ZoneControl
         /// Mutations for an item rolled from the death-treasure table: weapon stat scaling, armor AL,
         /// workmanship, coin stacks, vendor value, plus the low-chance special-property rolls.
         /// <paramref name="killed"/> is the dying monster (slayer type source); <paramref name="lootTier"/>
-        /// is the effective treasure tier (levels the default proc spell).
+        /// is the effective treasure tier (levels the default proc spell). <paramref name="forceMax"/> = this
+        /// piece won the per-kill slot special (Armor v2): every cantrip line rolls at band MAX.
         /// </summary>
-        public static void MutateLootItem(WorldObject wo, EvaluatedProfile p, Creature killed = null, int lootTier = 1)
+        public static void MutateLootItem(WorldObject wo, EvaluatedProfile p, Creature killed = null, int lootTier = 1, bool forceMax = false)
         {
             if (wo == null || p == null)
                 return;
@@ -158,7 +159,7 @@ namespace ACE.Server.Managers.ZoneControl
                 wo.Value = ThreadSafeRandom.Next(valLo, valHi);
             }
 
-            TrySpecialRolls(wo, p, killed, lootTier);
+            TrySpecialRolls(wo, p, killed, lootTier, forceMax);
         }
 
         // ── special-property rolls ("fun stuff": independent 0..1 chance each; an item can win several) ──
@@ -245,7 +246,7 @@ namespace ACE.Server.Managers.ZoneControl
         // Gem tier I..V weights (sum 100) — weighted toward the low tiers.
         private static readonly int[] GemTierWeights = { 40, 25, 17, 11, 7 };
 
-        private static void TrySpecialRolls(WorldObject wo, EvaluatedProfile p, Creature killed, int lootTier)
+        private static void TrySpecialRolls(WorldObject wo, EvaluatedProfile p, Creature killed, int lootTier, bool forceMax)
         {
             var isMelee = wo is MeleeWeapon;
             var isMissile = wo is MissileLauncher;
@@ -407,12 +408,23 @@ namespace ACE.Server.Managers.ZoneControl
                     (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 0.05);
             }
 
-            // one EXTRA unique zone cantrip on top of whatever the roll produced — the zone's pool only
+            // the zone-cantrip LINES on top of whatever the roll produced — the zone's pool only
             // (prop-based ZoneCantrips catalog; retail cantrips deliberately excluded)
-            TryExtraCantrip(wo, p, isWeapon);
+            TryExtraCantrip(wo, p, isWeapon, forceMax);
         }
 
-        private static void TryExtraCantrip(WorldObject wo, EvaluatedProfile p, bool isWeapon)
+        /// <summary>
+        /// Armor v2 line roll (Cantrip_Band_Ladder v2, 2026-08-21). Replaces the per-bucket draws:
+        ///   (a) line COUNT = cantrip_lines_min guaranteed, then extra slots up to cantrip_lines_max roll
+        ///       cantrip_lines_chance_1/2/3 IN ORDER - the first miss stops (slots past 3 reuse chance_3);
+        ///   (b) each slot picks a DISTINCT key from the zone pool, weighted by Def.Class
+        ///       (cantrip_weight_trash/mid/chase; key 33 Crit Rating reads cantrip_crit_weight);
+        ///       Retired and SlotSpecial defs never enter, ArmorOnly needs an AL piece;
+        ///   (c) bands: the zone override (CustomCantripBands) wins over the catalog, unchanged;
+        ///   (d) forceMax (the piece carries the per-kill slot special) = every line at band MAX.
+        /// armor_cantrip_chance / weapon_cantrip_chance stay the master on/off gate.
+        /// </summary>
+        private static void TryExtraCantrip(WorldObject wo, EvaluatedProfile p, bool isWeapon, bool forceMax)
         {
             if (!Won(p, isWeapon ? ZoneStat.WeaponCantripChance : ZoneStat.ArmorCantripChance))
                 return;
@@ -421,9 +433,87 @@ namespace ACE.Server.Managers.ZoneControl
             if (pool == null || pool.Count == 0)
                 return;
 
-            var key = pool[ThreadSafeRandom.Next(0, pool.Count - 1)];
-            if (ZoneCantrips.TryGet(key, out var def))
-                ZoneCantrips.Stamp(wo, def);
+            // (a) how many lines this piece gets
+            var linesMin = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMin, 0.0)), 0, 8);
+            var linesMax = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMax, 2.0)), linesMin, 8);
+            var lines = linesMin;
+            for (int slot = 1; lines < linesMax; slot++)
+            {
+                var chanceStat = slot switch
+                {
+                    1 => ZoneStat.CantripLinesChance1,
+                    2 => ZoneStat.CantripLinesChance2,
+                    _ => ZoneStat.CantripLinesChance3,
+                };
+                var chance = Math.Clamp(p.Get(chanceStat, slot == 1 ? 0.40 : slot == 2 ? 0.10 : 0.01), 0.0, 1.0);
+                if (chance <= 0 || ThreadSafeRandom.Next(0.0f, 1.0f) >= chance)
+                    break;
+                lines++;
+            }
+            if (lines <= 0)
+                return;
+
+            var hasArmor = !isWeapon && wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0;
+
+            // (b) zone pool -> weighted candidate list (retired / special / armor-only-on-armorless never enter)
+            var weightTrash = Math.Max(0.0, p.Get(ZoneStat.CantripWeightTrash, 10.0));
+            var weightMid = Math.Max(0.0, p.Get(ZoneStat.CantripWeightMid, 6.0));
+            var weightChase = Math.Max(0.0, p.Get(ZoneStat.CantripWeightChase, 1.0));
+            var weightCrit = Math.Max(0.0, p.Get(ZoneStat.CantripCritWeight, 1.0));
+
+            var candidates = new List<(ZoneCantrips.Def Def, double Weight)>();
+            var seen = new HashSet<int>();
+            foreach (var key in pool)
+            {
+                if (!seen.Add(key) || !ZoneCantrips.TryGet(key, out var def) || def.Retired || def.SlotSpecial)
+                    continue;
+                if (def.ArmorOnly && !hasArmor)
+                    continue;
+                var weight = def.Key == 33 ? weightCrit : def.Class switch
+                {
+                    ZoneCantrips.CantripClass.Trash => weightTrash,
+                    ZoneCantrips.CantripClass.Mid => weightMid,
+                    ZoneCantrips.CantripClass.Chase => weightChase,
+                    _ => 0.0,
+                };
+                if (weight > 0)
+                    candidates.Add((def, weight));
+            }
+
+            for (int n = 0; n < lines && candidates.Count > 0; n++)
+            {
+                var def = PickWeighted(candidates);
+                candidates.RemoveAll(c => c.Def.Key == def.Key);   // distinct per piece
+
+                var (min, max, procMin, procMax) = p.CantripBands.TryGetValue(def.Key, out var band)
+                    ? band : (def.Min, def.Max, def.ProcMin, def.ProcMax);
+
+                // insurance against hand-edited store bands - an inverted band must not throw mid-loot
+                if (min > max) (min, max) = (max, min);
+                if (procMin > procMax) (procMin, procMax) = (procMax, procMin);
+
+                var value = forceMax ? max : ThreadSafeRandom.Next(min, max);
+                var proc = procMax > 0 ? (forceMax ? procMax : ThreadSafeRandom.Next(procMin, procMax)) : 0;
+                // pass the effective band so the drop line advertises what was actually rolled from
+                ZoneCantrips.Stamp(wo, def, value, proc, (min, max, procMin, procMax));
+            }
+        }
+
+        /// <summary>Weighted pick over a (def, weight) list; weights are arbitrary positive doubles.</summary>
+        private static ZoneCantrips.Def PickWeighted(List<(ZoneCantrips.Def Def, double Weight)> candidates)
+        {
+            var total = 0.0;
+            foreach (var c in candidates)
+                total += c.Weight;
+            var roll = ThreadSafeRandom.Next(0.0f, (float)total);
+            var sum = 0.0;
+            foreach (var c in candidates)
+            {
+                sum += c.Weight;
+                if (roll < sum)
+                    return c.Def;
+            }
+            return candidates[candidates.Count - 1].Def;
         }
 
         /// <summary>True when the profile defines the chance stat AND the 0..1 roll comes up a winner.</summary>

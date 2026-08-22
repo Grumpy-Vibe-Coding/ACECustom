@@ -231,6 +231,14 @@ namespace ACE.Server.WorldObjects.Entity
             if (zoneCantrip > 0)
                 total += (uint)zoneCantrip;
 
+            // Gear Creature Augs (owner 2026-08-21, the tier-gate "live route"): the T11+
+            // set's guaranteed fixed base + rolled extras raise EVERY skill flat, live on
+            // equip/dequip. This is a pure gate stat: it does not scale buff values, does not
+            // feed the relief axis, and cannot be frozen into a cast-and-swap.
+            var gearCreatureAugs = player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus);
+            if (gearCreatureAugs > 0)
+                total += (uint)gearCreatureAugs;
+
             return total;
         }
     }

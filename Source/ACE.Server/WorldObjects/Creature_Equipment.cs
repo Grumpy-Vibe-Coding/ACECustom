@@ -299,12 +299,98 @@ namespace ACE.Server.WorldObjects
             }
         }
 
-        /// <summary>Sum of a Zone Control cantrip prop across this creature's equipped items.</summary>
+        /// <summary>
+        /// Sum of a Zone Control cantrip prop across this creature's equipped items, HARD-CAPPED for the
+        /// anchored 2500 lines (gear_cap_line): the six attributes (key 43), Max Stamina 20, Max Mana 21
+        /// and every aug track 34-40. The cache keeps the TRUE sum so dequip arithmetic stays exact; the
+        /// cap is applied here at read time only. Everything else in the block (skills, spell duration,
+        /// specials) is uncapped. Creature_Rating clamps the retail-prop lines (Dmg / CritDmg / MaxHP /
+        /// HealBoost) the same way on the rating cache.
+        /// </summary>
         public int GetZoneCantripBonus(int propId)
         {
             if (zoneCantripCache == null)
                 return 0;
-            return zoneCantripCache.TryGetValue(propId, out var v) ? v : 0;
+            if (!zoneCantripCache.TryGetValue(propId, out var v))
+                return 0;
+            if (v > 0 && IsGearCapLineProp(propId))
+                v = Math.Min(v, GetGearCap(ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapLine, 2500));
+            return v;
+        }
+
+        /// <summary>The 50200-block props that are anchored 2500 SET lines and read under gear_cap_line.</summary>
+        private static bool IsGearCapLineProp(int propId)
+        {
+            const int attrLo = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 1;     // 50201 Strength
+            const int attrHi = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 6;     // 50206 Self
+            if (propId >= attrLo && propId <= attrHi)
+                return true;
+            switch (propId)
+            {
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxStaminaBonus:    // key 20
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxManaBonus:       // key 21
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus:   // key 35
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.ItemAugBonus:       // key 34
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.LifeAugBonus:       // key 36
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.WarAugBonus:        // key 37
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.VoidAugBonus:       // key 38
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MeleeAugBonus:      // key 39
+                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MissileAugBonus:    // key 40
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Worn-gear hard cap knob (gear_cap_dr / gear_cap_cdr / gear_cap_line). Players read the zone
+        /// DEFAULT they stand in; no governing zone (or a monster) = the C# default, so the cap holds
+        /// everywhere and a zone only re-tunes it. Never below 0.
+        /// </summary>
+        public int GetGearCap(string capStat, int defaultCap)
+        {
+            if (this is not Player player)
+                return defaultCap;
+            var zone = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveZoneDefaultForPlayer(player);
+            if (zone == null || !zone.Has(capStat))
+                return defaultCap;
+            return Math.Max(0, (int)Math.Round(zone.Get(capStat, defaultCap)));
+        }
+
+        /// <summary>
+        /// <see cref="GetEquippedItemsRatingSum"/> clamped to a worn-gear cap. Owner 2026-08-21: a set
+        /// anchored at 2500 reads EXACTLY 2500, not 2502 (18 x 139 flat bands). Equipment term only -
+        /// enchantments / augs / enlightenment stack on top untouched in the rating getters.
+        /// Worked check, T25 BiS premade (18 pieces): DR 18 x 139 = 2502 -> 2500 (gear_cap_dr);
+        /// CDR 18 x 83 = 1494 -> 1494 (under gear_cap_cdr 1500); Damage Rating 18 x 139 = 2502 -> 2500.
+        /// </summary>
+        public int GetEquippedItemsRatingSumCapped(PropertyInt rating, string capStat, int defaultCap)
+        {
+            var sum = GetEquippedItemsRatingSum(rating);
+            if (sum <= 0)
+                return sum;
+            return Math.Min(sum, GetGearCap(capStat, defaultCap));
+        }
+
+        /// <summary>
+        /// MAX (not sum) of a Zone Control cantrip prop across this creature's equipped items — the
+        /// combine rule for the slot SPECIALS (Fortify 41, Battle Mending 42, pct-HP 44, Cheat Death 45,
+        /// Regen 46): the highest single piece wins, two pieces never stack. Scans EquippedObjects on
+        /// read (the cache only holds sums); bails on the cache so creatures wearing nothing cantripped
+        /// pay nothing. 0 when no equipped item carries the prop.
+        /// </summary>
+        public int GetZoneCantripMax(int propId)
+        {
+            if (zoneCantripCache == null || !zoneCantripCache.ContainsKey(propId))
+                return 0;
+
+            var max = 0;
+            foreach (var item in EquippedObjects.Values)
+            {
+                var v = item.GetProperty((PropertyInt)propId) ?? 0;
+                if (v > max)
+                    max = v;
+            }
+            return max;
         }
 
         public int GetEquippedItemsRatingSum(PropertyInt rating)

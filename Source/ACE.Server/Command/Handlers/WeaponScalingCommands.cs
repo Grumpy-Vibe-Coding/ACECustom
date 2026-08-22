@@ -890,7 +890,7 @@ namespace ACE.Server.Command.Handlers
         private static string ForgeWeapon(ACE.Server.WorldObjects.Player player, uint wcid, string cleanName,
             int quality, int tier, DamageType? element,
             ACE.Server.Factories.Enum.TreasureWeaponType twType = ACE.Server.Factories.Enum.TreasureWeaponType.Undef,
-            ForgeCards cards = null, Container bag = null)
+            ForgeCards cards = null, Container bag = null, bool force = false)
         {
             WorldObject wo;
             if (tier == 10 && twType != ACE.Server.Factories.Enum.TreasureWeaponType.Undef)
@@ -967,6 +967,23 @@ namespace ACE.Server.Command.Handlers
             wo.Attuned = ACE.Entity.Enum.AttunedStatus.Attuned;
             wo.Bonded = ACE.Entity.Enum.BondedStatus.Bonded;
 
+            // Owner 2026-08-20: repeat presses used to stack another full set into the Weapon Pack.
+            // Skip anything already held. Name carries class + element + quality but NOT the tier
+            // (T11+), so a T13 re-forge would otherwise collide with its T12 twin - match the
+            // stamped WeaponAugScaleTier too.
+            if (!force)
+            {
+                var heldSame = player.GetAllPossessionsDeep().Any(i =>
+                    i.Name == wo.Name
+                    && (i.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier) ?? 0) == tier);
+
+                if (heldSame)
+                {
+                    wo.Destroy();
+                    return $"forge: already holding {wo.Name} at tier {tier} - skipped (add 'force' to mint another)";
+                }
+            }
+
             var cardNote = cards != null ? ApplyForgeCards(wo, cards) : "";
 
             // Bagged runs fill the Weapon Pack; if it is full (or could not be made) the weapon still
@@ -1027,7 +1044,8 @@ namespace ACE.Server.Command.Handlers
             "cards: proc[=spellId] procrate=0-1 (Cast on Strike; no id = max-level bolt matching the element) rend (matching rend imbue)\n" +
             "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
             "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 phantom slayer=1.5-10 slayertype=<name> paragon hilt bowstring\n" +
-            "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)")]
+            "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)\n" +
+            "force = mint even if you already hold that exact weapon at that tier (default is to skip it, so repeat presses cannot stack sets)")]
         public static void HandleWsForge(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -1053,9 +1071,11 @@ namespace ACE.Server.Command.Handlers
             // "bag" anywhere = mint into the Weapon Pack (owner 2026-08-11: a premade's weapon set
             // should not bury the main pack).
             var useBag = parameters.Any(p => p.Equals("bag", StringComparison.OrdinalIgnoreCase));
+            var force = parameters.Any(p => p.Equals("force", StringComparison.OrdinalIgnoreCase));
             var positional = parameters
                 .Where(p => !p.StartsWith("cards:", StringComparison.OrdinalIgnoreCase)
-                            && !p.Equals("bag", StringComparison.OrdinalIgnoreCase)).ToArray();
+                            && !p.Equals("bag", StringComparison.OrdinalIgnoreCase)
+                            && !p.Equals("force", StringComparison.OrdinalIgnoreCase)).ToArray();
             if (positional.Length == 0)
             {
                 Msg("wsforge: missing class. Classes: all " + string.Join(" ", ForgeClasses.Select(c => c.Key)));
@@ -1098,11 +1118,11 @@ namespace ACE.Server.Command.Handlers
             {
                 // one of every class at the same quality/element/tier (owner 2026-08-01)
                 foreach (var c in ForgeClasses)
-                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element, c.TWType, cards, bag));
+                    Msg(ForgeWeapon(player, c.Wcid, c.CleanName, quality, tier, element, c.TWType, cards, bag, force));
                 return;
             }
 
-            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element, cls.TWType, cards, bag));
+            Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, tier, element, cls.TWType, cards, bag, force));
         }
     }
 }

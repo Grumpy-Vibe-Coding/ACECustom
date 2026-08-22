@@ -262,7 +262,16 @@ namespace ACE.Server.Factories
                     continue;
                 if (line.StartsWith("Dropped by") || line.StartsWith("Dropped in ") || line.StartsWith("Location:"))
                     provenance.Append(provenance.Length > 0 ? "\n" : "").Append(line);
-                else if (line.StartsWith("Wield requires:") || line.StartsWith("Weapon Grade:") || line.StartsWith("Aug Scaling"))
+                else if (line.StartsWith("Creature Augmentation:"))
+                {
+                    // regenerate from the live prop: the fixed base is baked BEFORE MutateLootItem,
+                    // where a key-35 zone cantrip may have ADDED to 50213 - the baked text goes stale
+                    var ca = wo.GetProperty((ACE.Entity.Enum.Properties.PropertyInt)
+                        ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus) ?? 0;
+                    keep.Append(keep.Length > 0 ? "\n" : "").Append("Creature Augmentation: +").Append(ca);
+                }
+                else if (line.StartsWith("Wield requires:") || line.StartsWith("Weapon Grade:") || line.StartsWith("Aug Scaling")
+                      || line.StartsWith("Zone Cantrip:"))
                     keep.Append(keep.Length > 0 ? "\n" : "").Append(line);
                 // anything else = inherited weenie flavor text - discarded by design
             }
@@ -311,6 +320,111 @@ namespace ACE.Server.Factories
         /// The stock client panel now renders its eight per-element lines with one identical
         /// value each (panel takeover reverted 2026-07-21).
         /// </summary>
+        /// <summary>
+        /// Tier-11+ deterministic gear budget (owner plan 2026-08-20/21): every non-weapon
+        /// piece of zone-set loot and /asforge gear carries the same fixed per-slot stats,
+        /// doubling per tier - "fixed base, variable extras", all drop variance lives in
+        /// cantrips so damage-taken tuning works against a known floor. C# is the DEFAULT
+        /// layer only; the zone stats stay the override surface (ZoneLootMutator armor_al_bonus
+        /// / armor_al_mult and the cantrip stamps run AFTER this and layer on top).
+        /// Shared by Creature_Death (loot sweep) and TestCharacterCommands (/asforge) so
+        /// premades match drops exactly. Classifier is ItemType: Armor=2 covers body armor
+        /// AND shields; Clothing=4 is shirt/pants/cloak (never authored AL); Jewelry=8
+        /// contributes no AL by engine rule (only WeenieType.Clothing is an armor layer).
+        /// </summary>
+        public static void ApplyT11GearStats(WorldObject wo, int tier, bool forceMax = false,
+            ACE.Server.Managers.ZoneScaling.EvaluatedProfile p = null, double? coreFrac = null)
+        {
+            if (wo == null || tier < ZoneLootSetMinTier)
+                return;
+
+            // THE ANCHORED LINEAR LADDER (owner 2026-08-21, supersedes the rejected doubling):
+            // T25 best-in-slot anchors - 2,500 armor PER PIECE; SET totals 2,500 Damage Resist /
+            // 1,500 CritDmgResist / CritResist / NetherResist. T11 BiS = half the anchor; per-tier
+            // value = base x (1 + (t-11)/14), so every stat exactly doubles across the T11->T25
+            // journey and armor steps a flat +100/tier.
+            //
+            // Armor v2 (owner 2026-08-21 afternoon, Cantrip_Band_Ladder v2 section 1): the
+            // GUARANTEED defensive core is the four resist ratings, ROLLED uniformly inside a
+            // per-tier window instead of written as a constant, FLAT across all 18 slots (the
+            // inherited 50/30/55 armor/clothing/jewelry weighting is dead). Per piece:
+            //   cap(t)  = anchor/18 x (1 + (t-11)/14)
+            //   step    = anchor/18/14            (FIXED T11 step, not per-tier cap/14)
+            //   floor   = cap - 1.5 step          (T11: cap - 0.5 step - no previous tier)
+            // Rounded at the END only: rounding the cap first breaks the 750-class T11 window
+            // (spec wants 40-42). Damage Rating and Max Health are NOT here any more - they are
+            // random chase lines (keys 28 / 19). Mobs are tuned against the FLOOR of the core.
+            var scale = 1.0 + (tier - 11) / 14.0;
+            int S(int baseValue) => (int)System.Math.Round(baseValue * scale);
+
+            // zone override surface for the anchors (core_anchor_dr / core_anchor_cdr); C# is the default
+            var anchorDr = p?.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CoreAnchorDr, 1250.0) ?? 1250.0;
+            var anchorCdr = p?.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CoreAnchorCdr, 750.0) ?? 750.0;
+
+            int RollCore(double anchor)
+            {
+                var cap = anchor / 18.0 * scale;
+                var step = anchor / 18.0 / 14.0;
+                var lo = cap - (tier == 11 ? 0.5 : 1.5) * step;
+                var min = (int)System.Math.Round(lo);
+                var max = (int)System.Math.Round(cap);
+                if (min > max) min = max;
+                if (forceMax) return max;
+                // coreFrac: deterministic point inside the window (premade "Average" suits pass
+                // 0.5 = the midpoint). forceMax still wins above; null = the live random roll.
+                if (coreFrac.HasValue)
+                    return min + (int)System.Math.Round((max - min) * coreFrac.Value);
+                return ThreadSafeRandom.Next(min, max);   // inclusive both ends
+            }
+
+            int ca;
+            switch (wo.ItemType)
+            {
+                case ACE.Entity.Enum.ItemType.Armor:
+                    ca = 30;
+
+                    wo.ArmorLevel = 1100 + 100 * (tier - 11);
+
+                    // Every element authored explicitly: ArmorModVs* defaults to 0.0 and
+                    // MULTIPLIES the piece AL - an absent prop is literally zero protection
+                    // for that element. Fill absent with 1.0, then equalize as always.
+                    foreach (var prop in armorModVsProps)
+                        if (!wo.GetProperty(prop).HasValue)
+                            wo.SetProperty(prop, 1.0);
+                    EqualizeT11ArmorResists(wo);
+                    break;
+
+                case ACE.Entity.Enum.ItemType.Clothing:
+                    ca = 20;
+                    break;
+
+                case ACE.Entity.Enum.ItemType.Jewelry:
+                    ca = 12;
+                    break;
+
+                default:
+                    // weapons / casters / ammo: the weapon-scaling system owns those
+                    return;
+            }
+
+            // Damage / Max Health left the fixed base (random pool now). REMOVE rather than skip:
+            // TryMutateGearRatingT10's coin-flip rolls would otherwise leak onto T11 drops.
+            wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamage);
+            wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearMaxHealth);
+
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamageResist, RollCore(anchorDr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritDamageResist, RollCore(anchorCdr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritResist, RollCore(anchorCdr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearNetherResist, RollCore(anchorCdr));
+
+            // Gear Creature Augs - the tier gate fixed base ("live route", owner 2026-08-21):
+            // summed by zoneCantripCache on equip/dequip and read by CreatureSkill.Current on
+            // every skill. NOT the buff-bake path.
+            var gearCa = S(ca);
+            wo.SetProperty((ACE.Entity.Enum.Properties.PropertyInt)ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus, gearCa);
+            AppendLongDescLine(wo, $"Creature Augmentation: +{gearCa}");
+        }
+
         public static void EqualizeT11ArmorResists(WorldObject wo)
         {
             if (wo == null || (wo.ArmorLevel ?? 0) == 0)

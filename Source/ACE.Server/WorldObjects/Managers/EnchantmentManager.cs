@@ -306,6 +306,17 @@ namespace ACE.Server.WorldObjects.Managers
                     {
                         entry.StatModValue += (player.EffectiveItemAugCount) * 0.01f;
                     }
+                    // 168 = Heart Seeker (WeaponAuraOffense), 169 = Defender.
+                    //
+                    // INTENTIONAL - DO NOT "FIX" THE PRECEDENCE (owner ruling 2026-08-21).
+                    // This parses as `168 || (169 && selfCastEligible)`: Heart Seeker gets the
+                    // item-aug bonus UNCONDITIONALLY. That is load-bearing: melee attack skill
+                    // ~= skill x (1.2 + 0.001 x itemAugs) ~= 44-64k at endgame, and 200+ custom
+                    // mobs carry MeleeDefense 3k-99k tuned against exactly that scale (60k
+                    // Thrungi, 65k Sagittarii, 99.5k Warren mobs...). Adding parentheses drops
+                    // melee attack ~4.5x and makes all of that content unhittable - it is
+                    // melee-only-hittable BY this mechanism (casters have no aura equivalent
+                    // and bounce off those mobs' 50-100k MagicDefense by design).
                     else if (spell.StatModKey == 168 || spell.StatModKey == 169 && selfCastEligible)
                     {
                         entry.StatModValue += GetItemAugPercentageRating(player.EffectiveItemAugCount); //(player.EffectiveItemAugCount) * 0.01f;
@@ -424,6 +435,13 @@ namespace ACE.Server.WorldObjects.Managers
                 1.0);
 
         }
+
+        /// <summary>Zone Control cantrip gear (Life track): public entry for Creature_Properties.
+        /// GetResistanceMod. The equipped-item sum rides the same new-curve tuning knobs as purchased
+        /// augs (life_aug_prot_tuning_constant / life_aug_prot_max_bonus + per-creature overrides)
+        /// but is applied LIVE - never baked into enchantment StatModValue.</summary>
+        public static float GetGearLifeAugProtectRating(long lifeAugAmt, Creature creature)
+            => GetLifeAugProtectRatingNew(lifeAugAmt, creature);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float GetLifeAugProtectRating(long LifeAugAmt)
@@ -1790,7 +1808,7 @@ namespace ACE.Server.WorldObjects.Managers
                 var damager = kvp.Key;
                 var amount = kvp.Value;
 
-                if (creature.Invincible)
+                if (creature.Invincible || creature is Player { ZcDamageImmune: true })   // incl. Zone Control Cheat Death window
                     amount = 0;
 
                 var damageSourcePlayer = damager as Player;

@@ -105,11 +105,37 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
-                return StartingValue
+                var total = StartingValue
                     + AttributeFormula.GetFormula(creature, Vital, /*current*/false)
                     + EnlBonus
                     + Ranks
                     + GearBonus;
+
+                // Fortify Vitals deliberately NOT applied here: Base feeds raw-stat consumers
+                // (Innate reporting, RawSecondaryAttrib wield gates) that must not see gear
+                // multipliers. The player-facing max rides GetMaxValue below.
+                return (uint)total;
+            }
+        }
+
+        /// <summary>
+        /// Zone Control Fortify Vitals slot special (key 41, helm): pct points scaling the whole vital
+        /// total. MAX-wins across worn pieces (2026-08-21 armor v2) -- the highest single piece counts,
+        /// a second piece never stacks, so no clamp is needed (the band caps the roll). Applied in
+        /// GetMaxValue only (not the rating cache) so it covers all 3 vitals -- MaxHealth rides
+        /// GetGearMaxHealth and a rating-cache route would silently exclude it. Application point
+        /// (before vitae/additives) LEFT where it is -- owner ruling 08-21.
+        /// </summary>
+        private double FortifyVitalsMod
+        {
+            get
+            {
+                if (creature == null)
+                    return 1.0;
+
+                var pts = Math.Max(0, creature.GetZoneCantripMax(ACE.Server.Managers.ZoneControl.ZoneCantrips.FortifyVitalsPct));
+
+                return 1.0 + pts / 100.0;
             }
         }
 
@@ -165,6 +191,9 @@ namespace ACE.Server.WorldObjects.Entity
             // apply multiplicative enchantments first
             var multiplier = enchanted ? creature.EnchantmentManager.GetVitalMod_Multiplier(this) : 1.0f;
             var fTotal = total * multiplier;
+
+            // Zone Control Fortify Vitals cantrip (whole-total multiplier, all 3 vitals)
+            fTotal = (float)(fTotal * FortifyVitalsMod);
 
             var player = creature as Player;
             if (player != null)
