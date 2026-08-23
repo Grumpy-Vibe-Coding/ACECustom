@@ -136,16 +136,17 @@ namespace ACE.Server.WorldObjects
             var augMod = 1.0f;
             var zoneRegenMult = 1.0f;
             var zoneProdigalBlocked = false;
+            var zcFlatRegenPct = 0;
             if (this is Player player)
             {
                 if (player.AugmentationFasterRegen > 0)
                     augMod += player.AugmentationFasterRegen;
 
-                // Zone Control Regen slot special (key 46, bracers; prop 50231 = the stamped MULTIPLIER,
-                // default band 3): MAX-wins across worn pieces and against the aug/legacy-line augMod -
-                // whichever is larger applies, they never stack. Prodigal suppression + the zone regen
-                // tuner below stay exactly as they are.
-                augMod = Math.Max(augMod, player.GetZoneCantripMax(50231));
+                // Zone Control Regen slot special (key 46, bracers; prop 50231): FLAT pct of the vital's MAX
+                // added to every positive natural tick, MAX-wins across worn pieces (owner 2026-08-23: a
+                // multiplier compounded the shard's x900 buff stack into god-mode; flat reads as "+300 on a
+                // 1,700 tick" and can never compound). Applied after the tuner below (see zcFlatRegen).
+                zcFlatRegenPct = player.GetZoneCantripMax(50231);
 
                 // Zone Control Suppression: recompute the enchantment mod without the Prodigal regen line
                 // (uncached path — the cached mod can't know about zone borders), and pick up the regen tuner.
@@ -176,10 +177,14 @@ namespace ACE.Server.WorldObjects
             if (zoneRegenMult != 1.0f && currentTick > 0)
                 currentTick *= zoneRegenMult;
 
+            // Bracers Regeneration special: flat pct of max, only while the natural tick is regenerating
+            if (zcFlatRegenPct > 0 && currentTick >= 0)
+                currentTick += vitalMax * zcFlatRegenPct / 100.0f;
+
             if (ACE.Server.Managers.ServerConfig.regen_diag_verbose.Value && this is Player)
                 log.Warn($"[RegenDiag] {Name} {vital.Vital}: {vitalCurrent}/{vitalMax} rate={vital.RegenRate} " +
                          $"attr={attributeMod:F3} stance={stanceMod:F3} ench={enchantmentMod:F3}" +
-                         $"{(zoneProdigalBlocked ? " PRODIGAL-BLOCKED" : "")} aug={augMod:F3} " +
+                         $"{(zoneProdigalBlocked ? " PRODIGAL-BLOCKED" : "")} aug={augMod:F3} bracersFlat={zcFlatRegenPct}pct " +
                          $"zoneRegenMult={zoneRegenMult:F2} tick={currentTick:F3}");
 
             // add in partially accumulated / rounded vitals from previous tick(s)

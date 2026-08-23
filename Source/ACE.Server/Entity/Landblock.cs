@@ -2087,6 +2087,40 @@ namespace ACE.Server.Entity
 
             ProcessPendingWorldObjectAdditionsAndRemovals();
 
+            // Cross-variation guard (2026-08-23): objects that belong to a SIBLING variation instance of
+            // this landblock can be parked in THIS instance's physics cells (stale PhysicsObj.Position
+            // .Variation - see WorldObject_Teleport.cs "Final authoritative variation reconcile"). Tearing
+            // those cells down orphaned them: still in the sibling's worldObjects, never streamed to any
+            // client ("Tou Tou v11 empty after the base twin unloaded", 2026-08-23 12:24). Re-home them to
+            // their own variation's physics before anything here is released.
+            var rehomed = 0;
+            try
+            {
+                foreach (var cell in PhysicsLandblock.LandCells.Values.ToList())
+                    foreach (var pobj in cell.ObjectList)
+                    {
+                        var fwo = pobj?.WeenieObj?.WorldObject;
+                        if (fwo == null || fwo.IsDestroyed || fwo is Player || fwo.Location == null)
+                            continue;
+                        if (Managers.VariationManager.SameVariationForVisibility(fwo.Location.Variation, VariationId))
+                            continue;
+                        // out of OUR cells (shadows + cell membership), then back in under ITS variation
+                        pobj.remove_shadows_from_cells();
+                        pobj.leave_cell(true);
+                        if (pobj.Position != null)
+                            pobj.Position.Variation = fwo.Location.Variation;
+                        if (!fwo.AddPhysicsObj(fwo.Location.Variation))
+                            log.Warn($"[LbLife] UNLOAD {Id.Landblock:X4} v={VariationId?.ToString() ?? "null"}: re-home of 0x{fwo.Guid}:{fwo.Name} (v={fwo.Location.Variation?.ToString() ?? "null"}) did not re-enter physics");
+                        rehomed++;
+                    }
+            }
+            catch (Exception e)
+            {
+                log.Warn($"[LbLife] UNLOAD {Id.Landblock:X4} v={VariationId?.ToString() ?? "null"}: cross-variation re-home failed: {e.Message}");
+            }
+            if (rehomed > 0)
+                log.Warn($"[LbLife] UNLOAD {Id.Landblock:X4} v={VariationId?.ToString() ?? "null"}: re-homed {rehomed} object(s) belonging to a sibling variation out of this instance's physics cells");
+
             SaveDB();
             //Console.WriteLine($"Landblock.Unload({landblockID:X8}), removing {worldObjects.Count}");
             // remove all objects

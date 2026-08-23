@@ -70,12 +70,11 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string AttackDamage = "attack_damage";
         public const string AttackVariance = "attack_variance";
         public const string AttackDamageType = "attack_damage_type";
-        // spell_damage is WYSIWYG (2026-07-27): the authored value IS the post-mitigation felt damage
-        // per cast — player resists/prots/absorb and the attacker/defender rating mods are bypassed;
-        // crits multiply by crit_damage_rating (final Nx, same rule as the %HP floor), and the floor
-        // still enforces a minimum. spell_variance spreads each cast down from that value (0 = flat,
-        // like attack_variance); spell_damage_mult multiplies on top (kept in code but hidden from
-        // the plugin UI since 2026-07-26 - owner retired it).
+        // spell_damage is RETAIL-path (since 2026-08-02): the authored value is the base per-cast damage and
+        // runs the normal retail mitigation pipeline (resists/prots/ratings); crits multiply by
+        // crit_damage_rating, and the floor still enforces a minimum. spell_variance spreads each cast
+        // down from that value (0 = flat, like attack_variance); spell_damage_mult multiplies on top
+        // (kept in code but hidden from the plugin UI since 2026-07-26 - owner retired it).
         public const string SpellDamage = "spell_damage";
         public const string SpellVariance = "spell_variance";
         public const string SpellDamageMult = "spell_damage_mult";
@@ -151,30 +150,16 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string ArmorVsNether = "armor_vs_nether";
 
         // C. loot (rolled at corpse creation)
-        public const string LootTierBonus = "loot_tier_bonus";
-        public const string LootQuantityMult = "loot_quantity_mult";
-        public const string RareChanceMult = "rare_chance_mult";     // multiplies the ACTUAL rare roll (Corpse.TryGenerateRare)
+        // (loot_tier_bonus / loot_quantity_mult / rare_chance_mult / loot_quality_mult removed 2026-08-23:
+        //  tier = zone floor, quantity = per-slot counts, quality = grade model)
         public const string BonusCurrency = "bonus_currency";
-        public const string LootQualityMult = "loot_quality_mult";   // multiplies TreasureDeath.LootQualityMod (better rolls within tier)
 
         // C2. loot post-roll mutations (applied per dropped item AFTER the factory rolls it — enhance, never replace)
-        public const string WeaponStatMult = "weapon_stat_mult";     // scales rolled weapon damage/offense/defense bonuses
-        public const string WeaponDamageMin = "weapon_damage_min";   // MELEE displayed hit range: Damage = max, variance derived so min hit = min
-        public const string WeaponDamageMax = "weapon_damage_max";   //   (wins over the mult; set one of the pair = flat damage)
-        public const string WeaponDamageRoll = "weapon_damage_roll"; // nonzero = each drop rolls a random sub-range WITHIN [min,max] instead
-        public const string WeaponCasterElemMin = "weapon_caster_elem_min"; // CASTER elemental damage bonus OVERRIDE, rolled per drop; wire = bonus fraction (0.5 = +50%), ElementalDamageMod = 1 + this; only casters that already have a bonus
-        public const string WeaponCasterElemMax = "weapon_caster_elem_max";
-        public const string WeaponMissileElemMin = "weapon_missile_elem_min"; // MISSILE flat elemental damage bonus OVERRIDE (ElementalDamageBonus, a whole number), rolled per drop; only bows/xbows/atlatls that already have one
-        public const string WeaponMissileElemMax = "weapon_missile_elem_max";
+        // (weapon_stat_mult / weapon_damage_* / weapon_*_elem_* / weapon_workmanship_* / coin_mult / value_*
+        //  removed 2026-08-23: weapon damage is owned by the weapon aug-scaling system)
         public const string WeaponAttuned = "weapon_attuned";        // nonzero = rolled weapons drop Attuned (can't be traded/dropped)
         public const string WeaponBonded = "weapon_bonded";          // nonzero = rolled weapons drop Bonded (stay on death)
         public const string WeaponUnenchantable = "weapon_unenchantable"; // nonzero = rolled weapons drop unenchantable (ResistMagic 9999)
-        public const string WeaponWorkmanshipMin = "weapon_workmanship_min"; // workmanship SET range on rolled WEAPONS only, clamp 1..10
-        public const string WeaponWorkmanshipMax = "weapon_workmanship_max"; //   (set one of the pair = exact value, both = roll per drop)
-        public const string CoinMult = "coin_mult";                  // multiplies rolled pyreal stacks
-        public const string ValueMult = "value_mult";                // multiplies vendor value of rolled loot
-        public const string ValueMin = "value_min";                  // flat re-roll range for rolled loot value, clamped 0..1,000,000
-        public const string ValueMax = "value_max";                  //   (wins over value_mult; set one of the pair = exact value)
 
         // C3. loot special-property rolls (independent 0..1 chance per eligible dropped item — "fun stuff")
         public const string WeaponProcChance = "weapon_proc_chance";     // Cast on Strike: stamp ProcSpell on a rolled melee/missile weapon
@@ -187,15 +172,8 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponParagonChance = "weapon_paragon_chance"; // drops pre-Paragoned (+1 ItemMaxLevel, levels from use)
         public const string WeaponCantripChance = "weapon_cantrip_chance"; // one EXTRA cantrip on a rolled weapon, from the zone's custom pool ONLY
         public const string ArmorCantripChance = "armor_cantrip_chance";   // one EXTRA cantrip on rolled armor/clothing/jewelry, custom pool ONLY
-        // Zone-cantrip draw counts: DISTINCT picks per catalog bucket for the extra-loot-cantrip roll
-        // (bucket 1 attrs/vitals, 3 aug tracks, 4 regen/armor/utility, 5 ratings; bucket 2 masteries is
-        // RETIRED and has no key). Unset = 2; consumed clamped 0..8 (EvaluatedProfile.CantripDraws).
-        public const string CantripDrawsB1 = "cantrip_draws_b1";
-        public const string CantripDrawsB3 = "cantrip_draws_b3";
-        public const string CantripDrawsB4 = "cantrip_draws_b4";
-        public const string CantripDrawsB5 = "cantrip_draws_b5";
-        // Armor v2 (2026-08-21, Cantrip_Band_Ladder v2): the bucket draws above are VESTIGIAL - still
-        // declared (saved Defaults / wire append-only) but no longer read. The mutator now rolls a
+        // Armor v2 (2026-08-21, Cantrip_Band_Ladder v2; the old per-bucket cantrip_draws_bN keys were
+        // removed 2026-08-23). The mutator rolls a
         // per-piece LINE COUNT ladder: lines_min guaranteed, extra slots up to lines_max roll
         // chance_1/2/3 IN ORDER and the first miss stops. Keys fill slots weighted by Def.Class
         // (trash/mid/chase); key 33 Crit Rating has its own weight. armor_cantrip_chance stays the
@@ -222,7 +200,6 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string PctHpCooldown = "pcthp_cooldown";              // pct-HP special cooldown, seconds (default 2)
         public const string CheatDeathCooldown = "cheatdeath_cooldown";    // seconds per character (default 600)
         public const string CheatDeathImmunity = "cheatdeath_immunity";    // immunity window, seconds (default 5)
-        public const string RegenSpecialMult = "regen_special_mult";       // Bracers regen special multiplier (default 3.0)
         public const string LifeOnHitCap = "lifeonhit_cap";                 // key 48: worn-total cap in pct of max HP per hit (default 25)
         public const string LifeOnHitCooldown = "lifeonhit_cooldown";       // key 48: per-character seconds between heals (default 3)
         // Worn-gear HARD caps (owner 2026-08-21: "everything we set at 2500 must cap at EXACTLY 2500, not
@@ -234,6 +211,15 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string GearCapDr = "gear_cap_dr";                     // worn Damage Resist sum (default 2500)
         public const string GearCapCdr = "gear_cap_cdr";                   // worn CritDmgResist / CritResist / NetherResist sums, EACH (default 1500)
         public const string GearCapLine = "gear_cap_line";                 // every anchored 2500 cantrip line: Dmg / CritDmg / MaxHP / MaxStam / MaxMana / HealBoost / each aug track / each attribute (default 2500)
+        // Kill rewards (2026-08-23): authored per zone, by rank. xp_minion is the MASTER key - when set,
+        // weenie XpOverride is ignored for every mob the zone governs (boss/leader fall back to minion
+        // when their own key is unset; unranked random mobs pay minion). lum_award set = LuminanceAward
+        // ignored; 0 = no luminance. Values are doubles and may exceed int range (read as long).
+        public const string XpMinion = "xp_minion";
+        public const string XpLeader = "xp_leader";
+        public const string XpBoss = "xp_boss";
+        public const string LumAward = "lum_award";
+        public const string XpDefault = "xp_default";   // unranked/uncategorized spawns; unset = pay xp_minion
 
         // PropertyBool ids the loot side reads by cast (the enum entries live with the combat work):
         // 50048 IsZcBoss / 50049 IsZcLeader / 50050 IsZcMinion / 50051 ZcPctHpImmune (owner 50000+ block)
@@ -242,7 +228,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public const int BoolIsZcMinion = 50050;
         public const int BoolZcPctHpImmune = 50051;
         // Card amounts are min/max PAIRS: set one = exact value, set both = each drop rolls uniformly
-        // in the range, reversed bounds auto-swap (same semantics as weapon_damage_min/max).
+        // in the range, reversed bounds auto-swap.
         public const string WeaponCleaveChance = "weapon_cleave_chance";   // melee: swing hits extra targets in an arc
         public const string WeaponCleaveMin = "weapon_cleave_min";         //   extra targets, clamp 1..10 (default 1)
         public const string WeaponCleaveMax = "weapon_cleave_max";
@@ -292,7 +278,6 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string QbStepSize = "qb_step_size";                   // killer QB per progression step (default 1000)
         public const string QbQualityPerStep = "qb_quality_per_step";      // LootQualityMod added per QB step (setting this ENABLES QB scaling; suggested 0.05)
         public const string QbMaxSteps = "qb_max_steps";                   // QB step cap (default 20)
-        public const string QbQuantityPerStep = "qb_quantity_per_step";    // RESERVED: no effect yet (quantity semantics undecided)
 
         public static readonly string[] All =
         {
@@ -309,15 +294,11 @@ namespace ACE.Server.Managers.ZoneScaling
             ReliefCritDrX1, ReliefCritDrY1, ReliefCritDrX2, ReliefCritDrY2, ReliefCritDrX3, ReliefCritDrY3, ReliefCritDrX4, ReliefCritDrY4,
             ResistSlash, ResistPierce, ResistBludgeon, ResistFire, ResistCold, ResistAcid, ResistElectric, ResistNether,
             ArmorVsSlash, ArmorVsPierce, ArmorVsBludgeon, ArmorVsFire, ArmorVsCold, ArmorVsAcid, ArmorVsElectric, ArmorVsNether,
-            LootTierBonus, LootQuantityMult, RareChanceMult, BonusCurrency, LootQualityMult,
-            WeaponStatMult, WeaponDamageMin, WeaponDamageMax, WeaponDamageRoll, WeaponCasterElemMin, WeaponCasterElemMax,
-            WeaponMissileElemMin, WeaponMissileElemMax,
-            WeaponAttuned, WeaponBonded, WeaponUnenchantable, WeaponWorkmanshipMin, WeaponWorkmanshipMax,
-            CoinMult, ValueMult, ValueMin, ValueMax,
+            BonusCurrency,
+            WeaponAttuned, WeaponBonded, WeaponUnenchantable,
             WeaponProcChance, WeaponProcRate, WeaponProcSpell, WeaponImbueChance,
             WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax, WeaponParagonChance,
             WeaponCantripChance, ArmorCantripChance,
-            CantripDrawsB1, CantripDrawsB3, CantripDrawsB4, CantripDrawsB5,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,
             WeaponSplitChance, WeaponSplitMin, WeaponSplitMax, WeaponSplitRange, WeaponSplitDmg,
             WeaponBiteChance, WeaponBiteMin, WeaponBiteMax,
@@ -330,15 +311,17 @@ namespace ACE.Server.Managers.ZoneScaling
             LootSlotHelm, LootSlotChest, LootSlotShoulder, LootSlotBracer, LootSlotGlove,
             LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,
             LootSlotShield, LootSlotAmulet, LootSlotRing, LootSlotBracelet, LootSlotTrinket, LootSlotCloak,
-            QbStepSize, QbQualityPerStep, QbMaxSteps, QbQuantityPerStep,
+            QbStepSize, QbQualityPerStep, QbMaxSteps,
             // Armor v2 (2026-08-21) - APPEND-ONLY, the plugin indexes positionally
             CantripLinesMin, CantripLinesMax, CantripLinesChance1, CantripLinesChance2, CantripLinesChance3,
             CantripWeightTrash, CantripWeightMid, CantripWeightChase,
             CoreAnchorDr, CoreAnchorCdr,
             SpecialOdds, SpecialBossMult, SpecialLeaderMult,
             BattleMendThreshold, BattleMendCooldown, PctHpCooldown, CheatDeathCooldown, CheatDeathImmunity,
-            RegenSpecialMult, LifeOnHitCap, LifeOnHitCooldown,
+            LifeOnHitCap, LifeOnHitCooldown,
             GearCapDr, GearCapCdr, GearCapLine,
+            // Kill rewards (2026-08-23): authored per zone, by rank - APPEND-ONLY
+            XpMinion, XpLeader, XpBoss, LumAward, XpDefault,
         };
     }
 
@@ -761,24 +744,6 @@ namespace ACE.Server.Managers.ZoneScaling
         /// <summary>Authored roll-band overrides per zone-cantrip catalog key (never null; EMPTY when none
         /// authored). A key absent here rolls the catalog's own Min/Max/ProcMin/ProcMax.</summary>
         public IReadOnlyDictionary<int, (int Min, int Max, int ProcMin, int ProcMax)> CantripBands { get; }
-
-        /// <summary>Distinct picks for one zone-cantrip catalog bucket (1 attrs/vitals, 3 aug tracks,
-        /// 4 regen/armor/utility, 5 ratings): the matching cantrip_draws_bN stat, default 2, clamped 0..8.
-        /// Any other bucket (2 = RETIRED masteries) draws 0.</summary>
-        public int CantripDraws(int bucket)
-        {
-            var key = bucket switch
-            {
-                1 => ZoneStat.CantripDrawsB1,
-                3 => ZoneStat.CantripDrawsB3,
-                4 => ZoneStat.CantripDrawsB4,
-                5 => ZoneStat.CantripDrawsB5,
-                _ => null,
-            };
-            if (key == null)
-                return 0;
-            return Math.Clamp((int)Math.Round(Get(key, 2.0)), 0, 8);
-        }
 
         /// <summary>Bonus-currency drop table entries (may be null = none defined).</summary>
         public IReadOnlyList<ZoneCurrencyDrop> CurrencyDrops { get; }

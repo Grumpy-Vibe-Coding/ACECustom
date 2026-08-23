@@ -85,6 +85,7 @@ namespace ACE.Server.Entity.Actions
         Player_PKLiteStartTransition,
         Player_SendNonCombatStance,
         Player_SetNonBusy,
+        Player_ZcCheatDeathExpired,   // Zone Control Cheat Death window closed notice (2026-08-23)
         PlayerAllegiance_HandleLogin,
         PlayerDatabase_SaveBiotasInParallelCallback,
         PlayerCombat_ChangeCombatMode,

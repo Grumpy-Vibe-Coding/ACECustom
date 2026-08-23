@@ -751,7 +751,6 @@ namespace ACE.Server.Managers
 
         public static ConfigProperty<long> zonescale_bonus_currency_wcid { get; private set; } = new(0, "Zone Scaler: weenie class id of the CUSTOM TOKEN item injected onto corpses of zone-scaled mobs whose profile defines a bonus_currency amount. 0 = disabled (no token injected). Stack size = the profile's evaluated bonus_currency at the mob's tier.");
 
-        public static ConfigProperty<long> zonescale_loot_max_tier { get; private set; } = new(8, "Zone Scaler: hard ceiling on the loot TreasureDeath.Tier after a profile's loot_tier_bonus is applied. Loot Wcid/quality tables only populate up to a certain tier; extra scaling past this comes from quantity/quality/bonus-currency instead.");
 
         // v11+ monster damage-taken mitigation: multiplies ALL incoming damage (physical + magic) against variation>=min monsters by a
         // flat factor so endgame mobs are hard to kill via mitigation (not evasion). Rending-proof (applied after armor/resist). Read live.

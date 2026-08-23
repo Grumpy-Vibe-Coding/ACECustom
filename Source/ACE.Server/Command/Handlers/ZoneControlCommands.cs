@@ -102,13 +102,13 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("zonecontrol", AccessLevel.Developer, CommandHandlerFlag.None, 0,
             "Author/toggle Zone Control zones (any world area).",
             "help | list | here | create <name> <variation> [here|hex] | rename <old> <new> | delete <name> | "
-            + "default <variation> <show|set|clearstat|setall|copyfrom|clear> | default list | "
+            + "default <variation> <show|set|clearstat|copyfrom|clear> | default list | "
             + "enable <name> | disable <name> | addlb <name> <hex|here> | removelb <name> <hex> | "
             + "set <name> <stat> <value> [--wcid <id>] | clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>] | "
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
             + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | seticon <wcid> <iconDid|clear> [layer] | "
-            + "cantrip <name> <add|remove|list|catalog|band|slots|special|draws> [args] [--wcid <id>] | "
+            + "cantrip <name> <add|remove|list|catalog|band|slots|special|lines|weight> [args] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
@@ -126,7 +126,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol rename <old> <new...> | delete <name>");
                 Msg("  /zonecontrol enable <name> | disable <name> | setvar <name> <variation|here>");
                 Msg("  /zonecontrol addlb <name> <hex|here> | removelb <name> <hex>");
-                Msg("  /zonecontrol default <variation> <show|set|clearstat|setall|copyfrom|clear> | default list");
+                Msg("  /zonecontrol default <variation> <show|set|clearstat|copyfrom|clear> | default list");
                 Msg("      the per-variation BASELINE every zone at that variation inherits, per stat;");
                 Msg("      a zone (or a --wcid) overrides only the stats it sets. v11-v25 = the progression.");
                 Msg("  /zonecontrol set <name> <stat> <value> [--wcid <id>]   (--wcid = a specific monster's override)");
@@ -148,10 +148,9 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol appearance <name> animpart <index> <gfxObjHex> [--wcid <id>]   (swap ONE body part, e.g. animpart 16 = head; clear with clearappearance <name> animpart <index>)");
                 Msg("  /zonecontrol cantrip <name> <add|remove|list|catalog> [key] [--wcid <id>]   (custom Zone Cantrip pool for the extra-loot-cantrip roll; Retired keys are rejected)");
                 Msg("  /zonecontrol cantrip <name> band <key> <min> <max> [procMin procMax]   (override a key's roll band; 'band <key> clear' drops the override; 'cantrip default <var> band ...' authors the variation Default)");
-                Msg("  /zonecontrol cantrip <name> draws <bucket> <n>   (LEGACY bucket draws - still stored, no longer read since Armor v2)");
                 Msg("  /zonecontrol cantrip <name> lines <min> <max> [c1] [c2] [c3]   (Armor v2 line ladder: min guaranteed, extra slots up to max roll c1/c2/c3 in order, first miss stops; writes cantrip_lines_*)");
                 Msg("  /zonecontrol cantrip <name> weight <filler|average|chase> <n>   (key pick weight per class; writes cantrip_weight_*)");
-                Msg("  /zonecontrol cantrip <name> special <odds|bossmult|leadermult> <n>   (slot specials: 1-in-odds per KILL, boss/leader divide the odds; writes special_*)");
+                Msg("  /zonecontrol cantrip <name> special <key> <on|off|clear>   (per-special on/off for the per-kill slot-special roll; clear = drop the override)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
                 Msg("  /zonecontrol survey <name> [lbHex]   (per-landblock content: generator + creature summary; lbHex = full detail for one landblock)");
@@ -596,7 +595,7 @@ namespace ACE.Server.Command.Handlers
                             var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
                             vp.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false };
                         });
-                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} {stat} = {value:0.####}. " +
+                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} {stat} = {FmtStatEcho(value)}. " +
                             $"{(area.Enabled ? "" : "Zone still DISABLED - /zonecontrol enable " + name)}");
                         return;
                     }
@@ -622,9 +621,9 @@ namespace ACE.Server.Command.Handlers
                     {
                         // Custom cantrip pool + banded rolls for the extra-loot-cantrip roll
                         // (weapon/armor_cantrip_chance). Scope is a zone (+ optional --wcid), or
-                        // 'cantrip default <var> ...' = the variation Default layer (band/draws only —
+                        // 'cantrip default <var> ...' = the variation Default layer (band/slots/special/lines/weight only —
                         // the pool itself stays zone-scope).
-                        if (args.Count < 3) { Msg("Usage: cantrip <name> <add|remove|list|catalog|band|slots|special|draws> [args] [--wcid <id>]"); return; }
+                        if (args.Count < 3) { Msg("Usage: cantrip <name> <add|remove|list|catalog|band|slots|special|lines|weight> [args] [--wcid <id>]"); return; }
 
                         var isDefaultScope = args[1].Equals("default", StringComparison.OrdinalIgnoreCase);
                         var defaultVar = -1;
@@ -633,7 +632,7 @@ namespace ACE.Server.Command.Handlers
                         if (isDefaultScope)
                         {
                             if (args.Count < 4 || !int.TryParse(args[2].TrimStart('v', 'V'), out defaultVar) || defaultVar < 0)
-                            { Msg("Usage: cantrip default <variation> <band|slots|special|draws> ..."); return; }
+                            { Msg("Usage: cantrip default <variation> <band|slots|special|lines|weight> ..."); return; }
                             opIdx = 3;
                         }
                         else
@@ -781,32 +780,8 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        if (op == "draws")
-                        {
-                            // cantrip <scope> draws <bucket> <n> — distinct picks per catalog bucket (default 2).
-                            if (args.Count < opIdx + 3
-                                || !int.TryParse(args[opIdx + 1], out var drawBucket)
-                                || !int.TryParse(args[opIdx + 2], out var drawCount))
-                            { Msg("Usage: cantrip <name> draws <bucket> <n>   (bucket 1|3|4|5, n 0-8)"); return; }
-                            var drawStat = drawBucket switch
-                            {
-                                1 => ZoneStat.CantripDrawsB1,
-                                3 => ZoneStat.CantripDrawsB3,
-                                4 => ZoneStat.CantripDrawsB4,
-                                5 => ZoneStat.CantripDrawsB5,
-                                _ => null,
-                            };
-                            if (drawStat == null) { Msg("Bucket must be 1, 3, 4 or 5 (bucket 2 masteries are Retired)."); return; }
-                            if (drawCount < 0 || drawCount > 8) { Msg("Draw count must be 0-8."); return; }
-
-                            // the normal set path: a flat StatCurve on the scope's stat dictionary
-                            MutateScope(vp => vp.Stats[drawStat] = new StatCurve { Base = drawCount, Growth = 1.0, Additive = false });
-                            Msg($"{scopeTag} {drawStat} = {drawCount}.");
-                            return;
-                        }
-
                         // Armor v2 (2026-08-21): the line-count ladder, class weights and special odds are plain
-                        // stats on the scope - same StatCurve write as 'draws' (and as 'default <var> set').
+                        // stats on the scope - same StatCurve write as 'default <var> set'.
                         void SetStat(string stat, double value)
                             => MutateScope(vp => vp.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false });
 
@@ -855,27 +830,8 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        if (op == "special")
-                        {
-                            // cantrip <scope> special <odds|bossmult|leadermult> <n>
-                            if (args.Count < opIdx + 3
-                                || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var sv) || sv < 1)
-                            { Msg("Usage: cantrip <name> special <odds|bossmult|leadermult> <n>   (odds = 1-in-n per kill; mults divide the odds; all >= 1)"); return; }
-                            var specialStat = args[opIdx + 1].ToLowerInvariant() switch
-                            {
-                                "odds" => ZoneStat.SpecialOdds,
-                                "bossmult" => ZoneStat.SpecialBossMult,
-                                "leadermult" => ZoneStat.SpecialLeaderMult,
-                                _ => null,
-                            };
-                            if (specialStat == null) { Msg("Special knob must be odds, bossmult or leadermult."); return; }
-                            SetStat(specialStat, sv);
-                            Msg($"{scopeTag} {specialStat} = {sv.ToString("0.###", CultureInfo.InvariantCulture)}.");
-                            return;
-                        }
-
                         if (isDefaultScope)
-                        { Msg("Default scope supports band | slots | draws | lines | weight | special only (the pool add | remove | list are zone-scope)."); return; }
+                        { Msg("Default scope supports band | slots | lines | weight | special only (the pool add | remove | list are zone-scope)."); return; }
 
                         if (op == "list")
                         {
@@ -913,7 +869,7 @@ namespace ACE.Server.Command.Handlers
                             Msg(removed ? $"'{name}' zone cantrip removed: {(ZoneCantrips.TryGet(cantripKey, out var rdef) ? rdef.Name : "key " + cantripKey)}." : "That line wasn't in the pool.");
                         }
                         else
-                            Msg("op must be add | remove | list | catalog | band | slots | draws");
+                            Msg("op must be add | remove | list | catalog | band | slots | special | lines | weight");
                         return;
                     }
 
@@ -1008,26 +964,6 @@ namespace ACE.Server.Command.Handlers
                                 Msg("op must be off | on | add | chance | remove | list");
                                 return;
                         }
-                    }
-
-                    case "spellfind":
-                    {
-                        // Name search over the full spell table for the plugin's Add Spell picker.
-                        if (args.Count < 2) { Msg("Usage: spellfind <name fragment>"); return; }
-                        var query = string.Join(" ", args.Skip(1)).Trim();
-                        if (query.Length < 3) { Msg("Give at least 3 characters."); return; }
-                        var sbf = new StringBuilder("[[ZCSF]]q=").Append(query.Replace('|', ' ').Replace('~', ' '));
-                        int found = 0;
-                        foreach (var kv in ACE.DatLoader.DatManager.PortalDat.SpellTable.Spells)
-                        {
-                            var nm = kv.Value?.Name;
-                            if (string.IsNullOrEmpty(nm) || nm.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
-                                continue;
-                            sbf.Append('|').Append(kv.Key).Append('~').Append(nm.Replace('|', ' ').Replace('~', ' '));
-                            if (++found >= 40) break;
-                        }
-                        Msg(found == 0 ? $"No spells match '{query}'." : sbf.ToString());
-                        return;
                     }
 
                     case "currency":
@@ -2260,21 +2196,11 @@ namespace ACE.Server.Command.Handlers
                     case "defaultget":
                     {
                         // Machine payload for the plugin's Defaults editor (owner 2026-08-11). READ ONLY -
-                        // every write still goes through the 'default set|clearstat|setall|copyfrom|clear'
+                        // every write still goes through the 'default set|clearstat|copyfrom|clear'
                         // verbs below. Wire shape matches [[ZC]] ("<stat>=<defined>,<value>") so the plugin
-                        // reuses its zone-grid parser. "defaultget all" emits one line per authored
-                        // variation, which is what the ladder view (v11-v25 side by side) reads.
-                        if (args.Count >= 2 && args[1].Equals("all", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var authored = ZoneControlManager.ListVariationDefaults();
-                            Msg($"[[ZCDL]]vars={string.Join(",", authored)}");
-                            foreach (var v in authored)
-                                Msg(BuildVariationDefaultPayload(v));
-                            return;
-                        }
-
+                        // reuses its zone-grid parser.
                         if (args.Count < 2 || !int.TryParse(args[1].TrimStart('v', 'V'), out var getVar) || getVar < 0)
-                        { Msg("Usage: defaultget <variation>|all"); return; }
+                        { Msg("Usage: defaultget <variation>"); return; }
                         Msg(BuildVariationDefaultPayload(getVar));
                         return;
                     }
@@ -2286,12 +2212,11 @@ namespace ACE.Server.Command.Handlers
                         // is 15 of these, all explicitly authored — the server never derives one.
                         if (args.Count < 2)
                         {
-                            Msg("Usage: default <variation> <show|set|clearstat|setall|copyfrom|clear|list>");
+                            Msg("Usage: default <variation> <show|set|clearstat|copyfrom|clear|list>");
                             Msg("  default list                              variations that have a Default");
                             Msg("  default <var> show                        the Default's stats");
                             Msg("  default <var> set <stat> <value>");
                             Msg("  default <var> clearstat <stat>");
-                            Msg("  default <var> setall <value>              every combat stat at once");
                             Msg("  default <var> copyfrom <var>              seed from another variation");
                             Msg("  default <var> clear                       drop the whole Default");
                             return;
@@ -2350,22 +2275,6 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        if (dop == "setall")
-                        {
-                            if (args.Count < 4 || !TryDouble(args[3], out var allVal))
-                            { Msg("Usage: default <var> setall <value>"); return; }
-
-                            ZoneControlManager.MutateVariationDefault(dvar, d =>
-                            {
-                                foreach (var s in SetAllStats)
-                                    d.Profile.Stats[s] = new StatCurve { Base = allVal, Growth = 1.0, Additive = false };
-                            });
-                            Msg($"Default v{dvar}: set {SetAllStats.Length} combat stats to {allVal:0.####}.");
-                            Msg($"  ({string.Join(", ", SetAllStats)})");
-                            Msg("  Chance rolls, relief anchors, loot-slot counts and loot multipliers were NOT touched - set those individually.");
-                            return;
-                        }
-
                         if (dop == "set")
                         {
                             if (args.Count < 5) { Msg("Usage: default <var> set <stat> <value>"); return; }
@@ -2375,7 +2284,7 @@ namespace ACE.Server.Command.Handlers
 
                             ZoneControlManager.MutateVariationDefault(dvar, d =>
                                 d.Profile.Stats[dstat] = new StatCurve { Base = dval, Growth = 1.0, Additive = false });
-                            Msg($"Default v{dvar} {dstat} = {dval:0.####}. Every zone at v{dvar} that doesn't set it inherits this.");
+                            Msg($"Default v{dvar} {dstat} = {FmtStatEcho(dval)}. Every zone at v{dvar} that doesn't set it inherits this.");
                             if (dstat == ZoneStat.CoreAnchorDr || dstat == ZoneStat.CoreAnchorCdr)
                                 AutoApplyForDefault(session, true, dvar, Msg);
                             return;
@@ -2394,7 +2303,7 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        Msg("op must be show | set | clearstat | setall | copyfrom | clear | list");
+                        Msg("op must be show | set | clearstat | copyfrom | clear | list");
                         return;
                     }
 
@@ -2736,6 +2645,17 @@ namespace ACE.Server.Command.Handlers
             return sb.ToString();
         }
 
+        /// <summary>Stat echo in SHORT form (owner 2026-08-23): big numbers read as 100M / 5B, everything
+        /// else as the plain value. Display only - the store keeps the exact double.</summary>
+        private static string FmtStatEcho(double v)
+        {
+            var a = Math.Abs(v);
+            if (a >= 1_000_000_000 && v % 1_000_000 == 0) return (v / 1_000_000_000).ToString("0.###", CultureInfo.InvariantCulture) + "B";
+            if (a >= 1_000_000 && v % 1_000 == 0) return (v / 1_000_000).ToString("0.###", CultureInfo.InvariantCulture) + "M";
+            if (a >= 10_000 && v % 1_000 == 0) return (v / 1_000).ToString("0.###", CultureInfo.InvariantCulture) + "K";
+            return v.ToString("0.####", CultureInfo.InvariantCulture);
+        }
+
         private static string BuildZonePayload(string name, uint? wcid, Session session)
         {
             var area = ZoneControlManager.GetArea(name);
@@ -2986,39 +2906,6 @@ namespace ACE.Server.Command.Handlers
             }
 
             AppendSpecialsOff(sb, vp?.CustomSpecials);
-
-            // Per-bucket draw counts (sparse, EVALUATED view like the bands): ctdraws=<bucket>:<n>;...
-            // — only buckets some layer authors; absent = default 2 everywhere.
-            if (vp?.Stats != null)
-            {
-                bool firstCt = true;
-                foreach (var (drawBucket, drawStat) in new[]
-                {
-                    (1, ZoneStat.CantripDrawsB1), (3, ZoneStat.CantripDrawsB3),
-                    (4, ZoneStat.CantripDrawsB4), (5, ZoneStat.CantripDrawsB5),
-                })
-                {
-                    if (!vp.Stats.TryGetValue(drawStat, out var drawCurve)) continue;
-                    sb.Append(firstCt ? "|ctdraws=" : ";");
-                    firstCt = false;
-                    sb.Append(drawBucket).Append(':').Append(Math.Clamp((int)Math.Round(drawCurve.Base), 0, 8));
-                }
-            }
-
-            // Armor v2 line ladder (2026-08-21): ctlines=<min>:<max>:<c1>:<c2>:<c3> - EVALUATED view
-            // (unauthored fields show the C# defaults the mutator uses), always emitted for a T11+ scope
-            // so the plugin's Cantrips tab can render the ladder without knowing the defaults.
-            if (vp?.Stats != null)
-            {
-                double Ladder(string stat, double fallback)
-                    => vp.Stats.TryGetValue(stat, out var c) ? c.Base : fallback;
-                sb.Append("|ctlines=")
-                  .Append(Math.Clamp((int)Math.Round(Ladder(ZoneStat.CantripLinesMin, 0)), 0, 8)).Append(':')
-                  .Append(Math.Clamp((int)Math.Round(Ladder(ZoneStat.CantripLinesMax, 2)), 0, 8)).Append(':')
-                  .Append(Ladder(ZoneStat.CantripLinesChance1, 0.40).ToString("0.####", CultureInfo.InvariantCulture)).Append(':')
-                  .Append(Ladder(ZoneStat.CantripLinesChance2, 0.10).ToString("0.####", CultureInfo.InvariantCulture)).Append(':')
-                  .Append(Ladder(ZoneStat.CantripLinesChance3, 0.01).ToString("0.####", CultureInfo.InvariantCulture));
-            }
 
             // Spell-book rules (sparse, rebuilt each sync): sprules=id~disabled~chancePct,...
             // chance blank = book default (or 2 for added spells).
@@ -3768,32 +3655,6 @@ namespace ACE.Server.Command.Handlers
             s = s.Trim().ToLowerInvariant();
             return ZoneStat.All.FirstOrDefault(k => k.Equals(s, StringComparison.OrdinalIgnoreCase));
         }
-
-        /// <summary>
-        /// The stats `default &lt;var&gt; setall &lt;value&gt;` writes: RAW MAGNITUDE combat stats only, where
-        /// "bigger number = stronger" and a blanket value like 1100 is meaningful.
-        ///
-        /// Deliberately EXCLUDED, because a blanket value there is meaningless or destructive:
-        ///   * multipliers/fractions — vuln_cap, percent_hp_base, attack_variance,
-        ///     spell_variance, spell_damage_mult, resist_*, armor_vs_*, crit_* (1100 would one-shot everything)
-        ///   * relief_* curve anchors — they are (x,y) points on a progression curve, not magnitudes
-        ///   * *_chance rolls — probabilities in 0..1
-        ///   * loot_slot_* counts and loot_*/weapon_*/armor_*/qb_* knobs — item counts and roll shaping
-        ///   * cantrip_*/core_anchor_*/special_*/battlemend_*/pcthp_*/cheatdeath_*/regen_special_*
-        ///     (Armor v2 loot knobs, 2026-08-21) — line ladders, anchors, odds and cooldowns
-        ///   * gear_cap_* worn-gear hard caps (2026-08-21) — a blanket 1100 would silently clip every suit
-        /// Set those individually. This is a WHITELIST: a stat not listed here is skipped by construction.
-        /// </summary>
-        private static readonly string[] SetAllStats =
-        {
-            ZoneStat.Strength, ZoneStat.Endurance, ZoneStat.Coordination,
-            ZoneStat.Quickness, ZoneStat.Focus, ZoneStat.Self,
-            ZoneStat.MaxHealth, ZoneStat.MaxStamina, ZoneStat.MaxMana,
-            ZoneStat.AttackSkill,
-            ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
-            ZoneStat.DamageRating, ZoneStat.DamageResistRating, ZoneStat.ArmorLevel,
-            ZoneStat.AttackDamage, ZoneStat.SpellDamage,
-        };
 
         /// <summary>Parse a CombatBodyPart by enum name (case-insensitive) or raw int; rejects Undefined.</summary>
         private static bool TryParseBodyPart(string s, out CombatBodyPart part)

@@ -357,9 +357,9 @@ namespace ACE.Server.Managers
         /// </summary>
         public static float GetXPRewardModifier(int tier)
         {
-            if (tier <= 0) return 1.0f;
-            // +10% XP per tier
-            return 1.0f + (tier * 0.10f);
+            // 2026-08-23 (owner): T11+ XP is AUTHORED per zone/mob, never scaled by tier. Kill
+            // multiplier retired; the master switch stays on for loot value / landblock gating.
+            return 1.0f;
         }
 
         /// <summary>
@@ -368,13 +368,8 @@ namespace ACE.Server.Managers
         /// </summary>
         public static float GetXPPenaltyMultiplier(int playerTier, int monsterTier)
         {
-            if (playerTier <= monsterTier) return 1.0f;
-
-            var diff = playerTier - monsterTier;
-            // -20% XP per tier diff
-            var multiplier = 1.0f - (diff * 0.20f);
-
-            return Math.Max(0.0f, multiplier);
+            // 2026-08-23 (owner): retired together with the reward modifier - no tier-diff penalty.
+            return 1.0f;
         }
 
 

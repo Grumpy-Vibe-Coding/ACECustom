@@ -31,7 +31,7 @@ namespace ACE.Server.Managers.ZoneControl
         // Armor v2 slot specials (2026-08-21): MAX-wins across worn pieces (Creature.GetZoneCantripMax), never summed
         public const int PctHpDamagePct = 50229;      // Gauntlets (key 44): pct of target max HP per hit, in TENTHS of a pct (45 = 4.5 pct)
         public const int CheatDeathFlag = 50230;      // Boots (key 45): stamp 1 - lethal hit -> 1 HP + immunity window
-        public const int RegenSpecialMult = 50231;    // Bracers (key 46): natural regen multiplier (default 3)
+        public const int RegenSpecialMult = 50231;    // Bracers (key 46): FLAT pct of max vital added per natural regen tick (was a multiplier until 2026-08-23)
         // 2026-08-22 additions (owner cantrip walkthrough)
         public const int PctMaxHealthPct = 50232;     // key 47 Pct Max Health: percentage POINTS of max HP, SUMMED across worn pieces
         public const int LifeOnHitPct = 50233;        // key 48 Life on Hit: pct of the wielder's MAX HP healed per landed hit, SUMMED, worn cap lifeonhit_cap (25)
@@ -218,6 +218,7 @@ namespace ACE.Server.Managers.ZoneControl
             public bool ArmorOnly;                         // keys 25 / 49 - needs an ArmorLevel piece
             public bool JewelryOnly;                       // key 48 Life on Hit - rolls only on jewelry (no AL, ItemType Jewelry)
             public bool TierScaled;                        // the 1250-class lines + Armor Level: catalog band x (1 + (t-11)/14) when no Default is authored (owner 2026-08-23)
+            public int Min25, Max25;                       // optional explicit T25 anchor: band lerps linearly T11 (Min/Max) -> T25 (Min25/Max25); 0 = unused
             public bool SetsProtection;                    // key 49 Reinforced - the rolled value is a RANK that SETS every ArmorModVs* on the piece
             public (int PropId, int Value)[] Ints;         // int props stamped on the item; PropId also = banded stamp target
             public int ArmorBonus;                         // key 25 legacy fixed AL bonus
@@ -272,14 +273,14 @@ namespace ACE.Server.Managers.ZoneControl
             // Boots - Cheat Death: lethal hit -> 1 HP + 5 s immunity, 10 min CD per character; no magnitude
             { 45, new Def { Key = 45, Bucket = 4, SlotSpecial = true, SpecialSlot = CoverageMask.Feet, Name = "Cheat Death", Effect = "lethal hit leaves 1 HP + 5 s immunity, 10 min cooldown (Boots special)", ValFmt = "", Min = 1, Max = 1, Ints = P(CheatDeathFlag, 0) } },
             // Bracers - natural regen multiplier (x3 default), Prodigal stays suppressed
-            { 46, new Def { Key = 46, Bucket = 4, SlotSpecial = true, SpecialSlot = CoverageMask.OuterwearLowerArms, Name = "Regeneration", Effect = "x3 natural regen (Bracers special)", ValFmt = "x{0}", Min = 3, Max = 3, Ints = P(RegenSpecialMult, 0) } },
+            { 46, new Def { Key = 46, Bucket = 4, SlotSpecial = true, SpecialSlot = CoverageMask.OuterwearLowerArms, Name = "Regeneration", Effect = "+1-2 pct (T11) to +3-5 pct (T25) of max vitals on every natural regen tick (Bracers special; FLAT, never multiplies the buff stack - owner 2026-08-23)", ValFmt = "+{0}% per tick", Min = 1, Max = 2, Min25 = 3, Max25 = 5, Ints = P(RegenSpecialMult, 0) } },
             // ── 2026-08-22 pool additions (owner cantrip walkthrough; design in Cantrip_Pool_Decisions_2026-08-22.md) ──
             // Pct Max Health - chase, pinned 1-3 like Crit Chance, SUMMED across pieces (18 x 3 = 54 pct at BiS),
             // stacks on top of the Helm special Fortify Vitals (max-wins). Read in CreatureVital (MaxHealth only).
-            { 47, new Def { Key = 47, Bucket = 1, Class = CantripClass.Chase, Name = "Max Health Pct", Effect = "+1-3 pct max health", ValFmt = "+{0} pct", Min = 1, Max = 3, Ints = P(PctMaxHealthPct, 0) } },
+            { 47, new Def { Key = 47, Bucket = 1, Class = CantripClass.Chase, Name = "Max Health Pct", Effect = "+1-3 pct max health", ValFmt = "+{0}%", Min = 1, Max = 3, Ints = P(PctMaxHealthPct, 0) } },
             // Life on Hit - chase, JEWELRY ONLY (6 slots), 1-3 pct of the wielder's max HP per landed hit, summed,
             // worn cap lifeonhit_cap (25 pct), lifeonhit_cooldown (3 s). Read in Player.ZcTryLifeOnHit from both hit paths.
-            { 48, new Def { Key = 48, Bucket = 4, Class = CantripClass.Chase, JewelryOnly = true, Name = "Life on Hit", Effect = "heal 1-3 pct max HP per hit", ValFmt = "{0} pct HP per hit", Min = 1, Max = 3, Ints = P(LifeOnHitPct, 0) } },
+            { 48, new Def { Key = 48, Bucket = 4, Class = CantripClass.Chase, JewelryOnly = true, Name = "Life on Hit", Effect = "heal 1-3 pct max HP per hit", ValFmt = "{0}% HP per hit", Min = 1, Max = 3, Ints = P(LifeOnHitPct, 0) } },
             // Reinforced - mid, ARMOR ONLY, the value is a protection RANK: +1 Superior 1.40 / +2 Excellent 1.60 /
             // +3 Unparalleled 1.80. Stamp SETS every ArmorModVs* on the piece (after EqualizeT11ArmorResists), so it
             // is item data, not an enchantment - hollow mobs cannot strip it. Tier-weighted toward +3 via TierThirds.
@@ -296,6 +297,18 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>Tier scale of the anchored linear ladder: 1.0 at T11, 2.0 at T25 (same f as the core anchors).</summary>
         public static double TierScale(int tier) => 1.0 + (Math.Clamp(tier, 11, 25) - 11) / 14.0;
 
+        /// <summary>Line-count fallback when no Default authors cantrip_lines_min/max/chance_N for the tier
+        /// (owner 2026-08-23, option (a)): linear T11 -> T25 anchored on the T11 Default as authored that day
+        /// (min 1 -> 4, max 4 -> 7, chance1 40 -> 30 pct, chance2 10, chance3 1). An authored stat still wins.</summary>
+        public static (int Min, int Max, double Chance1, double Chance2, double Chance3) LinesFallback(int tier)
+        {
+            var t = (Math.Clamp(tier, 11, 25) - 11) / 14.0;   // 0 at T11 .. 1 at T25
+            var min = (int)Math.Round(1 + 3 * t);
+            var max = (int)Math.Round(4 + 3 * t);
+            var c1 = 0.40 - 0.10 * t;
+            return (min, Math.Max(min, max), c1, 0.10, 0.01);
+        }
+
         /// <summary>
         /// The HARDCODED band at a tier - what every fallback uses when no Default / zone band is authored
         /// (owner 2026-08-23: the catalog stays the reset target, but it must be tier-aware or T12+ rolls
@@ -306,6 +319,12 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (def == null) return (0, 0);
             var (min, max) = def.Min <= def.Max ? (def.Min, def.Max) : (def.Max, def.Min);
+            if (def.Max25 > 0 && tier > 11)
+            {
+                // explicit T11 -> T25 anchors (owner 2026-08-23: Regeneration 1-2 at T11 -> 3-5 at T25)
+                var t = (Math.Clamp(tier, 11, 25) - 11) / 14.0;
+                return ((int)Math.Round(min + (def.Min25 - min) * t), (int)Math.Round(max + (def.Max25 - max) * t));
+            }
             if (!def.TierScaled || tier <= 11) return (min, max);
             var f = TierScale(tier);
             return ((int)Math.Round(min * f), (int)Math.Round(max * f));

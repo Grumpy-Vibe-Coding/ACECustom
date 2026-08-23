@@ -337,6 +337,8 @@ namespace ACE.Server.Managers.ZoneControl
                     changed++;
                 }
             }
+            // wield gates follow the tier row live too (owner 2026-08-23: T16+ Item Augs + Triune on existing pieces)
+            changed += ACE.Server.Factories.LootGenerationFactory.RefreshWieldGate(wo, r.Tier);
             wo.SetProperty(PropertyInt.ZcResolvedVersion, ZoneControlManager.GetLadderVersion(r.Tier).Version);
             return changed;
         }

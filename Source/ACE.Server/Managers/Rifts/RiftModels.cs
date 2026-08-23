@@ -98,17 +98,10 @@ namespace ACE.Server.Managers.Rifts
         public double CurrencyPerTier { get; set; } = 1;
 
         /// <summary>Zone loot stats stamped on the run's ephemeral zone: value = Base + PerTier * tier.
-        /// Keys are ZoneStat loot keys (loot_quality_mult, rare_chance_mult, weapon_cantrip_chance, ...).</summary>
-        public Dictionary<string, double> LootStatBase { get; set; } = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["loot_quality_mult"] = 1.0,
-            ["rare_chance_mult"] = 1.0,
-        };
-        public Dictionary<string, double> LootStatPerTier { get; set; } = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["loot_quality_mult"] = 0.02,
-            ["rare_chance_mult"] = 0.05,
-        };
+        /// Keys are ZoneStat loot keys (weapon_cantrip_chance, bonus_currency, ...).
+        /// (loot_quality_mult / rare_chance_mult defaults removed 2026-08-23 with those stats.)</summary>
+        public Dictionary<string, double> LootStatBase { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, double> LootStatPerTier { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public enum RiftRunState

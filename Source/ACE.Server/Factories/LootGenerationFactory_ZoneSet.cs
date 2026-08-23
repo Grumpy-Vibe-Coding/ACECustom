@@ -166,11 +166,86 @@ namespace ACE.Server.Factories
                 wo.WieldDifficulty4 = tierRow.MinWieldSkillCharm;
             }
 
+            // Armor / jewelry / cloaks at T16+ (owner 2026-08-23: "4k item augs isn't enough - Item Augs +
+            // Triune Count"): slot 3 = Triune Weave count on the same 500 x (tier-15) ladder the weapons use.
+            // No family charm for non-weapons (none exists).
+            if (!isWeapon && tierRow != null && tierRow.MinWieldTriune > 0)
+            {
+                wo.WieldRequirements3 = ACE.Entity.Enum.WieldRequirement.Int64Stat;
+                wo.WieldSkillType3 = (int)PropertyInt64.TriuneWeaveCount;
+                wo.WieldDifficulty3 = tierRow.MinWieldTriune;
+            }
+
             // The client cannot render Int64Stat requirements. WEAPONS show the gate in the
             // Property Details section instead (AppraiseInfo, pinned bottom - owner 2026-08-01);
             // armor/jewelry have no such section, so they keep this LongDesc line.
             if (!isWeapon)
-                AppendLongDescLine(wo, $"Wield requires: {minWield:N0} Item Augmentations");
+                AppendLongDescLine(wo, WieldLineFor(wo));
+        }
+
+        /// <summary>LIVE re-stamp of a recorded NON-weapon's wield gates from the current tier row (owner 2026-08-23:
+        /// "change live and for existing pieces"). Called from ZoneStatResolver.Apply so every equip / login /
+        /// ladder apply refreshes slot 1 (item augs) and slot 3 (T16+ Triune Weave) and rewrites the LongDesc
+        /// line. Weapons are left to the weapon-scaling system. Returns the number of properties changed.</summary>
+        public static int RefreshWieldGate(WorldObject wo, int tier)
+        {
+            if (wo == null || wo is MeleeWeapon || wo is MissileLauncher || wo is Caster)
+                return 0;
+            var tierRow = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(tier);
+            var minWield = tierRow != null && tierRow.MinWieldAugs > 0 ? tierRow.MinWieldAugs : ZoneLootSetWieldItemAugs;
+            var triune = tierRow != null ? tierRow.MinWieldTriune : 0;
+            var changed = 0;
+
+            if (wo.WieldRequirements != ACE.Entity.Enum.WieldRequirement.Int64Stat || wo.WieldSkillType != (int)PropertyInt64.LumAugItemCount || wo.WieldDifficulty != minWield)
+            {
+                wo.WieldRequirements = ACE.Entity.Enum.WieldRequirement.Int64Stat;
+                wo.WieldSkillType = (int)PropertyInt64.LumAugItemCount;
+                wo.WieldDifficulty = minWield;
+                changed++;
+            }
+            if (triune > 0)
+            {
+                if (wo.WieldRequirements3 != ACE.Entity.Enum.WieldRequirement.Int64Stat || wo.WieldSkillType3 != (int)PropertyInt64.TriuneWeaveCount || wo.WieldDifficulty3 != triune)
+                {
+                    wo.WieldRequirements3 = ACE.Entity.Enum.WieldRequirement.Int64Stat;
+                    wo.WieldSkillType3 = (int)PropertyInt64.TriuneWeaveCount;
+                    wo.WieldDifficulty3 = triune;
+                    changed++;
+                }
+            }
+            else if (wo.WieldRequirements3 == ACE.Entity.Enum.WieldRequirement.Int64Stat && wo.WieldSkillType3 == (int)PropertyInt64.TriuneWeaveCount)
+            {
+                wo.WieldRequirements3 = ACE.Entity.Enum.WieldRequirement.Invalid;
+                wo.WieldSkillType3 = null;
+                wo.WieldDifficulty3 = null;
+                changed++;
+            }
+
+            // rewrite the LongDesc gate block so the appraisal matches the live gate. The block sits in
+            // its own paragraph (blank line before it) and each requirement has its own line (owner 2026-08-23).
+            var want = WieldLineFor(wo);
+            var cur = wo.LongDesc ?? string.Empty;
+            if (!cur.Contains(want))
+            {
+                var kept = cur.Split('\n').Where(l => !l.StartsWith("Wield requires:")).ToList();
+                // drop the blank lines that separated the old gate block so we don't stack paragraphs
+                while (kept.Count > 0 && kept[^1].Trim().Length == 0) kept.RemoveAt(kept.Count - 1);
+                var head = string.Join("\n", kept).Trim('\n');
+                wo.LongDesc = head.Length > 0 ? head + "\n\n" + want : want;
+                changed++;
+            }
+            return changed;
+        }
+
+        /// <summary>The "Wield requires:" LongDesc block for a non-weapon: one line per requirement -
+        /// item augs, then the T16+ Triune gate when stamped (owner 2026-08-23).</summary>
+        private static string WieldLineFor(WorldObject wo)
+        {
+            var line = $"Wield requires: {wo.WieldDifficulty ?? 0:N0} Item Augmentations";
+            if (wo.WieldRequirements3 == ACE.Entity.Enum.WieldRequirement.Int64Stat &&
+                wo.WieldSkillType3 == (int)PropertyInt64.TriuneWeaveCount && (wo.WieldDifficulty3 ?? 0) > 0)
+                line += $"\nWield requires: {wo.WieldDifficulty3 ?? 0:N0} Triune Weave";
+            return line;
         }
 
         /// <summary>Standard weapon mods (owner 2026-08-15): every T10+ weapon and wand leaves
@@ -408,8 +483,14 @@ namespace ACE.Server.Factories
 
             // Damage / Max Health left the fixed base (random pool now). REMOVE rather than skip:
             // TryMutateGearRatingT10's coin-flip rolls would otherwise leak onto T11 drops.
+            // 2026-08-23: the same mutator also coin-flips Healing Boost (jewelry) and Crit
+            // Damage (armor) - a T11 bracelet shipped with Healing Boost 100 (the T10 rating) and
+            // no key-31 line. Strip every line-produced Gear* it can stamp; the ZcLines record is
+            // the only source of truth on T11+.
             wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamage);
             wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearMaxHealth);
+            wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearHealingBoost);
+            wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritDamage);
 
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamageResist, RollCore(ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreDamageResist, anchorDr));
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritDamageResist, RollCore(ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreCritDamageResist, anchorCdr));
@@ -868,7 +949,7 @@ namespace ACE.Server.Factories
             // the item-aug wield gate (client cannot render Int64Stat requirements)
             if (wo.WieldRequirements == ACE.Entity.Enum.WieldRequirement.Int64Stat &&
                 wo.WieldSkillType == (int)PropertyInt64.LumAugItemCount)
-                sb.Append($"Wield requires: {wo.WieldDifficulty ?? 0:N0} Item Augmentations\n");
+                sb.Append(WieldLineFor(wo)).Append('\n');
 
             // aug-scaling identity (the per-wielder damage term itself shows live in the weapon
             // panel via WeaponProfile; this line records the item's fixed roll)

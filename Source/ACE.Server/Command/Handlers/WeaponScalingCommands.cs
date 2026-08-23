@@ -101,7 +101,7 @@ namespace ACE.Server.Command.Handlers
         }
 
         /// <summary>Pipe/tilde wire format (house style; the plugin has no JSON parser):
-        /// [[ZCW]]|enabled=1|kc=0.6~0.8|tighten=0.7|critcap=3|grades=...|tiers=t~cap~minwield,...
+        /// [[ZCW]]|enabled=1|kc=0.6~0.8|tighten=0.7|grades=...|tiers=t~cap~minwield,...
         /// |scripts=name~kmin~kmax~variance,...   (grade LADDERS ride separate [[ZCWK]] messages)</summary>
         private static string BuildPayload()
         {
@@ -110,10 +110,6 @@ namespace ACE.Server.Command.Handlers
             sb.Append("|enabled=").Append(cfg.Enabled ? '1' : '0');
             sb.Append("|kc=").Append(F(cfg.KcMin)).Append('~').Append(F(cfg.KcMax));
             sb.Append("|tighten=").Append(F(cfg.TightenStrength));
-            // player_crit_damage_cap rides the payload so the plugin's Damage Chart crit row is the
-            // SERVER's number. A manually-typed cap that drifts from the config is exactly the kind
-            // of quietly-wrong figure the chart exists to eliminate.
-            sb.Append("|critcap=").Append(F(Managers.ServerConfig.player_crit_damage_cap.Value));
             sb.Append("|grades=").Append(string.Join(",",
                 Managers.WeaponScaling.WeaponScalingManager.GradeBands
                     .Select(b => $"{b.Grade}~{F(cfg.GradeWeights != null && cfg.GradeWeights.TryGetValue(b.Grade, out var gw) ? gw : 0)}")));
@@ -1000,39 +996,6 @@ namespace ACE.Server.Command.Handlers
                 : $"grade {WeaponScalingManager.GetQualityGrade(quality)} ({quality}/1000), tier {tier}";
             return $"forged: {wo.Name} -> family {WeaponScalingCombat.GetFamilyKey(wo) ?? "none"}, " +
                    gradeNote + (placed ? " [" + ForgePackName + "]" : "") + cardNote;
-        }
-
-        [CommandHandler("wstestkit", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0,
-            "Grants Weapon Scaling test weapons (UA, bow, sword, wand) stamped at a fixed quality.",
-            "[quality 0-1000, default 500] [element: slash|pierce|bludge|acid|fire|cold|electric|nether]")]
-        public static void HandleWsTestKit(Session session, params string[] parameters)
-        {
-            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
-
-            var player = session.Player;
-            if (player == null)
-                return;
-
-            var quality = 500;
-            if (parameters.Length > 0 && int.TryParse(parameters[0], out var q))
-                quality = Math.Clamp(q, 0, 1000);
-
-            DamageType? element = null;
-            if (parameters.Length > 1)
-            {
-                element = ParseElement(parameters[1]);
-                if (element == null)
-                {
-                    Msg("wstestkit: unknown element. Use slash|pierce|bludge|acid|fire|cold|electric|nether.");
-                    return;
-                }
-            }
-
-            foreach (var key in new[] { "ua", "bow", "sword", "wand" })
-            {
-                var cls = ForgeClasses.First(c => c.Key == key);
-                Msg(ForgeWeapon(player, cls.Wcid, cls.CleanName, quality, 11, element, cls.TWType));
-            }
         }
 
         /// <summary>The Admin > Forge subtab's backend (owner 2026-08-01): any single weapon

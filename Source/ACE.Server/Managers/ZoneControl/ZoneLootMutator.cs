@@ -19,8 +19,8 @@ namespace ACE.Server.Managers.ZoneControl
     public static class ZoneLootMutator
     {
         /// <summary>
-        /// Mutations for an item rolled from the death-treasure table: weapon stat scaling, armor AL,
-        /// workmanship, coin stacks, vendor value, plus the low-chance special-property rolls.
+        /// Mutations for an item rolled from the death-treasure table: provenance, forced weapon
+        /// properties, plus the low-chance special-property rolls.
         /// <paramref name="killed"/> is the dying monster (slayer type source); <paramref name="lootTier"/>
         /// is the effective treasure tier (levels the default proc spell). <paramref name="forceMax"/> = this
         /// piece won the per-kill slot special (Armor v2): every cantrip line rolls at band MAX.
@@ -30,13 +30,9 @@ namespace ACE.Server.Managers.ZoneControl
             if (wo == null || p == null)
                 return;
 
-            // currency first: coin stacks take only the coin knob (their Value tracks stack size)
+            // currency: coin stacks are never mutated (coin_mult removed 2026-08-23)
             if (wo.WeenieType == WeenieType.Coin)
-            {
-                if (p.Has(ZoneStat.CoinMult))
-                    ScaleStack(wo, p.Get(ZoneStat.CoinMult));
                 return;
-            }
 
             // Zone Control origin: record where this item dropped as a readable sentence appended to the
             // item's description (p.ScopeKey = the winning zone's name; the variation the zone matched on =
@@ -53,54 +49,8 @@ namespace ACE.Server.Managers.ZoneControl
                 wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? origin : wo.LongDesc + "\n\n" + origin;
             }
 
-            if (p.Has(ZoneStat.WeaponStatMult))
-                MutateWeaponStats(wo, p.Get(ZoneStat.WeaponStatMult));
-
-            // Caster elemental damage OVERRIDE: set the elemental damage bonus to a value rolled per drop,
-            // only on casters that ALREADY have one (the > 1.0 guard — never injects a bonus into a blank
-            // wand). Wire = bonus fraction (0.5 = +50%), so ElementalDamageMod = 1 + roll. Runs after
-            // weapon_stat_mult so it's an authoritative set (wins over the broad scaler). Only the spell
-            // element matching the wand benefits, and vs-players is auto-halved at hit time.
-            if (wo is Caster && wo.ElementalDamageMod.HasValue && wo.ElementalDamageMod.Value > 1.0
-                && (p.Has(ZoneStat.WeaponCasterElemMin) || p.Has(ZoneStat.WeaponCasterElemMax)))
-                wo.ElementalDamageMod = 1.0 + RollRange(p, ZoneStat.WeaponCasterElemMin, ZoneStat.WeaponCasterElemMax, 0.15, 0.0, 1.0);
-
-            // Missile elemental damage OVERRIDE: set the FLAT elemental damage bonus (ElementalDamageBonus,
-            // a whole number added to the matching-element missile hit) to a value rolled per drop, only on
-            // launchers that ALREADY have one (the > 0 guard — never injects into a plain bow). Runs after
-            // weapon_stat_mult so it's an authoritative set. (Melee has no elemental bonus property.)
-            if (wo is MissileLauncher && wo.ElementalDamageBonus.HasValue && wo.ElementalDamageBonus.Value > 0
-                && (p.Has(ZoneStat.WeaponMissileElemMin) || p.Has(ZoneStat.WeaponMissileElemMax)))
-                wo.ElementalDamageBonus = (int)Math.Round(
-                    RollRange(p, ZoneStat.WeaponMissileElemMin, ZoneStat.WeaponMissileElemMax, 5, 0, 100));
-
-            // flat damage range override — melee only (missile/caster damage is a 1.xx multiplier mod,
-            // not a flat number; use weapon_stat_mult for those). Wins over the mult. The pair defines the
-            // weapon's DISPLAYED hit range: Damage = max hit, DamageVariance derived so min hit = min —
-            // every drop appraises exactly min - max. Reversed bounds always auto-swap (a 2000-1000 zone
-            // still yields 1000-2000 weapons). weapon_damage_roll nonzero = each drop instead rolls a
-            // random sub-range within [min,max] (two uniform picks, sorted).
-            if (wo is MeleeWeapon && wo.Damage.HasValue && wo.Damage.Value > 0 &&
-                (p.Has(ZoneStat.WeaponDamageMin) || p.Has(ZoneStat.WeaponDamageMax)))
-            {
-                var lo = p.Has(ZoneStat.WeaponDamageMin) ? p.Get(ZoneStat.WeaponDamageMin) : p.Get(ZoneStat.WeaponDamageMax);
-                var hi = p.Has(ZoneStat.WeaponDamageMax) ? p.Get(ZoneStat.WeaponDamageMax) : lo;
-                if (hi < lo)
-                    (lo, hi) = (hi, lo);
-                var dmgHi = Math.Max(1, (int)Math.Round(hi));
-                var dmgLo = Math.Clamp((int)Math.Round(lo), 1, dmgHi);
-
-                if (p.Get(ZoneStat.WeaponDamageRoll, 0) != 0 && dmgHi > dmgLo)
-                {
-                    var a = ThreadSafeRandom.Next(dmgLo, dmgHi);
-                    var b = ThreadSafeRandom.Next(dmgLo, dmgHi);
-                    dmgLo = Math.Min(a, b);
-                    dmgHi = Math.Max(a, b);
-                }
-
-                wo.Damage = dmgHi;
-                wo.DamageVariance = 1.0 - (double)dmgLo / dmgHi;
-            }
+            // (weapon_stat_mult, weapon_damage_min/max/roll, weapon_caster_elem_*, weapon_missile_elem_*
+            //  removed 2026-08-23 — weapon damage is owned by the weapon aug-scaling system)
 
             var isWeapon = wo is MeleeWeapon || wo is MissileLauncher || wo is Caster;
 
@@ -115,33 +65,7 @@ namespace ACE.Server.Managers.ZoneControl
                     wo.ResistMagic = 9999;
             }
 
-            // workmanship SET range: the weapon pair touches only weapons (the armor pair was removed 2026-08-23). Replaces the rolled value —
-            // one of the pair set = exact, both = uniform roll per drop, reversed auto-swap, clamp 1..10.
-            if (wo.ItemWorkmanship.HasValue)
-            {
-                if (isWeapon && (p.Has(ZoneStat.WeaponWorkmanshipMin) || p.Has(ZoneStat.WeaponWorkmanshipMax)))
-                    wo.ItemWorkmanship = (int)Math.Round(
-                        RollRange(p, ZoneStat.WeaponWorkmanshipMin, ZoneStat.WeaponWorkmanshipMax, 1, 1, 10));
-            }
-
-            if (p.Has(ZoneStat.ValueMult) && wo.Value.HasValue)
-            {
-                var m = p.Get(ZoneStat.ValueMult);
-                if (m > 0)
-                    wo.Value = (int)Math.Round(wo.Value.Value * m);
-            }
-
-            // flat value range override, clamped 0..1,000,000 (wins over value_mult; coins already returned above)
-            if (wo.Value.HasValue && (p.Has(ZoneStat.ValueMin) || p.Has(ZoneStat.ValueMax)))
-            {
-                var lo = p.Has(ZoneStat.ValueMin) ? p.Get(ZoneStat.ValueMin) : p.Get(ZoneStat.ValueMax);
-                var hi = p.Has(ZoneStat.ValueMax) ? p.Get(ZoneStat.ValueMax) : lo;
-                if (hi < lo)
-                    (lo, hi) = (hi, lo);
-                var valLo = Math.Clamp((int)Math.Round(lo), 0, 1_000_000);
-                var valHi = Math.Clamp((int)Math.Round(hi), valLo, 1_000_000);
-                wo.Value = ThreadSafeRandom.Next(valLo, valHi);
-            }
+            // (weapon_workmanship_min/max and value_mult/min/max removed 2026-08-23)
 
             TrySpecialRolls(wo, p, killed, lootTier, forceMax);
         }
@@ -390,8 +314,9 @@ namespace ACE.Server.Managers.ZoneControl
                 return;
 
             // (a) how many lines this piece gets
-            var linesMin = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMin, 0.0)), 0, 8);
-            var linesMax = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMax, 2.0)), linesMin, 8);
+            var fb = ZoneCantrips.LinesFallback(lootTier);   // tier-scaled fallback (owner 2026-08-23); authored stats win
+            var linesMin = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMin, fb.Min)), 0, 8);
+            var linesMax = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMax, fb.Max)), linesMin, 8);
             var lines = linesMin;
             for (int slot = 1; lines < linesMax; slot++)
             {
@@ -401,7 +326,7 @@ namespace ACE.Server.Managers.ZoneControl
                     2 => ZoneStat.CantripLinesChance2,
                     _ => ZoneStat.CantripLinesChance3,
                 };
-                var chance = Math.Clamp(p.Get(chanceStat, slot == 1 ? 0.40 : slot == 2 ? 0.10 : 0.01), 0.0, 1.0);
+                var chance = Math.Clamp(p.Get(chanceStat, slot == 1 ? fb.Chance1 : slot == 2 ? fb.Chance2 : fb.Chance3), 0.0, 1.0);
                 if (chance <= 0 || ThreadSafeRandom.Next(0.0f, 1.0f) >= chance)
                     break;
                 lines++;
@@ -498,70 +423,7 @@ namespace ACE.Server.Managers.ZoneControl
             return weights.Length;
         }
 
-        /// <summary>
-        /// Mutations for an always-drop (createlist) item: coin stack scaling only — WHAT drops is the
-        /// weenie's own table and stays untouched. (mat_drop_mult was removed 2026-07-12: the server has
-        /// no stackable non-coin createlist items for it to act on.)
-        /// </summary>
-        public static void MutateCreateListItem(WorldObject wo, EvaluatedProfile p)
-        {
-            if (wo == null || p == null)
-                return;
-
-            if (wo.WeenieType == WeenieType.Coin && p.Has(ZoneStat.CoinMult))
-                ScaleStack(wo, p.Get(ZoneStat.CoinMult));
-        }
-
-        /// <summary>
-        /// Scales weapon combat stats by mult. Flat rolls (melee Damage, missile ElementalDamageBonus) scale
-        /// directly; the 1.xx multiplier mods (DamageMod, ElementalDamageMod, WeaponOffense/Defense) scale
-        /// only their bonus fraction so 1.20 @ x1.5 becomes 1.30, not 1.80.
-        /// </summary>
-        private static void MutateWeaponStats(WorldObject wo, double mult)
-        {
-            if (mult <= 0 || mult == 1.0)
-                return;
-
-            var isWeapon = wo is MeleeWeapon || wo is MissileLauncher || wo is Caster;
-            if (!isWeapon)
-                return;
-
-            if (wo is MeleeWeapon && wo.Damage.HasValue && wo.Damage.Value > 0)
-                wo.Damage = Math.Max(1, (int)Math.Round(wo.Damage.Value * mult));
-
-            if (wo is MissileLauncher)
-            {
-                if (wo.DamageMod.HasValue && wo.DamageMod.Value > 1.0)
-                    wo.DamageMod = ScaleBonusFraction(wo.DamageMod.Value, mult);
-
-                if (wo.ElementalDamageBonus.HasValue && wo.ElementalDamageBonus.Value > 0)
-                    wo.ElementalDamageBonus = (int)Math.Round(wo.ElementalDamageBonus.Value * mult);
-            }
-
-            if (wo is Caster && wo.ElementalDamageMod.HasValue && wo.ElementalDamageMod.Value > 1.0)
-                wo.ElementalDamageMod = ScaleBonusFraction(wo.ElementalDamageMod.Value, mult);
-
-            if (wo.WeaponOffense.HasValue && wo.WeaponOffense.Value > 1.0)
-                wo.WeaponOffense = ScaleBonusFraction(wo.WeaponOffense.Value, mult);
-
-            if (wo.WeaponDefense.HasValue && wo.WeaponDefense.Value > 1.0)
-                wo.WeaponDefense = ScaleBonusFraction(wo.WeaponDefense.Value, mult);
-        }
-
-        private static double ScaleBonusFraction(double mod, double mult) => 1.0 + (mod - 1.0) * mult;
-
-        private static void ScaleStack(WorldObject wo, double mult)
-        {
-            if (mult <= 0 || mult == 1.0)
-                return;
-
-            var stack = wo.StackSize ?? 1;
-            if (stack < 1)
-                return;
-
-            var scaled = (int)Math.Round(stack * mult);
-            var max = wo.MaxStackSize.HasValue ? (int)wo.MaxStackSize.Value : stack;
-            wo.SetStackSize(Math.Clamp(scaled, 1, Math.Max(stack, max)));
-        }
+        // MutateCreateListItem / MutateWeaponStats / ScaleBonusFraction / ScaleStack removed 2026-08-23
+        // together with coin_mult and weapon_stat_mult (createlist items are no longer mutated at all).
     }
 }

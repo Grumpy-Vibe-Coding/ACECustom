@@ -106,6 +106,21 @@ namespace ACE.Server.WorldObjects
         /// opens (cheatdeath_immunity, default 5 s) and the per-character cooldown starts
         /// (cheatdeath_cooldown, default 600 s). Returns the amount to actually apply.
         /// </summary>
+        private static string ZcFormatCooldown(double seconds)
+        {
+            if (seconds < 60) return $"{seconds:0}s";
+            var m = (int)(seconds / 60);
+            var sec = (int)(seconds % 60);
+            return sec > 0 ? $"{m}m {sec}s" : $"{m}m";
+        }
+
+        /// <summary>While the Cheat Death window is open, every absorbed hit is announced (owner 2026-08-23).</summary>
+        public void ZcAnnounceAbsorb(WorldObject source, string what)
+        {
+            if (!ZcDamageImmune || Invincible) return;
+            SendMessage($"Cheat Death absorbs {what}{(source != null ? " from " + source.Name : "")}.", ChatMessageType.Broadcast);
+        }
+
         public uint ZcTryCheatDeath(WorldObject source, uint amount)
         {
             if (IsDead || Health.Current <= 0 || amount < Health.Current)
@@ -124,7 +139,23 @@ namespace ACE.Server.WorldObjects
             ZcCheatDeathImmuneUntil = now + immunity;
             ZcCheatDeathReadyAt = now + cooldown;
 
-            SendMessage($"Cheat Death! You are immune to all damage for {immunity:0} seconds.", ChatMessageType.Broadcast);
+            // announce one tick later so it reads AFTER the would-be killing blow's own damage line (owner 2026-08-23)
+            var announce = new ACE.Server.Entity.Actions.ActionChain();
+            announce.AddDelayForOneTick();
+            announce.AddAction(this, ACE.Server.Entity.Actions.ActionType.Player_ZcCheatDeathExpired, () =>
+                SendMessage($"Cheat Death! You are immune to all damage for {immunity:0} seconds.", ChatMessageType.Broadcast));
+            announce.EnqueueChain();
+            log.Info($"[ZCSPECIAL] Cheat Death: {Name} hit for {amount:N0} at {Health.Current:N0} HP by {source?.Name ?? "?"} -> 1 HP, immune {immunity:0}s, cooldown {cooldown:0}s");
+
+            // expiry notice (owner 2026-08-23): fires when the window closes, names the remaining cooldown
+            var expiry = new ACE.Server.Entity.Actions.ActionChain();
+            expiry.AddDelaySeconds(immunity);
+            expiry.AddAction(this, ACE.Server.Entity.Actions.ActionType.Player_ZcCheatDeathExpired, () =>
+            {
+                if (IsDead) return;
+                SendMessage($"Cheat Death has expired! Cooldown: {ZcFormatCooldown(cooldown - immunity)}.", ChatMessageType.Broadcast);
+            });
+            expiry.EnqueueChain();
 
             // land on 1 HP, never below
             return (uint)(Health.Current - 1);
@@ -164,6 +195,7 @@ namespace ACE.Server.WorldObjects
             ZcBattleMendReadyAt = now + ZcSpecialKnob(source, "battlemend_cooldown", 60.0);
 
             SendMessage("Battle Mending restores you to full health.", ChatMessageType.Broadcast);
+            log.Info($"[ZCSPECIAL] Battle Mending: {Name} healed {healed:N0} (was under {threshold:P0}) by {source?.Name ?? "?"}");
         }
 
         /// <summary>
@@ -203,6 +235,13 @@ namespace ACE.Server.WorldObjects
 
             ZcPctHpReadyAt = now + ZcSpecialKnob(defender, "pcthp_cooldown", 2.0);
 
+            log.Info($"[ZCSPECIAL] Pct HP Damage: {Name} -> {defender.Name}: +{frac * max:N0} ({tenths / 10.0:0.#} pct of {max:N0})");
+            // visible to the wearer (owner 2026-08-23): one line per proc, after the hit's own damage line
+            var pctMsg = $"Pct HP Damage: +{frac * max:N0} ({tenths / 10.0:0.#} pct of {defender.Name}'s max health).";
+            var pctChain = new ACE.Server.Entity.Actions.ActionChain();
+            pctChain.AddDelayForOneTick();
+            pctChain.AddAction(this, ACE.Server.Entity.Actions.ActionType.Player_ZcCheatDeathExpired, () => SendMessage(pctMsg, ChatMessageType.Broadcast));
+            pctChain.EnqueueChain();
             return (float)(frac * max);
         }
 
@@ -689,6 +728,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public override void TakeDamageOverTime(float _amount, DamageType damageType)
         {
+            if (ZcDamageImmune && !Invincible && !IsDead) ZcAnnounceAbsorb(null, $"{Math.Round(_amount):N0} {damageType.ToString().ToLowerInvariant()} damage over time");
             if (Invincible || ZcDamageImmune || IsDead) return;
 
             // check lifestone protection
@@ -857,6 +897,7 @@ namespace ACE.Server.WorldObjects
         private int TakeDamageInternal(WorldObject source, DamageType damageType, float _amount, BodyPart bodyPart, out uint amountAbsorbed, bool crit, AttackConditions attackConditions)
         {
             amountAbsorbed = 0;
+            if (ZcDamageImmune && !Invincible && !IsDead) ZcAnnounceAbsorb(source, $"{Math.Round(_amount):N0} {damageType.ToString().ToLowerInvariant()} damage");
             if (Invincible || ZcDamageImmune || IsDead) return 0;
 
             if (source is Creature creatureAttacker)

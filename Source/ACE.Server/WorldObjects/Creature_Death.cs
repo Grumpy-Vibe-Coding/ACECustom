@@ -240,6 +240,30 @@ namespace ACE.Server.WorldObjects
             var monsterTier = PrestigeManager.GetKillScalingMonsterTier(this);
 
             var baseXp = (long)(XpOverride ?? 0);
+            long? luminanceAward = LuminanceAward;
+
+            // Owner ruling 2026-08-23: T11+ kill rewards are authored per zone by rank; weenie XpOverride/LuminanceAward are ignored when the zone sets them.
+            var killProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
+            if (killProfile != null)
+            {
+                if (killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion))
+                {
+                    var minionXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion);
+                    double zoneXp;
+                    if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true)
+                        zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpBoss, minionXp);
+                    else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true)
+                        zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpLeader, minionXp);
+                    else
+                        zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpDefault, minionXp);   // unranked: xp_default, else Minion
+                    baseXp = (long)Math.Round(zoneXp);
+                }
+                if (killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward))
+                {
+                    var zoneLum = (long)Math.Round(killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward));
+                    luminanceAward = zoneLum > 0 ? zoneLum : null;   // zone-provided 0 = grant nothing
+                }
+            }
 
             // One EarnXP / EarnLuminance per player: combine direct hits + all of that player's combat pets.
             // Avoids duplicate fellowship splits and matches "your kill bonuses apply to the full credit you earned on the mob."
@@ -281,10 +305,19 @@ namespace ACE.Server.WorldObjects
                     player.EarnXP((long)Math.Round(totalXP), XpType.Kill, ShareType.All, monsterTier);
                 }
 
-                if (LuminanceAward != null)
+                if (luminanceAward != null)
                 {
-                    var totalLuminance = LuminanceAward.Value * damagePercent;
+                    var totalLuminance = luminanceAward.Value * damagePercent;
                     player.EarnLuminance((long)Math.Round(totalLuminance), XpType.Kill, ShareType.All, monsterTier);
+                }
+
+                // Launch-day diagnostic (2026-08-23): the client filters XP/lum chat, so the log is the readout.
+                if (killProfile != null)
+                {
+                    var rank = GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true ? "boss"
+                             : GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true ? "leader"
+                             : GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcMinion) == true ? "minion" : "unranked";
+                    log.Info($"[KILLXP] {Name} ({WeenieClassId}, {rank}) -> {player.Name}: share {damagePercent:P0}, xp {(long)Math.Round(baseXp * damagePercent):N0} of {baseXp:N0}, lum {(luminanceAward.HasValue ? ((long)Math.Round(luminanceAward.Value * damagePercent)).ToString("N0") : "none")}, zone-authored xp={killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion)} lum={killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward)}");
                 }
             }
 
@@ -828,14 +861,7 @@ namespace ACE.Server.WorldObjects
             corpse.RemoveProperty(PropertyInt.Value);
 
             if (CanGenerateRare && killer != null)
-            {
-                // Zone Control loot: rare_chance_mult scales the actual rare roll (0 = no rares in this zone)
-                var zoneRare = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
-                var rareMult = zoneRare != null && zoneRare.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult)
-                    ? zoneRare.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.RareChanceMult) : 1.0;
-
-                corpse.TryGenerateRare(killer, rareMult);
-            }
+                corpse.TryGenerateRare(killer);
 
             corpse.InitPhysicsObj(Location.Variation);
 
@@ -929,7 +955,9 @@ namespace ACE.Server.WorldObjects
             // create death treasure from loot generation factory
             if (deathTreasure != null)
             {
-                var effectiveTreasure = BuildZoneScaledTreasure(deathTreasure, zoneLoot);
+                // Zone Control loot tier = the zone floor: max(own tier, variation). (loot_tier_bonus,
+                // loot_quantity_mult, loot_quality_mult removed 2026-08-23.)
+                var effectiveTreasure = deathTreasure;
                 if (zoneFloorTier > 0 && effectiveTreasure.Tier < zoneFloorTier)
                 {
                     effectiveTreasure = CloneTreasureDeath(effectiveTreasure);
@@ -1181,9 +1209,6 @@ namespace ACE.Server.WorldObjects
                         if (tier > 0)
                             PrestigeManager.ApplyLootScaling(wo, tier);
 
-                        // Zone Control loot: scale stackable always-drop materials (what drops stays the weenie's table)
-                        ACE.Server.Managers.ZoneControl.ZoneLootMutator.MutateCreateListItem(wo, zoneLoot);
-
                         if (corpse != null)
                             corpse.TryAddToInventory(wo);
                         else
@@ -1228,59 +1253,10 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// Zone Scaler: returns a CLONE of the death-treasure profile with loot tier/quantity/quality scaled per the
-        /// resolved zone profile (never mutates the shared cached profile). Returns <paramref name="src"/> unchanged
-        /// when there is no profile or it defines no loot stats.
-        /// </summary>
-        private ACE.Database.Models.World.TreasureDeath BuildZoneScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile)
-        {
-            if (src == null || profile == null)
-                return src;
-
-            var hasTier = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus);
-            var hasQty = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
-            var hasQuality = profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQualityMult);
-            if (!hasTier && !hasQty && !hasQuality)
-                return src;
-
-            var t = CloneTreasureDeath(src);
-
-            if (hasTier)
-            {
-                var bonus = (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootTierBonus));
-                var maxTier = Math.Max(1, (int)ServerConfig.zonescale_loot_max_tier.Value);
-                t.Tier = Math.Clamp(t.Tier + bonus, 1, maxTier);
-            }
-
-            if (hasQty)
-            {
-                var m = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQuantityMult);
-                if (m > 0 && m != 1.0)
-                {
-                    t.ItemMinAmount = (int)Math.Round(t.ItemMinAmount * m);
-                    t.ItemMaxAmount = (int)Math.Round(t.ItemMaxAmount * m);
-                    t.MagicItemMinAmount = (int)Math.Round(t.MagicItemMinAmount * m);
-                    t.MagicItemMaxAmount = (int)Math.Round(t.MagicItemMaxAmount * m);
-                    t.MundaneItemMinAmount = (int)Math.Round(t.MundaneItemMinAmount * m);
-                    t.MundaneItemMaxAmount = (int)Math.Round(t.MundaneItemMaxAmount * m);
-                }
-            }
-
-            if (hasQuality)
-            {
-                var m = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootQualityMult);
-                if (m > 0 && m != 1.0)
-                    t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod * m, 0.0, 1.0);
-            }
-
-            return t;
-        }
-
-        /// <summary>
         /// Zone Control QB loot scaling: returns a CLONE of the treasure profile with LootQualityMod
         /// raised by the killing player's Quest Bonus count (QuestCompletionCount). Enabled per-zone by
         /// defining the qb_quality_per_step stat; qb_step_size (default 1000) and qb_max_steps (default
-        /// 20) tune the curve. Quality clamps at 1.0. qb_quantity_per_step is reserved (no effect yet).
+        /// 20) tune the curve. Quality clamps at 1.0.
         /// Returns <paramref name="src"/> unchanged for non-player kills or zones without the stat.
         /// </summary>
         private ACE.Database.Models.World.TreasureDeath BuildQBScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile, DamageHistoryInfo killer)

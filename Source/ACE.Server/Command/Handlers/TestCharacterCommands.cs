@@ -21,9 +21,9 @@ namespace ACE.Server.Command.Handlers
     public static class TestCharacterCommands
     {
         [CommandHandler("testchar", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
-            "Boost character stats/gear/weapons to Tier 11 or Tier 10, or reset to Tier 0.",
-            "Usage: /testchar <T11|T10|T0>  |  /testchar stats <T11|T10>  |  /testchar gear <tier>  |  /testchar weapons <tier> [style]  |  /testchar gems <tier>  |  /testchar charms\n" +
-            "Granular (Character tab): /testchar set attrs|vitals|level|enl|augs|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar extra <keys>  |  /testchar save  |  /testchar report")]
+            "Test-character builder: wipe to Tier 0, or set stats / apply unlocks / mint extras granularly (driven by the plugin's Character tab). Gear comes from /asforge premade and /wsforge.",
+            "Usage: /testchar T0 (wipe)  |  /testchar set attrs|vitals|level|enl|augs|charms|raugs <csv>  |  /testchar apply skills,spells,aetheria,manastone  |  /testchar extra <keys>  |  /testchar save  |  /testchar report\n" +
+            "Also: /testchar gems  |  /testchar charms  |  /testchar print <wcid>")]
         public static void HandleTestChar(Session session, params string[] parameters)
         {
             var player = session.Player;
@@ -39,9 +39,31 @@ namespace ACE.Server.Command.Handlers
                 return;
             }
 
+            // gems / charms (plugin Extras card): the tier arg is OPTIONAL - a trailing token
+            // (older plugin sends "/testchar gems t11") is accepted and ignored.
+            if (sub0 == "gems")
+            {
+                SpawnTeleportGems(player, GetOrCreatePack(player, "Portal Gems Pack", "Booster Pack 1"));
+                player.SendMessage("Custom Teleport Gems generated in your inventory.");
+                player.SaveBiotaToDatabase();
+                return;
+            }
+            if (sub0 == "charms")
+            {
+                SpawnCharms(player);
+                player.SendMessage("All ability charms (T1) and Charm Catalysts added to your inventory.");
+                player.SaveBiotaToDatabase();
+                return;
+            }
+
+            const string usage = "Usage: /testchar T0 (wipe) | set ... | apply ... | extra ... | save | report";
+
             if (parameters.Length == 1)
             {
-                // Full booster package (stats + gear + weapons)
+                // The plugin's Wipe button (Reset to T0). The legacy T10/T11 "full booster"
+                // (stats + 24 elemental weapons + armor/jewelry/extras) was deleted 2026-08-23:
+                // characters are built through the granular setters above, gear through
+                // /asforge premade + /wsforge.
                 var tier = parameters[0].ToUpper();
                 if (tier == "T0" || tier == "0")
                 {
@@ -52,204 +74,15 @@ namespace ACE.Server.Command.Handlers
                     return;
                 }
 
-                bool isT10 = (tier == "T10" || tier == "10");
-                if (!isT10 && tier != "T11" && tier != "11")
-                {
-                    session.Network.EnqueueSend(new GameMessageSystemChat("Supported tiers: T11, T10, T0. Usage: /testchar T11 or /testchar T10 or /testchar T0", ChatMessageType.System));
-                    return;
-                }
-
-                if (isT10)
-                    ConfigureStatsAndSpellsT10(player);
-                else
-                    ConfigureStatsAndSpells(player);
-
-                // Weapons go into their own pack (owner 08-15)
-                var weaponsPack = GetOrCreatePack(player, "Weapons Pack");
-
-                CreateCustomBow(player, DamageType.Cold, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Fire, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Electric, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Acid, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Slash, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Pierce, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Bludgeon, true, weaponsPack);
-                CreateCustomBow(player, DamageType.Nether, true, weaponsPack);
-
-                CreateCustomUA(player, DamageType.Cold, weaponsPack);
-                CreateCustomUA(player, DamageType.Fire, weaponsPack);
-                CreateCustomUA(player, DamageType.Electric, weaponsPack);
-                CreateCustomUA(player, DamageType.Acid, weaponsPack);
-                CreateCustomUA(player, DamageType.Slash, weaponsPack);
-                CreateCustomUA(player, DamageType.Pierce, weaponsPack);
-                CreateCustomUA(player, DamageType.Bludgeon, weaponsPack);
-                CreateCustomUA(player, DamageType.Nether, weaponsPack);
-
-                CreateCustomWand(player, DamageType.Cold, weaponsPack);
-                CreateCustomWand(player, DamageType.Fire, weaponsPack);
-                CreateCustomWand(player, DamageType.Electric, weaponsPack);
-                CreateCustomWand(player, DamageType.Acid, weaponsPack);
-                CreateCustomWand(player, DamageType.Slash, weaponsPack);
-                CreateCustomWand(player, DamageType.Pierce, weaponsPack);
-                CreateCustomWand(player, DamageType.Bludgeon, weaponsPack);
-                CreateCustomWand(player, DamageType.Nether, weaponsPack);
-
-                // Spawn empty booster packs 5 down to 2. Only 4: the Weapons / Portal
-                // Gems / Ability Charms / Spell Comps packs (owner 08-15) share the 8
-                // pack slots a premade has (7 base + retail PackSlot aug). "Booster
-                // Pack 1" is never spawned empty — it is the legacy gem-bag name.
-                for (int i = 5; i >= 2; i--)
-                {
-                    var packName = $"Booster Pack {i}";
-                    if (HasItemNamed(player, packName)) continue;
-                    var emptyBag = WorldObjectFactory.CreateNewWorldObject(310025) as Container;
-                    if (emptyBag != null)
-                    {
-                        emptyBag.Name = packName;
-                        emptyBag.SetProperty(PropertyString.Name, packName);
-                        player.TryCreateInInventoryWithNetworking(emptyBag);
-                    }
-                }
-
-                // Portal gems go into their own pack (owner 08-15; "Booster Pack 1"
-                // is the legacy name for the same bag on pre-existing test chars)
-                SpawnTeleportGems(player, GetOrCreatePack(player, "Portal Gems Pack", "Booster Pack 1"));
-
-                var gearTier = "T10";
-                SpawnOlthoiShadowArmor(player, gearTier);
-                SpawnCustomUndergarmentsAndCloak(player, gearTier);
-                SpawnCustomJewelry(player, gearTier);
-
-                // Add and auto-equip Infinite Deadly Prismatic Arrow
-                bool hasArrow = player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == 4395100);
-                if (!hasArrow)
-                {
-                    var arrow = WorldObjectFactory.CreateNewWorldObject(4395100);
-                    if (arrow != null)
-                    {
-                        AddItemToInventory(player, arrow);
-                    }
-                }
-
-                // Add Aetherias
-                SpawnAetherias(player);
-
-                // Add all charms (T1) + Charm Catalysts
-                SpawnCharms(player);
-
-                var tierLabel = isT10 ? "Tier 10" : "Tier 11";
-                player.SendMessage($"Character fully configured with {tierLabel} stats, elemental weapons, Olthoi Infused Shadow armor, custom undergarments, cloak, jewelry, Infinite Arrow, Aetherias, and all ability charms!");
-                player.SaveBiotaToDatabase();
+                session.Network.EnqueueSend(new GameMessageSystemChat(usage, ChatMessageType.System));
             }
             else if (parameters.Length >= 2)
             {
                 var sub = parameters[0].ToLower();
-                var tier = parameters[1].ToUpper();
 
-                if (tier == "T0" || tier == "0")
+                if (sub == "print")
                 {
-                    if (sub == "stats")
-                    {
-                        if (!GuardWipe(session, player)) return;
-                        ResetToTier0(player);
-                        player.SendMessage("Character stats, skills, augmentations, and spellbook reset to Tier 0 baseline! Please log out and back in to completely refresh your client spellbook.");
-                        player.SaveBiotaToDatabase();
-                    }
-                    else if (sub == "gear")
-                    {
-                        session.Network.EnqueueSend(new GameMessageSystemChat("No gear is defined for Tier 0.", ChatMessageType.System));
-                    }
-                    else if (sub == "weapons")
-                    {
-                        session.Network.EnqueueSend(new GameMessageSystemChat("No weapons are defined for Tier 0.", ChatMessageType.System));
-                    }
-                    else
-                    {
-                        session.Network.EnqueueSend(new GameMessageSystemChat("Unknown subcommand. Usage: /testchar <tier> | /testchar [stats|gear|weapons|gems] <tier> [style]", ChatMessageType.System));
-                    }
-                    return;
-                }
-
-                bool isT10 = (tier == "T10" || tier == "10");
-                if (!isT10 && tier != "T11" && tier != "11")
-                {
-                    session.Network.EnqueueSend(new GameMessageSystemChat($"Supported tiers: T11, T10, T0. Usage: /testchar {sub} T11 or /testchar {sub} T10", ChatMessageType.System));
-                    return;
-                }
-
-                if (sub == "stats")
-                {
-                    if (isT10)
-                        ConfigureStatsAndSpellsT10(player);
-                    else
-                        ConfigureStatsAndSpells(player);
-                    var statsTierLabel = isT10 ? "Tier 10" : "Tier 11";
-                    player.SendMessage($"Character stats, skills, augmentations, and spells configured for {statsTierLabel}!");
-                    player.SaveBiotaToDatabase();
-                }
-                else if (sub == "gear")
-                {
-                    var gearTier = "T10";
-                    SpawnArmor(player);
-                    SpawnOlthoiShadowArmor(player, gearTier);
-                    SpawnCustomUndergarmentsAndCloak(player, gearTier);
-                    SpawnCustomJewelry(player, gearTier);
-
-                    // Add and auto-equip Infinite Deadly Prismatic Arrow
-                    bool hasArrow = player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == 4395100);
-                    if (!hasArrow)
-                    {
-                        var arrow = WorldObjectFactory.CreateNewWorldObject(4395100);
-                        if (arrow != null)
-                        {
-                            AddItemToInventory(player, arrow);
-                        }
-                    }
-
-                    // Add Aetherias
-                    SpawnAetherias(player);
-
-                    player.SendMessage("Prismatic GSA armor, Olthoi Infused Shadow armor (No Cloak), custom undergarments, custom cloak, custom jewelry, Infinite Arrow, and Aetherias generated and equipped.");
-                    player.SaveBiotaToDatabase();
-                }
-                else if (sub == "weapons")
-                {
-                    string style = null;
-                    if (parameters.Length >= 3)
-                    {
-                        var argStyle = parameters[2].ToUpper();
-                        if (argStyle == "UA" || argStyle == "2H" || argStyle == "BOW" || argStyle == "WAND")
-                        {
-                            style = argStyle;
-                        }
-                        else
-                        {
-                            session.Network.EnqueueSend(new GameMessageSystemChat("Invalid weapon style. Supported styles: UA, 2H, Bow, Wand.", ChatMessageType.System));
-                            return;
-                        }
-                    }
-
-                    SpawnWeapons(player, style);
-                    var styleLabel = style != null ? $"{style} " : "";
-                    player.SendMessage($"Weapons generated in your inventory.");
-                    player.SaveBiotaToDatabase();
-                }
-                else if (sub == "gems")
-                {
-                    // Gems ride Create Premade via this granular verb — pack them (owner 08-15)
-                    SpawnTeleportGems(player, GetOrCreatePack(player, "Portal Gems Pack", "Booster Pack 1"));
-                    player.SendMessage("Custom Teleport Gems generated in your inventory.");
-                    player.SaveBiotaToDatabase();
-                }
-                else if (sub == "charms")
-                {
-                    SpawnCharms(player);
-                    player.SendMessage("All ability charms (T1) and Charm Catalysts added to your inventory.");
-                    player.SaveBiotaToDatabase();
-                }
-                else if (sub == "print")
-                {
-                    if (parameters.Length >= 2 && uint.TryParse(parameters[1], out var wcid))
+                    if (uint.TryParse(parameters[1], out var wcid))
                     {
                         var wo = WorldObjectFactory.CreateNewWorldObject(wcid);
                         if (wo != null)
@@ -279,12 +112,12 @@ namespace ACE.Server.Command.Handlers
                 }
                 else
                 {
-                    session.Network.EnqueueSend(new GameMessageSystemChat("Unknown subcommand. Usage: /testchar <tier> | /testchar [stats|gear|weapons|gems|print] <tier> [style]", ChatMessageType.System));
+                    session.Network.EnqueueSend(new GameMessageSystemChat(usage + " | gems | charms | print <wcid>", ChatMessageType.System));
                 }
             }
             else
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat("Usage: /testchar <tier> | /testchar [stats|gear|weapons|gems] <tier> [style]", ChatMessageType.System));
+                session.Network.EnqueueSend(new GameMessageSystemChat(usage, ChatMessageType.System));
             }
         }
 
@@ -432,92 +265,9 @@ namespace ACE.Server.Command.Handlers
             player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.EncumbranceVal, player.EncumbranceVal ?? 0));
         }
 
-        private static void ConfigureStatsAndSpells(Player player)
-        {
-            // 1. Set Base Attributes
-            // Base Attributes: Strength 450, Endurance 450, Coordination 575, Quickness 450, Focus 450, Self 450
-            var attributeTargets = new Dictionary<PropertyAttribute, uint>()
-            {
-                { PropertyAttribute.Strength, 450 },
-                { PropertyAttribute.Endurance, 450 },
-                { PropertyAttribute.Coordination, 575 },
-                { PropertyAttribute.Quickness, 450 },
-                { PropertyAttribute.Focus, 450 },
-                { PropertyAttribute.Self, 450 },
-            };
-
-            foreach (var kvp in attributeTargets)
-                SetChAttribute(player, kvp.Key, kvp.Value);
-
-            // 2. Set Secondary Vitals (Max)
-            // Secondary Vitals: Max Health 700, Max Stamina 900, Max Mana 900
-            var vitalTargets = new Dictionary<PropertyAttribute2nd, uint>()
-            {
-                { PropertyAttribute2nd.MaxHealth, 700 },
-                { PropertyAttribute2nd.MaxStamina, 900 },
-                { PropertyAttribute2nd.MaxMana, 900 },
-            };
-
-            foreach (var kvp in vitalTargets)
-                SetChVital(player, kvp.Key, kvp.Value);
-
-            // 2.5 Set Level and Maximize All Skills
-            player.Level = 1300;
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Level, 1300));
-
-            ApplyChMaxSkills(player);
-
-            // 3. Set Custom Augmentations (Luminance Augmentations)
-            player.LuminanceAugmentCreatureCount = 5000;
-            player.LuminanceAugmentItemCount = 3500;
-            player.LuminanceAugmentLifeCount = 3500;
-            player.LuminanceAugmentWarCount = 3500;
-            player.LuminanceAugmentVoidCount = 3500;
-            player.LuminanceAugmentSpellDurationCount = 3000;
-            player.LuminanceAugmentSpecializeCount = 100;
-            player.LuminanceAugmentSummonCount = 1100;
-            player.LuminanceAugmentMeleeCount = 3500;
-            player.LuminanceAugmentMissileCount = 3500;
-
-            // Sync updated custom augs to the client
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugCreatureCount, player.LuminanceAugmentCreatureCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, player.LuminanceAugmentItemCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugLifeCount, player.LuminanceAugmentLifeCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugWarCount, player.LuminanceAugmentWarCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugVoidCount, player.LuminanceAugmentVoidCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugDurationCount, player.LuminanceAugmentSpellDurationCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSpecializeCount, player.LuminanceAugmentSpecializeCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSummonCount, player.LuminanceAugmentSummonCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMeleeCount, player.LuminanceAugmentMeleeCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMissileCount, player.LuminanceAugmentMissileCount ?? 0));
-
-            // 4. Set Retail Augmentations to max/acquired
-            foreach (var kvp in AugmentationDevice.MaxAugs)
-            {
-                var type = kvp.Key;
-                var maxVal = kvp.Value;
-                var augProp = AugmentationDevice.AugProps[type];
-                player.SetProperty(augProp, maxVal);
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, augProp, maxVal));
-            }
-
-            // 5. Learn All Spells Silently
-            ApplyChAllSpells(player);
-
-            // 6. Enable Aetheria Slots
-            player.UpdateProperty(player, PropertyInt.AetheriaBitfield, (int)AetheriaBitfield.All);
-
-            // 7. Set Enlightenment to 325
-            player.Enlightenment = 325;
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 325));
-
-            // 8. Spawn Eternal Mana Charge (Infinite Mana Stone)
-            SpawnChManaStone(player);
-        }
-
-        // ─── Per-knob setter helpers, shared by /testchar stats and the granular
-        // /testchar set|apply commands (Admin > Character tab, 2026-08-02). Extracted from
-        // ConfigureStatsAndSpells the same way the gear spawns were split for /asforge. ───
+        // ─── Per-knob setter helpers for the granular /testchar set|apply commands
+        // (Admin > Character tab, 2026-08-02). Extracted from the legacy ConfigureStatsAndSpells
+        // booster, which was deleted 2026-08-23. ───
 
         /// <summary>Set one base attribute to an exact target (innate 100 + ranks; a target
         /// under 100 becomes the innate value with 0 ranks).</summary>
@@ -954,40 +704,6 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
-        private static void ConfigureStatsAndSpellsT10(Player player)
-        {
-            // Same as T11 but with lower luminance augs and ENL 300
-            // Reuse T11 to set all attributes, vitals, skills, retail augs, and spells
-            ConfigureStatsAndSpells(player);
-
-            // Override luminance augs for T10
-            player.LuminanceAugmentCreatureCount = 4000;
-            player.LuminanceAugmentItemCount = 2000;
-            player.LuminanceAugmentLifeCount = 2000;
-            player.LuminanceAugmentWarCount = 1750;
-            player.LuminanceAugmentVoidCount = 1750;
-            player.LuminanceAugmentSpellDurationCount = 1750;
-            player.LuminanceAugmentSpecializeCount = 100;
-            player.LuminanceAugmentSummonCount = 1100;
-            player.LuminanceAugmentMeleeCount = 1750;
-            player.LuminanceAugmentMissileCount = 1750;
-
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugCreatureCount, player.LuminanceAugmentCreatureCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, player.LuminanceAugmentItemCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugLifeCount, player.LuminanceAugmentLifeCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugWarCount, player.LuminanceAugmentWarCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugVoidCount, player.LuminanceAugmentVoidCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugDurationCount, player.LuminanceAugmentSpellDurationCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSpecializeCount, player.LuminanceAugmentSpecializeCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugSummonCount, player.LuminanceAugmentSummonCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMeleeCount, player.LuminanceAugmentMeleeCount ?? 0));
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugMissileCount, player.LuminanceAugmentMissileCount ?? 0));
-
-            // Override Enlightenment to 300
-            player.Enlightenment = 300;
-            player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(player, PropertyInt.Enlightenment, 300));
-        }
-
         /// <summary>The 102-slot "Booster Pack" bags (wcid 310025) the /testchar tier package spawns,
         /// as a standalone extra. Fills the player's pack slots but NEVER past what the client is
         /// showing: ContainerCapacity is read at login, so a PackSlot aug taken this session gives a
@@ -1035,35 +751,9 @@ namespace ACE.Server.Command.Handlers
                 Msg("extra: bags - an 8th slot exists server-side but the client shows it only after a relog; re-run then.");
         }
 
-        private static void SpawnArmor(Player player)
-        {
-            var armorWcids = new List<uint>()
-            {
-                14594, // helmprismatic
-                23777, // coatamulishadowbrilliant
-                23785, // leggingsamulishadowbrilliant
-                23793, // breastplateceldonshadowbrilliant
-                23801, // girthceldonshadowbrilliant
-                23809, // leggingsceldonshadowbrilliant
-                23817, // sleevesceldonshadowbrilliant
-                23825, // breastplatekoujiashadowbrilliant
-                23833, // leggingskoujiashadowbrilliant
-                23841, // sleeveskoujiashadowbrilliant
-            };
-
-            foreach (var wcid in armorWcids)
-            {
-                bool alreadyHas = player.GetAllPossessionsDeep().Any(i => i.WeenieClassId == wcid);
-                if (alreadyHas) continue;
-                var armorItem = WorldObjectFactory.CreateNewWorldObject(wcid);
-                if (armorItem != null)
-                    player.TryCreateInInventoryWithNetworking(armorItem);
-            }
-        }
-
         // The VoD 9-piece Olthoi Shadow set — the ONE armor look for test gear (owner
-        // 2026-08-02). Shared by /testchar (full-set spawn below) and /asforge (any piece at
-        // any tier label): piece keys match the plugin's Armor Forge workbench.
+        // 2026-08-02). Used by /asforge (any piece at any tier label): piece keys match the
+        // plugin's Armor Forge workbench. The /testchar full-set spawn was deleted 2026-08-23.
         private static readonly (string Key, uint Wcid, string Label)[] VodArmorPieces =
         {
             ("helm",      3110264, "Helm"),
@@ -1078,7 +768,7 @@ namespace ACE.Server.Command.Handlers
         };
 
         // ── Premade suits (owner 2026-08-21, PremadeSuits_Design/Math_2026-08-21.md) ──
-        // /asforge premade <tier> <avg|bis> [melee|caster]: the 18-piece `all` roster with the
+        // /asforge premade <tier> <avg|bis>: the 18-piece `all` roster with the
         // cantrip lines written EXPLICITLY instead of rolled, so a tester can wear "the average
         // T-whatever suit" or "the best possible one" without farming. Two presets:
         //   BiS     = core four at window cap, the tier's MAX line count, every line at band MAX,
@@ -1097,10 +787,54 @@ namespace ACE.Server.Command.Handlers
         // Average mix - deal order. 43 All Attributes = the one chase line per suit; 25 Aegis is
         // armor-only; 33 Crit Rating ladders by COUNT through the per-tier chance, so an average
         // suit carries none of it (Math file section 2).
-        private static readonly int[] PremadeAvgTrashKeys = { 20, 21, 32 };
+        private static readonly int[] PremadeAvgTrashKeys = { 32 };   // 20/21 left the catalog (2026-08-23: "not a live pool line")
         private static readonly int[] PremadeAvgMidKeys = { 19, 28, 29, 31, 49 };
         private const int PremadeAvgChaseKey = 43;
         private const int PremadeArmorOnlyKey = 25;
+
+        /// <summary>Live slot rule (owner 2026-08-22): the tier's Default-layer override when authored, else the
+        /// catalog's ArmorOnly / JewelryOnly - exactly what a real drop at this tier would obey.</summary>
+        private static bool PremadeKeyAllowed(int key, WorldObject wo, int tier)
+        {
+            if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(key, out var def) || def.SlotSpecial)
+                return false;
+            var slotRule = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSlotMask(def,
+                ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile?.CustomCantripSlots);
+            return ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneCantrips.PieceMask(wo));
+        }
+
+        /// <summary>Test gear is meant to be WORN: SET the minter's wield counters to exactly the tier's gates -
+        /// item augs, Triune Weave, and the four weapon-family charms - both directions, so a lower-tier premade
+        /// also tests as a lower-tier character (owner 2026-08-23: "it should go lower").</summary>
+        private static void EnsureWieldCounters(Player player, int tier, Action<string> Msg)
+        {
+            var row = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(tier);
+            if (row == null) return;
+            var raised = new List<string>();
+            void Raise(PropertyInt64 prop, long need, string label)
+            {
+                if (need < 0) return;
+                var cur = player.GetProperty(prop) ?? 0;
+                if (cur == need) return;
+                player.SetProperty(prop, need);
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, prop, need));
+                raised.Add($"{label} {cur:N0} -> {need:N0}");
+            }
+            if (row.MinWieldAugs > 0 && (player.LuminanceAugmentItemCount ?? 0) != row.MinWieldAugs)
+            {
+                var cur = player.LuminanceAugmentItemCount ?? 0;
+                player.LuminanceAugmentItemCount = (uint)row.MinWieldAugs;
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, row.MinWieldAugs));
+                raised.Add($"Item Augs {cur:N0} -> {row.MinWieldAugs:N0}");
+            }
+            Raise(PropertyInt64.TriuneWeaveCount, row.MinWieldTriune, "Triune Weave");
+            Raise(PropertyInt64.BattlemagesWrathCharmCount, row.MinWieldSkillCharm, "Battlemage's Wrath");
+            Raise(PropertyInt64.NetherVeilCharmCount, row.MinWieldSkillCharm, "Nether Veil");
+            Raise(PropertyInt64.CrashingSteelCharmCount, row.MinWieldSkillCharm, "Crashing Steel");
+            Raise(PropertyInt64.TrueShotCharmCount, row.MinWieldSkillCharm, "True Shot");
+            if (raised.Count > 0)
+                Msg($"asforge: wield counters set to T{tier} gates - {string.Join(", ", raised)}.");
+        }
 
         private static int PremadeLineMax(int tier) =>
             tier <= 11 ? 2 : tier <= 14 ? 3 : tier <= 17 ? 4 : tier <= 20 ? 5 : tier <= 24 ? 6 : 7;
@@ -1273,57 +1007,6 @@ namespace ACE.Server.Command.Handlers
             PropertyInt.GearOverpower, PropertyInt.GearOverpowerResist,
         };
 
-        /// <summary>
-        /// The `yardstick` card (owner 2026-08-20): re-applies the exact per-piece rating spread
-        /// that /testchar gear carries, after /asforge's bare strip. Premades are the reference
-        /// character every damage measurement is taken on, and every PRE-forge measurement was
-        /// taken on /testchar gear — without this a premade came out with 960 less max health,
-        /// so the two paths were not comparable.
-        ///
-        /// It has to live server-side: the `cards:` clause is applied UNIFORMLY to every piece
-        /// in the batch, but this spread is per-piece (shirt/pants 175, each jewel 100, cloak
-        /// 10). GearNetherResist and EquipmentSetId also have no card at all.
-        ///
-        /// Values below are the builders' own (BuildTestShirt/Pants/Cloak/Ring/Bracelet/Necklace
-        /// /Trinket). If a builder's rating changes, change it HERE too — same-file, so keep
-        /// them adjacent. VoD armor is absent on purpose: /testchar armor carries no ratings.
-        /// Total GearMaxHealth = 175 + 175 + 10 + (6 x 100) = 960.
-        /// </summary>
-        private static void ApplyYardstickRatings(WorldObject wo)
-        {
-            switch (wo.WeenieClassId)
-            {
-                case 28607:     // shirt
-                    wo.SetProperty(PropertyInt.GearDamage, 13);
-                    wo.SetProperty(PropertyInt.GearDamageResist, 4);
-                    wo.SetProperty(PropertyInt.GearCritDamage, 13);
-                    wo.SetProperty(PropertyInt.GearCritDamageResist, 4);
-                    wo.SetProperty(PropertyInt.GearNetherResist, 9);
-                    wo.SetProperty(PropertyInt.GearMaxHealth, 175);
-                    break;
-                case 2599:      // pants
-                    wo.SetProperty(PropertyInt.GearDamage, 14);
-                    wo.SetProperty(PropertyInt.GearDamageResist, 4);
-                    wo.SetProperty(PropertyInt.GearCritDamage, 13);
-                    wo.SetProperty(PropertyInt.GearCritDamageResist, 4);
-                    wo.SetProperty(PropertyInt.GearNetherResist, 8);
-                    wo.SetProperty(PropertyInt.GearMaxHealth, 175);
-                    break;
-                case 227190032: // cloak — also the only piece with an equipment set
-                    wo.SetProperty(PropertyInt.GearDamageResist, 5);
-                    wo.SetProperty(PropertyInt.GearCritDamageResist, 3);
-                    wo.SetProperty(PropertyInt.GearNetherResist, 5);
-                    wo.SetProperty(PropertyInt.GearMaxHealth, 10);
-                    wo.SetProperty(PropertyInt.EquipmentSetId, 71);
-                    break;
-                case 21392:     // bracelet (both wrists)
-                case 21394:     // ring (both fingers)
-                case 27445:     // necklace
-                case 41483:     // trinket
-                    wo.SetProperty(PropertyInt.GearMaxHealth, 100);
-                    break;
-            }
-        }
 
         private static WorldObject BuildVodArmorPiece(uint wcid, string label, string tier)
         {
@@ -1342,45 +1025,9 @@ namespace ACE.Server.Command.Handlers
             return item;
         }
 
-        private static void SpawnOlthoiShadowArmor(Player player, string tier = "T11")
-        {
-            foreach (var piece in VodArmorPieces)
-            {
-                if (HasItemNamed(player, $"{tier} {piece.Label} (Test)")) continue;
-                var item = BuildVodArmorPiece(piece.Wcid, piece.Label, tier);
-                if (item != null)
-                    AddItemToInventory(player, item);
-            }
-        }
-
-        // Clothing + jewelry builders: each configures ONE piece exactly the way the /testchar
-        // gear has always been built (name from the tier label, props, spells) and returns it
-        // WITHOUT adding to inventory — /testchar's Spawn wrappers keep their has-item dedup,
-        // /asforge always mints. Do not fork these blocks; both commands share them.
-        private static void SpawnCustomUndergarmentsAndCloak(Player player, string tier = "T11")
-        {
-            if (!HasItemNamed(player, $"{tier} Shirt"))
-            {
-                var shirt = BuildTestShirt(tier);
-                if (shirt != null)
-                    AddItemToInventory(player, shirt);
-            }
-
-            if (!HasItemNamed(player, $"{tier} Pants"))
-            {
-                var pants = BuildTestPants(tier);
-                if (pants != null)
-                    AddItemToInventory(player, pants);
-            }
-
-            if (!HasItemNamed(player, $"{tier} Cloak"))
-            {
-                var cloak = BuildTestCloak(tier);
-                if (cloak != null)
-                    AddItemToInventory(player, cloak);
-            }
-        }
-
+        // Clothing + jewelry builders: each configures ONE piece exactly the way the old /testchar
+        // gear was built (name from the tier label, props, spells) and returns it WITHOUT adding
+        // to inventory — /asforge mints them. (The /testchar Spawn wrappers were deleted 2026-08-23.)
         private static WorldObject BuildTestShirt(string tier)
         {
             var shirtName = $"{tier} Shirt";
@@ -1481,40 +1128,6 @@ namespace ACE.Server.Command.Handlers
                 cloak.ChangesDetected = true;
             }
             return cloak;
-        }
-
-        private static void SpawnCustomJewelry(Player player, string tier = "T11")
-        {
-            if (!HasItemNamed(player, $"{tier} Bracelet 1"))
-            {
-                var b = BuildTestBracelet1(tier);
-                if (b != null) AddItemToInventory(player, b);
-            }
-            if (!HasItemNamed(player, $"{tier} Bracelet 2"))
-            {
-                var b = BuildTestBracelet2(tier);
-                if (b != null) AddItemToInventory(player, b);
-            }
-            if (!HasItemNamed(player, $"{tier} Ring 1"))
-            {
-                var r = BuildTestRing1(tier);
-                if (r != null) AddItemToInventory(player, r);
-            }
-            if (!HasItemNamed(player, $"{tier} Ring 2"))
-            {
-                var r = BuildTestRing2(tier);
-                if (r != null) AddItemToInventory(player, r);
-            }
-            if (!HasItemNamed(player, $"{tier} Necklace"))
-            {
-                var n = BuildTestNecklace(tier);
-                if (n != null) AddItemToInventory(player, n);
-            }
-            if (!HasItemNamed(player, $"{tier} Trinket"))
-            {
-                var t = BuildTestTrinket(tier);
-                if (t != null) AddItemToInventory(player, t);
-            }
         }
 
         private static WorldObject BuildTestBracelet1(string tier)
@@ -1724,14 +1337,13 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("asforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges VoD test armor/clothing/jewelry (the /testchar look) at a chosen tier. All pieces Attuned + Bonded.",
             "<piece|suit|jewel|all> [tier 10-25, default 11] [cards:key=val,key,...]\n" +
-            "premade <tier 11-25> <avg|bis> [melee|caster] [force] = the 18-piece suit with EXPLICIT cantrip lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted into a 'T<tier> <Avg|BiS> Suit' bag.\n" +
+            "premade <tier 11-25> <avg|bis> [force] = the 18-piece suit with EXPLICIT cantrip lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted into a 'T<tier> <Avg|BiS> Suit' bag.\n" +
             "Pieces: helm coat pauldrons bracers gloves girth tassets greaves sollerets shirt pants cloak neck ring bracelet trinket\n" +
             "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
             "ring/bracelet mint the left + right pair.\n" +
-            "cards: albonus=N (AL over tier baseline) prot=X (uniform 8-element mod) dresist/cdresist/maxhp/drating/cdrating=N (Gear ratings)\n" +
+            "cards: albonus=N (AL over tier baseline) prot=X (uniform 8-element mod)\n" +
             "ward (adds the 7 Legendary elemental Wards) lifeprot (adds the 7 life Protections)\n" +
             "impen (Legendary Impenetrability) defcantrips (Legendary Armor/Invuln/Coord/Endurance/Focus/Health Gain) - all on every minted piece\n" +
-            "yardstick (per-piece: restores the exact /testchar Gear rating spread, 960 total max health, incl. nether resist + the cloak's set 71)\n" +
             "Defaults (no card): VoD armor gets Legendary Impen at EVERY tier; the necklace gets the full buff suite. Everything else mints blank.\n" +
             "force = mint even if you already hold that piece (default is to skip it, so repeat presses cannot stack suits).")]
         public static void HandleAsForge(Session session, params string[] parameters)
@@ -1759,12 +1371,10 @@ namespace ACE.Server.Command.Handlers
             // Any position after the piece arg. Unknown keys are an error, not a silent skip.
             var albonus = 0;
             double? protOverride = null;
-            int? dresist = null, cdresist = null, maxhp = null, drating = null, cdrating = null;
             var ward = false;
             var lifeprot = false;
             var impen = false;
             var defcantrips = false;
-            var yardstick = false;
             var loadoutDesc = "";
 
             // Owner 2026-08-20: pressing Create Premade twice used to hand you a second full
@@ -1793,18 +1403,12 @@ namespace ACE.Server.Command.Handlers
                                     System.Globalization.CultureInfo.InvariantCulture, out var pv))
                                 protOverride = pv;
                             break;
-                        case "dresist": dresist = Iv(); break;
-                        case "cdresist": cdresist = Iv(); break;
-                        case "maxhp": maxhp = Iv(); break;
-                        case "drating": drating = Iv(); break;
-                        case "cdrating": cdrating = Iv(); break;
                         case "ward": ward = true; break;
                         case "lifeprot": lifeprot = true; break;
                         case "impen": impen = true; break;
                         case "defcantrips": defcantrips = true; break;
-                        case "yardstick": yardstick = true; break;
                         default:
-                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot dresist cdresist maxhp drating cdrating ward lifeprot impen defcantrips yardstick");
+                            Msg($"asforge: unknown card '{ck}'. Cards: albonus prot ward lifeprot impen defcantrips.");
                             return;
                     }
                 }
@@ -1919,16 +1523,8 @@ namespace ACE.Server.Command.Handlers
                 if (tier >= 11)
                     ACE.Server.Factories.LootGenerationFactory.ApplyT11GearStats(wo, tier, forceMax: true);   // forge = core four at window cap
 
-                // The yardstick card goes FIRST so an explicit rating card on the same line still
-                // wins (e.g. cards:yardstick,maxhp=50 gives 50, not 100).
-                if (yardstick) ApplyYardstickRatings(wo);
-
-                // rating cards (any piece — jewelry carries ratings in the real game too)
-                if (dresist.HasValue) wo.SetProperty(PropertyInt.GearDamageResist, dresist.Value);
-                if (cdresist.HasValue) wo.SetProperty(PropertyInt.GearCritDamageResist, cdresist.Value);
-                if (maxhp.HasValue) wo.SetProperty(PropertyInt.GearMaxHealth, maxhp.Value);
-                if (drating.HasValue) wo.SetProperty(PropertyInt.GearDamage, drating.Value);
-                if (cdrating.HasValue) wo.SetProperty(PropertyInt.GearCritDamage, cdrating.Value);
+                // Rating cards (dresist/cdresist/maxhp/drating/cdrating) and the yardstick card were DELETED
+                // 2026-08-23: Live Stat Resolution overwrites those props from the record on equip/login.
 
                 // spell-suite cards: wards + life protections are wearer buffs — any piece
                 var isVodArmor = VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId);
@@ -1986,6 +1582,7 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
+            EnsureWieldCounters(player, tier, Msg);
             Msg($"asforged: {minted} item(s) at tier {tier} (attuned + bonded"
                 + (tier >= 11 ? ", item-aug wield gate" : ", basic set - no aug gate")
                 + (loadoutDesc.Length > 0 ? $") loadout: {loadoutDesc}" : ") bare"));
@@ -1998,7 +1595,7 @@ namespace ACE.Server.Command.Handlers
                         : "Add 'force' to mint duplicates."));
         }
 
-        /// <summary>`/asforge premade <tier 11-25> <avg|bis> [melee|caster] [force]` (owner 2026-08-21):
+        /// <summary>`/asforge premade <tier 11-25> <avg|bis> [force]` (owner 2026-08-21; melee|caster still accepted silently):
         /// the 18-piece roster with the cantrip lines written from the preset tables above instead of
         /// rolled. Same bare-strip pipeline as the main verb (no cards), then the shared gear helper
         /// (bis = core at cap, avg = core at the window midpoint), then explicit ZoneCantrips.Stamp
@@ -2009,7 +1606,7 @@ namespace ACE.Server.Command.Handlers
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
 
-            const string usage = "asforge premade <tier 11-25> <avg|bis> [melee|caster] [force]";
+            const string usage = "asforge premade <tier 11-25> <avg|bis> [force]";
             if (parameters.Length < 3 || !int.TryParse(parameters[1], out var tier) || tier < 11 || tier > 25)
             {
                 Msg($"Usage: {usage}");
@@ -2073,6 +1670,7 @@ namespace ACE.Server.Command.Handlers
 
             var bagName = $"{tierLabel} {modeTag} Suit";
             Container bag = null;
+            var bagWarned = false;
 
             var minted = 0;
             var skipped = 0;
@@ -2115,7 +1713,9 @@ namespace ACE.Server.Command.Handlers
 
                 // the explicit lines - graded (live stat resolution 2026-08-22): bis = grade 1000, avg = 500,
                 // stamped through the ZcLines record; each key at most once per piece
-                var keys = bis ? bisKeys.Take(bisCount) : avgDeal[i];
+                // TRUE BiS (owner 2026-08-23): the first PremadeLineMax(tier) keys THIS PIECE CAN CARRY, not the
+                // first N then skip - armor fills its 7th slot with Reinforced, jewelry with Life on Hit.
+                IEnumerable<int> keys = bis ? bisKeys.Where(k => PremadeKeyAllowed(k, wo, tier)).Take(bisCount) : avgDeal[i];
                 var stamped = new HashSet<int>();
                 foreach (var k in keys)
                 {
@@ -2125,11 +1725,7 @@ namespace ACE.Server.Command.Handlers
                         Msg($"asforge premade: key {k} is not a live pool line - skipped on {piece}");
                         continue;
                     }
-                    // live slot rule (owner 2026-08-22): the tier's Default-layer override when authored, else the
-                    // catalog's ArmorOnly / JewelryOnly - exactly what a real drop at this tier would obey
-                    var slotRule = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSlotMask(def,
-                        ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile?.CustomCantripSlots);
-                    if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneCantrips.PieceMask(wo)))
+                    if (!PremadeKeyAllowed(k, wo, tier))
                         continue;
                     var (bMin, bMax) = PremadeBand(k, tier);
                     var grade = bis ? ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax
@@ -2137,6 +1733,27 @@ namespace ACE.Server.Command.Handlers
                     ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, def, grade,
                         ((int)Math.Round(bMin), (int)Math.Round(bMax)));
                     lines++;
+                }
+
+                // TRUE BiS (owner 2026-08-23): every enabled slot special on its home piece at grade max, rolled
+                // in the tier's band exactly as a drop would (Default override, else the tier-scaled catalog band)
+                if (bis)
+                {
+                    var dflt = ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile;
+                    foreach (var sdef in ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotSpecials())
+                    {
+                        if (dflt?.CustomSpecials != null && dflt.CustomSpecials.TryGetValue(sdef.Key, out var on) && !on)
+                            continue;
+                        var slotId = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSpecialSlot(sdef, dflt?.CustomCantripSlots);
+                        if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialPieceMatches(wo, slotId))
+                            continue;
+                        var (sMin, sMax) = dflt?.CustomCantripBands != null && dflt.CustomCantripBands.TryGetValue(sdef.Key, out var sBand)
+                            ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(sdef, tier);
+                        if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
+                        ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, sdef,
+                            ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax, (sMin, sMax));
+                        lines++;
+                    }
                 }
 
                 // owner defaults as the main verb: armor carries Legendary Impen, the necklace the buff suite
@@ -2153,19 +1770,33 @@ namespace ACE.Server.Command.Handlers
                 wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? provenance : wo.LongDesc + "\n\n" + provenance;
 
                 // the bag is created lazily so a fully-skipped re-press leaves no empty bag behind
-                bag ??= GetOrCreatePack(player, bagName);
-                if (TryPlaceInPack(player, wo, bag))
+                if (bag == null && !bagWarned)
+                {
+                    bag = GetOrCreatePack(player, bagName);
+                    if (bag == null)
+                    {
+                        Msg($"asforge premade: no free pack slot for {bagName} - placing pieces loose in your main pack.");
+                        bagWarned = true;
+                    }
+                }
+                if (bag != null && TryPlaceInPack(player, wo, bag))
                 {
                     minted++;
                 }
+                else if (player.TryCreateInInventoryWithNetworking(wo))
+                {
+                    minted++;
+                    if (bag != null) Msg($"asforge premade: {bagName} is full - {wo.Name} placed loose.");
+                }
                 else
                 {
-                    Msg($"asforge premade: could not place {wo.Name} in {bagName} (full?)");
+                    Msg($"asforge premade: could not place {wo.Name} anywhere (inventory full) - destroyed.");
                     wo.Destroy();
                     failed++;
                 }
             }
 
+            EnsureWieldCounters(player, tier, Msg);
             Msg($"Premade {tierLabel} {modeTag} suit: {minted} pieces created"
                 + (lines > 0 ? $", {lines} cantrip lines" : "")
                 + (failed > 0 ? $", {failed} failed" : "")
@@ -2418,399 +2049,6 @@ namespace ACE.Server.Command.Handlers
                 AddItemToInventory(player, redAetheria);
             }
             }
-        }
-
-        private static void SpawnWeapons(Player player, string targetStyle)
-        {
-            var rucksackName = "Weapons Pack";
-            if (HasItemNamed(player, rucksackName)) return;
-            var rucksack = GetOrCreatePack(player, rucksackName);
-
-            var weaponBases = new Dictionary<string, (uint wcid, string baseName)>()
-            {
-                { "UA", (29651, "Spiked Knuckles") },
-                { "2H", (46105, "Atlan Two Handed Sword") },
-                { "Bow", (29639, "Bow") },
-                { "Wand", (29661, "Wand") }
-            };
-
-            var elements = new List<DamageType>()
-            {
-                DamageType.Slash,
-                DamageType.Pierce,
-                DamageType.Bludgeon,
-                DamageType.Cold,
-                DamageType.Fire,
-                DamageType.Acid,
-                DamageType.Electric,
-                DamageType.Nether
-            };
-
-            foreach (var baseKvp in weaponBases)
-            {
-                var weaponType = baseKvp.Key;
-                var baseWcid = baseKvp.Value.wcid;
-                var baseName = baseKvp.Value.baseName;
-
-                // If style filter is provided, skip non-matching styles
-                if (targetStyle != null && !weaponType.Equals(targetStyle, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                foreach (var element in elements)
-                {
-                    if (weaponType.Equals("Bow", StringComparison.OrdinalIgnoreCase))
-                    {
-                        CreateCustomBow(player, element, true, rucksack);
-                    }
-                    else if (weaponType.Equals("UA", StringComparison.OrdinalIgnoreCase))
-                    {
-                        CreateCustomUA(player, element, rucksack);
-                    }
-                    else if (weaponType.Equals("Wand", StringComparison.OrdinalIgnoreCase))
-                    {
-                        CreateCustomWand(player, element, rucksack);
-                    }
-                    else
-                    {
-                        var weapon = WorldObjectFactory.CreateNewWorldObject(baseWcid);
-                        if (weapon != null)
-                        {
-                            weapon.SetProperty(PropertyInt.DamageType, (int)element);
-                            var elementLabel = GetElementLabel(element);
-                            string label = weaponType.Equals("2H", StringComparison.OrdinalIgnoreCase) ? "2H" : baseName;
-                            weapon.Name = $"{elementLabel} {label} (Test)";
-                            weapon.SetProperty(PropertyString.Name, $"{elementLabel} {label} (Test)");
-                            weapon.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
-                            PlaceInPackOrLoose(player, weapon, rucksack);
-                        }
-                    }
-                }
-            }
-
-        }
-
-        private static void CreateCustomBow(Player player, DamageType element, bool includeRend = true, Container destination = null)
-        {
-            uint baseWcid = 46139;
-            string elementLabel = GetElementLabel(element);
-            var expectedName = $"{elementLabel} Bow (Test)";
-            if (HasItemNamed(player, expectedName)) return;
-
-            var bow = WorldObjectFactory.CreateNewWorldObject(baseWcid);
-            if (bow == null) return;
-            bow.Name = $"{elementLabel} Bow (Test)";
-            bow.SetProperty(PropertyString.Name, $"{elementLabel} Bow (Test)");
-            bow.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
-
-            // Get matching rend background underlay
-            ImbuedEffectType rendType = ImbuedEffectType.Undef;
-
-            if (includeRend)
-            {
-                switch (element)
-                {
-                    case DamageType.Slash:
-                        rendType = ImbuedEffectType.SlashRending;
-                        break;
-                    case DamageType.Pierce:
-                        rendType = ImbuedEffectType.PierceRending;
-                        break;
-                    case DamageType.Bludgeon:
-                        rendType = ImbuedEffectType.BludgeonRending;
-                        break;
-                    case DamageType.Cold:
-                        rendType = ImbuedEffectType.ColdRending;
-                        break;
-                    case DamageType.Fire:
-                        rendType = ImbuedEffectType.FireRending;
-                        break;
-                    case DamageType.Acid:
-                        rendType = ImbuedEffectType.AcidRending;
-                        break;
-                    case DamageType.Electric:
-                        rendType = ImbuedEffectType.ElectricRending;
-                        break;
-                    case DamageType.Nether:
-                        rendType = ImbuedEffectType.NetherRending;
-                        break;
-                }
-            }
-
-            if (includeRend && rendType != ImbuedEffectType.Undef)
-            {
-                if (ACE.Server.Managers.RecipeManager.IconUnderlay.TryGetValue(rendType, out var underlayId))
-                {
-                    bow.IconUnderlayId = underlayId;
-                }
-                else if (rendType == ImbuedEffectType.NetherRending)
-                {
-                    bow.IconUnderlayId = 0x060067A1; // Nether Rending underlay icon
-                }
-            }
-
-            if (includeRend)
-            {
-                bow.SetProperty(PropertyString.LongDesc, $"{elementLabel} Bow (Test) of Swift Killer, set with 1 Emerald");
-            }
-            else
-            {
-                bow.SetProperty(PropertyString.LongDesc, $"{elementLabel} Bow (Test) of Swift Killer");
-            }
-
-            // Int Properties
-            bow.SetProperty(PropertyInt.DamageType, (int)element);
-            bow.SetProperty(PropertyInt.WieldDifficulty, 725);
-            bow.SetProperty(PropertyInt.GearCritDamage, 3);
-            bow.SetProperty(PropertyInt.ElementalDamageBonus, 31);
-            bow.SetProperty(PropertyInt.Cleaving, 3);
-            if (includeRend && rendType != ImbuedEffectType.Undef)
-            {
-                bow.SetProperty(PropertyInt.ImbuedEffect, (int)rendType);
-            }
-            bow.SetProperty(PropertyInt.ImbuedEffect2, (int)ImbuedEffectType.MagicDefense); // 4096 is MagicDefense
-            bow.SetProperty(PropertyInt.NumTimesTinkered, 10);
-
-            // Float Properties
-            bow.SetProperty(PropertyFloat.DamageMod, 3.39f);
-            bow.SetProperty(PropertyFloat.WeaponDefense, 1.29f);
-            bow.SetProperty(PropertyFloat.CriticalFrequency, 0.33f);
-            bow.SetProperty(PropertyFloat.CriticalMultiplier, 2.25f);
-
-            // Split Arrow custom properties
-            bow.SetProperty(PropertyBool.SplitArrows, true);
-            bow.SetProperty(PropertyInt.SplitArrowCount, 3);
-            bow.SetProperty(PropertyFloat.SplitArrowRange, 8.0f);
-            bow.SetProperty(PropertyFloat.SplitArrowDamageMultiplier, 0.95f);
-
-            // Bow Spells
-            bow.Biota.ClearSpells(bow.BiotaDatabaseLock);
-            var bowSpells = new List<uint>()
-            {
-                6089, // Legendary Blood Thirst (CantripBloodThirst4)
-            };
-
-            foreach (var spellId in bowSpells)
-            {
-                bow.Biota.GetOrAddKnownSpell((int)spellId, bow.BiotaDatabaseLock, out _);
-            }
-            bow.ChangesDetected = true;
-            bow.UiEffects = UiEffects.Magical;
-
-            PlaceInPackOrLoose(player, bow, destination);
-        }
-
-        private static void CreateCustomUA(Player player, DamageType element, Container destination = null)
-        {
-            uint baseWcid = 6171;
-            string elementLabel = GetElementLabel(element);
-            string weaponName = $"{elementLabel} UA (Test)";
-            if (HasItemNamed(player, weaponName)) return;
-
-            var claw = WorldObjectFactory.CreateNewWorldObject(baseWcid);
-            if (claw == null) return;
-
-            claw.Name = weaponName;
-            claw.SetProperty(PropertyString.Name, weaponName);
-            claw.SetProperty(PropertyString.LongDesc, $"{weaponName} of Defender, set with 4 Rubies");
-
-            // Get matching rend background underlay
-            ImbuedEffectType rendType = ImbuedEffectType.Undef;
-            switch (element)
-            {
-                case DamageType.Slash:
-                    rendType = ImbuedEffectType.SlashRending;
-                    break;
-                case DamageType.Pierce:
-                    rendType = ImbuedEffectType.PierceRending;
-                    break;
-                case DamageType.Bludgeon:
-                    rendType = ImbuedEffectType.BludgeonRending;
-                    break;
-                case DamageType.Cold:
-                    rendType = ImbuedEffectType.ColdRending;
-                    break;
-                case DamageType.Fire:
-                    rendType = ImbuedEffectType.FireRending;
-                    break;
-                case DamageType.Acid:
-                    rendType = ImbuedEffectType.AcidRending;
-                    break;
-                case DamageType.Electric:
-                    rendType = ImbuedEffectType.ElectricRending;
-                    break;
-                case DamageType.Nether:
-                    rendType = ImbuedEffectType.NetherRending;
-                    break;
-            }
-
-            if (rendType != ImbuedEffectType.Undef)
-            {
-                if (ACE.Server.Managers.RecipeManager.IconUnderlay.TryGetValue(rendType, out var underlayId))
-                {
-                    claw.IconUnderlayId = underlayId;
-                }
-                else if (rendType == ImbuedEffectType.NetherRending)
-                {
-                    claw.IconUnderlayId = 0x060067A1; // Nether Rending underlay icon
-                }
-            }
-
-            // Int Properties
-            claw.SetProperty(PropertyInt.DamageType, (int)element);
-            claw.SetProperty(PropertyInt.Damage, 130);
-            claw.SetProperty(PropertyInt.WieldDifficulty, 800);
-            claw.SetProperty(PropertyInt.WieldRequirements, 2);
-            claw.SetProperty(PropertyInt.WieldSkillType, 46);
-            claw.SetProperty(PropertyInt.GearCritDamage, 3);
-            claw.SetProperty(PropertyInt.GemCount, 4);
-            claw.SetProperty(PropertyInt.GemType, 38);
-            claw.SetProperty(PropertyInt.Cleaving, 3); // Cleaving
-            if (rendType != ImbuedEffectType.Undef)
-            {
-                claw.SetProperty(PropertyInt.ImbuedEffect, (int)rendType);
-            }
-            claw.SetProperty(PropertyInt.ItemCurMana, 1402);
-            claw.SetProperty(PropertyInt.ItemMaxMana, 1814);
-            claw.SetProperty(PropertyInt.ItemSpellcraft, 370);
-            claw.SetProperty(PropertyInt.ItemWorkmanship, 9);
-            claw.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
-            claw.SetProperty(PropertyInt.NumTimesTinkered, 10);
-            claw.SetProperty(PropertyInt.Value, 0); // Sets value to 0
-            claw.SetProperty(PropertyInt.Bonded, 1);
-            claw.SetProperty(PropertyInt.Attuned, 1);
-            // NO AttackType override: 486 (the hilt's thrust/slash multi-strike set) has no motions in the
-            // unarmed stance table, which made these un-attackable — and the protocol has no UA multi-strike
-            // AttackTypes at all. The weenie's native Punch (1) applies.
-            claw.SetProperty(PropertyInt.WieldRequirements2, 8);
-            claw.SetProperty(PropertyInt.WieldSkillType2, 46);
-            claw.SetProperty(PropertyInt.WieldDifficulty2, 3);
-            claw.SetProperty(PropertyBool.Ivoryable, true);
-
-            // Float Properties
-            claw.SetProperty(PropertyFloat.DamageMod, 1.075f); // Base 1.0f + 0.075f from Recipe 527870096
-            claw.SetProperty(PropertyFloat.DamageVariance, 0.53076923f);
-            claw.SetProperty(PropertyFloat.ManaRate, -0.06666667f);
-            claw.SetProperty(PropertyFloat.WeaponDefense, 1.29f);
-            claw.SetProperty(PropertyFloat.WeaponMagicDefense, 1.04f);
-            claw.SetProperty(PropertyFloat.CriticalFrequency, 0.58f); // Base 0.33f + 0.25f from Recipe 527870096
-            claw.SetProperty(PropertyFloat.CriticalMultiplier, 2.425f); // Base 2.25f + 0.175f from Recipe 527870096
-            claw.SetProperty(PropertyFloat.ManaStoneDestroyChance, 0.01f);
-
-            // Claw Spells
-            claw.Biota.ClearSpells(claw.BiotaDatabaseLock);
-            var clawSpells = new List<uint>()
-            {
-                6089, // Legendary Blood Thirst (CantripBloodThirst4)
-            };
-
-            foreach (var spellId in clawSpells)
-            {
-                claw.Biota.GetOrAddKnownSpell((int)spellId, claw.BiotaDatabaseLock, out _);
-            }
-            claw.ChangesDetected = true;
-            claw.UiEffects = UiEffects.Magical;
-
-            PlaceInPackOrLoose(player, claw, destination);
-        }
-
-        private static void CreateCustomWand(Player player, DamageType element, Container destination = null)
-        {
-            uint baseWcid = 46122;
-            string elementLabel = GetElementLabel(element);
-            string weaponName = $"{elementLabel} Wand (Test)";
-            if (HasItemNamed(player, weaponName)) return;
-
-            var wand = WorldObjectFactory.CreateNewWorldObject(baseWcid);
-            if (wand == null) return;
-
-            wand.Name = weaponName;
-            wand.SetProperty(PropertyString.Name, weaponName);
-            wand.SetProperty(PropertyString.LongDesc, $"{weaponName} of Corrosion, set with 2 Peridots");
-
-            // Underlays
-            ImbuedEffectType rendType = element switch
-            {
-                DamageType.Slash => ImbuedEffectType.SlashRending,
-                DamageType.Pierce => ImbuedEffectType.PierceRending,
-                DamageType.Bludgeon => ImbuedEffectType.BludgeonRending,
-                DamageType.Cold => ImbuedEffectType.ColdRending,
-                DamageType.Fire => ImbuedEffectType.FireRending,
-                DamageType.Acid => ImbuedEffectType.AcidRending,
-                DamageType.Electric => ImbuedEffectType.ElectricRending,
-                DamageType.Nether => ImbuedEffectType.NetherRending,
-                _ => ImbuedEffectType.Undef
-            };
-
-            if (rendType != ImbuedEffectType.Undef)
-            {
-                if (ACE.Server.Managers.RecipeManager.IconUnderlay.TryGetValue(rendType, out var underlayId))
-                {
-                    wand.IconUnderlayId = underlayId;
-                }
-                else if (rendType == ImbuedEffectType.NetherRending)
-                {
-                    wand.IconUnderlayId = 0x060067A1; // Nether Rending underlay icon
-                }
-            }
-
-            // Int Properties
-            wand.SetProperty(PropertyInt.DamageType, (int)element);
-            wand.SetProperty(PropertyInt.WieldDifficulty, 650);
-            wand.SetProperty(PropertyInt.WieldRequirements, 2);
-            wand.SetProperty(PropertyInt.WieldSkillType, element == DamageType.Nether ? (int)43 : (int)34); // Void Magic or Mana Conversion
-            wand.SetProperty(PropertyInt.GearCritDamage, 3);
-            wand.SetProperty(PropertyInt.GemCount, 2);
-            wand.SetProperty(PropertyInt.GemType, 34); // Peridot
-            if (rendType != ImbuedEffectType.Undef)
-            {
-                wand.SetProperty(PropertyInt.ImbuedEffect, (int)rendType);
-            }
-            wand.SetProperty(PropertyInt.ImbuedEffect2, (int)ImbuedEffectType.MagicDefense); // MagicDefense
-            wand.SetProperty(PropertyInt.ItemCurMana, 4084);
-            wand.SetProperty(PropertyInt.ItemMaxMana, 4084);
-            wand.SetProperty(PropertyInt.ItemDifficulty, 400);
-            wand.SetProperty(PropertyInt.ItemSpellcraft, 370);
-            wand.SetProperty(PropertyInt.ItemWorkmanship, 7);
-            wand.SetProperty(PropertyInt.MaterialType, 0); // Suppress material prefix
-            wand.SetProperty(PropertyInt.NumTimesTinkered, 1);
-            wand.Biota.TryRemoveProperty(PropertyInt.SlayerCreatureType, wand.BiotaDatabaseLock);
-            wand.SetProperty(PropertyInt.Value, 31410);
-            wand.SetProperty(PropertyInt.WeaponType, 0);
-            wand.SetProperty(PropertyInt.EncumbranceVal, 50);
-
-            // Float Properties
-            wand.SetProperty(PropertyFloat.CriticalFrequency, 0.33f);
-            wand.SetProperty(PropertyFloat.CriticalMultiplier, 2.25f);
-            wand.SetProperty(PropertyFloat.ElementalDamageMod, 1.375f);
-            wand.SetProperty(PropertyFloat.ManaConversionMod, 0.19f);
-            wand.SetProperty(PropertyFloat.ManaRate, -0.06666667f);
-            wand.SetProperty(PropertyFloat.WeaponDefense, 1.23f);
-
-            // Wand Spells
-            wand.Biota.ClearSpells(wand.BiotaDatabaseLock);
-            var wandSpells = new List<uint>()
-            {
-                6098, // Legendary Spirit Thirst
-            };
-
-            foreach (var spellId in wandSpells)
-            {
-                wand.Biota.GetOrAddKnownSpell((int)spellId, wand.BiotaDatabaseLock, out _);
-            }
-            wand.ChangesDetected = true;
-            wand.UiEffects = UiEffects.Magical;
-
-            PlaceInPackOrLoose(player, wand, destination);
-        }
-
-        private static string GetElementLabel(DamageType element)
-        {
-            return element switch
-            {
-                DamageType.Electric => "Lightning",
-                DamageType.Nether => "Nether",
-                _ => element.ToString()
-            };
         }
 
         private static void SpawnTeleportGems(Player player, Container destination = null)
