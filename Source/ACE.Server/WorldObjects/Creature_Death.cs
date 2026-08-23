@@ -1058,8 +1058,8 @@ namespace ACE.Server.WorldObjects
                     // after the lines so it reads last among the "Zone Cantrip:" lines
                     if (isSpecial && specialDef != null)
                     {
-                        var (sMin, sMax, _, _) = zoneLoot.CantripBands.TryGetValue(specialDef.Key, out var sBand)
-                            ? sBand : (specialDef.Min, specialDef.Max, specialDef.ProcMin, specialDef.ProcMax);
+                        var (sMin, sMax) = zoneLoot.CantripBands.TryGetValue(specialDef.Key, out var sBand)
+                            ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(specialDef, effectiveTreasure.Tier);
                         if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
                         // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcLines
                         var sGrade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.RollGrade(effectiveTreasure.Tier, false);

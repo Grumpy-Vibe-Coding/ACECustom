@@ -217,6 +217,7 @@ namespace ACE.Server.Managers.ZoneControl
             public int ProcMin, ProcMax;                   // proc-chance band in %; 0/0 = passive
             public bool ArmorOnly;                         // keys 25 / 49 - needs an ArmorLevel piece
             public bool JewelryOnly;                       // key 48 Life on Hit - rolls only on jewelry (no AL, ItemType Jewelry)
+            public bool TierScaled;                        // the 1250-class lines + Armor Level: catalog band x (1 + (t-11)/14) when no Default is authored (owner 2026-08-23)
             public bool SetsProtection;                    // key 49 Reinforced - the rolled value is a RANK that SETS every ArmorModVs* on the piece
             public (int PropId, int Value)[] Ints;         // int props stamped on the item; PropId also = banded stamp target
             public int ArmorBonus;                         // key 25 legacy fixed AL bonus
@@ -244,14 +245,14 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly SortedDictionary<int, Def> Catalog = new()
         {
             // vitals
-            { 19, new Def { Key = 19, Bucket = 1, Class = CantripClass.Mid, Name = "Max Health", Effect = "+300 Max Health", ValFmt = "+{0}", Min = 50, Max = 100, Ints = P((int)PropertyInt.GearMaxHealth, 300) } },
+            { 19, new Def { Key = 19, TierScaled = true, Bucket = 1, Class = CantripClass.Mid, Name = "Max Health", Effect = "+14-69 Max Health", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearMaxHealth, 300) } },
             // bulwark (Aegis is the ONLY line that modifies the item, not the player - armor/shield pieces only)
-            { 25, new Def { Key = 25, Bucket = 4, Class = CantripClass.Trash, ArmorOnly = true, Name = "Armor Level", Effect = "+300 Armor Level on this piece", ValFmt = "+{0}", Min = 50, Max = 200, ArmorBonus = 300 } },
+            { 25, new Def { Key = 25, TierScaled = true, Bucket = 4, Class = CantripClass.Trash, ArmorOnly = true, Name = "Armor Level", Effect = "+300 Armor Level on this piece", ValFmt = "+{0}", Min = 50, Max = 250, ArmorBonus = 300 } },
             // slaughter
-            { 28, new Def { Key = 28, Bucket = 5, Class = CantripClass.Mid, Name = "Damage Rating", Effect = "+25 Damage Rating", ValFmt = "+{0}", Min = 10, Max = 50, Ints = P((int)PropertyInt.GearDamage, 25) } },
-            { 29, new Def { Key = 29, Bucket = 5, Class = CantripClass.Mid, Name = "Crit Damage Rating", Effect = "+40 Critical Damage Rating", ValFmt = "+{0}", Min = 10, Max = 50, Ints = P((int)PropertyInt.GearCritDamage, 40) } },
+            { 28, new Def { Key = 28, TierScaled = true, Bucket = 5, Class = CantripClass.Mid, Name = "Damage Rating", Effect = "+14-69 Damage Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearDamage, 25) } },
+            { 29, new Def { Key = 29, TierScaled = true, Bucket = 5, Class = CantripClass.Mid, Name = "Crit Damage Rating", Effect = "+14-69 Critical Damage Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearCritDamage, 40) } },
             // whimsy
-            { 31, new Def { Key = 31, Bucket = 4, Class = CantripClass.Mid, Name = "Healing Boost", Effect = "+40 Healing Boost Rating", ValFmt = "+{0}", Min = 25, Max = 100, Ints = P((int)PropertyInt.GearHealingBoost, 40) } },
+            { 31, new Def { Key = 31, TierScaled = true, Bucket = 4, Class = CantripClass.Mid, Name = "Healing Boost", Effect = "+14-69 Healing Boost Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearHealingBoost, 40) } },
             { 32, new Def { Key = 32, Bucket = 4, Class = CantripClass.Trash, Name = "Spell Duration", Effect = "+100 pct spell duration", ValFmt = "+{0} lvl", Min = 1, Max = 3, Ints = P(SpellDurationLevels, 5) } },
             // ratings (banded-only lines - legacy fixed Value is 0, they never ship via the legacy overload)
             { 33, new Def { Key = 33, Bucket = 5, Class = CantripClass.Chase, Name = "Crit Chance", Effect = "+1-3 Crit Rating", ValFmt = "+{0}", Min = 1, Max = 3, Ints = P((int)PropertyInt.GearCrit, 0) } },
@@ -285,12 +286,30 @@ namespace ACE.Server.Managers.ZoneControl
             { 49, new Def { Key = 49, Bucket = 4, Class = CantripClass.Mid, ArmorOnly = true, SetsProtection = true, Name = "Reinforced", Effect = "+1-3 protection rank (Superior / Excellent / Unparalleled)", ValFmt = "+{0}", Min = 1, Max = 3, Ints = P(ReinforcedRank, 0) } },
             // ── Armor v2 pool additions ─────────────────────────────────────────────────────────
             // All Attributes - six attrs behind ONE line (keys 1-6 retired); anchor 2500 at T25 = the Dmg/HP per-piece table
-            { 43, new Def { Key = 43, Bucket = 1, Class = CantripClass.Chase, Name = "All Attributes", Effect = "+14-69 to ALL six attributes", ValFmt = "+{0}", Min = 14, Max = 69,
+            { 43, new Def { Key = 43, TierScaled = true, Bucket = 1, Class = CantripClass.Chase, Name = "All Attributes", Effect = "+14-69 to ALL six attributes", ValFmt = "+{0}", Min = 14, Max = 69,
                 Ints = new[] { (AttrBonusBase + (int)PropertyAttribute.Strength, 0), (AttrBonusBase + (int)PropertyAttribute.Endurance, 0), (AttrBonusBase + (int)PropertyAttribute.Coordination, 0),
                                (AttrBonusBase + (int)PropertyAttribute.Quickness, 0), (AttrBonusBase + (int)PropertyAttribute.Focus, 0), (AttrBonusBase + (int)PropertyAttribute.Self, 0) } } },
         };
 
         public static bool TryGet(int key, out Def def) => Catalog.TryGetValue(key, out def);
+
+        /// <summary>Tier scale of the anchored linear ladder: 1.0 at T11, 2.0 at T25 (same f as the core anchors).</summary>
+        public static double TierScale(int tier) => 1.0 + (Math.Clamp(tier, 11, 25) - 11) / 14.0;
+
+        /// <summary>
+        /// The HARDCODED band at a tier - what every fallback uses when no Default / zone band is authored
+        /// (owner 2026-08-23: the catalog stays the reset target, but it must be tier-aware or T12+ rolls
+        /// T11 numbers). TierScaled lines (the 1250-class ones + Armor Level) scale min and max by
+        /// <see cref="TierScale"/>; pinned lines (1-3) and specials return the catalog band unchanged.
+        /// </summary>
+        public static (int Min, int Max) CatalogBandAt(Def def, int tier)
+        {
+            if (def == null) return (0, 0);
+            var (min, max) = def.Min <= def.Max ? (def.Min, def.Max) : (def.Max, def.Min);
+            if (!def.TierScaled || tier <= 11) return (min, max);
+            var f = TierScale(tier);
+            return ((int)Math.Round(min * f), (int)Math.Round(max * f));
+        }
 
         /// <summary>
         /// Tier-weighted roll position (owner 2026-08-22, Option A): the carrot for pushing tiers is

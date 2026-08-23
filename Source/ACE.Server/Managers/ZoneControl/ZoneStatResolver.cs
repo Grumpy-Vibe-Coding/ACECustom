@@ -98,7 +98,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>
         /// The band a catalog key resolves against at a tier: the tier's Default-layer override
         /// (CustomCantripBands on variation = tier, what real drops there roll from) when authored, else the
-        /// catalog band. A ZONE's own band override is a drop-time concern only - the piece does not remember
+        /// catalog band scaled to the tier (ZoneCantrips.CatalogBandAt). A ZONE's own band override is a drop-time concern only - the piece does not remember
         /// its zone, and re-resolution only happens after an explicit ladder apply, when the tier's Default
         /// IS the published truth.
         /// </summary>
@@ -111,7 +111,7 @@ namespace ACE.Server.Managers.ZoneControl
                 && vd.Profile.CustomCantripBands.TryGetValue(key, out var live)
                 && live != null && live.Max > 0)
                 return live.Min <= live.Max ? (live.Min, live.Max) : (live.Max, live.Min);
-            return def.Min <= def.Max ? (def.Min, def.Max) : (def.Max, def.Min);
+            return ZoneCantrips.CatalogBandAt(def, tier);
         }
 
         /// <summary>A core_anchor_* knob from the tier's Default layer, else the C# default.</summary>

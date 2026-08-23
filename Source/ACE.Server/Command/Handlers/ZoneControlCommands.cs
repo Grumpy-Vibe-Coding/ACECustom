@@ -159,7 +159,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol terrain <name> <hex> <type|clear>   (override the map terrain color for one landblock; type = " + string.Join("/", ZoneControlManager.TerrainTags) + "; display-only)");
                 Msg("  /zonecontrol mobinfo <wcid>   (weenie base data: body parts, resists, wields)");
                 Msg("  /zonecontrol genlist [zone]   (placed generator wcids + counts for the plugin's Generator Settings table; no zone = where you stand)");
-                Msg("  /zonecontrol ladder status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show   (live stat resolution: per-tier ladder versions, re-resolve on next equip, dev migration of pre-grade pieces, inspect the appraised item)");
+                Msg("  /zonecontrol ladder status | apply [tier|all] | migrate [here|<player>] [--dry] | show   (live stat resolution: per-tier ladder versions, re-resolve on next equip, dev migration of pre-grade pieces, inspect the appraised item)");
                 Msg("  parts = " + string.Join(", ", Enum.GetNames(typeof(CombatBodyPart)).Where(n => n != "Undefined")));
                 Msg("  stats = " + string.Join(", ", ZoneStat.All));
                 return;
@@ -676,6 +676,7 @@ namespace ACE.Server.Command.Handlers
                                 // do not claim the catalog band applies - a lower layer (variation
                                 // Default) may still author this key; the merge decides per key
                                 Msg($"{scopeTag} cantrip band: {clearDef.Name} override cleared at this scope - drops roll the next authored layer, or the catalog band {clearDef.Min}-{clearDef.Max}.");
+                                AutoApplyForDefault(session, isDefaultScope, defaultVar, Msg);
                                 return;
                             }
 
@@ -713,6 +714,7 @@ namespace ACE.Server.Command.Handlers
                                 new CantripBand { Min = bandMin, Max = bandMax, ProcMin = procMin, ProcMax = procMax });
                             Msg($"{scopeTag} cantrip band: {bandDef.Name} rolls {bandMin}-{bandMax}"
                                 + (procMax > 0 ? $", proc {procMin}-{procMax} pct." : "."));
+                            AutoApplyForDefault(session, isDefaultScope, defaultVar, Msg);
                             return;
                         }
 
@@ -814,19 +816,19 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "weight")
                         {
-                            // cantrip <scope> weight <trash|mid|chase|crit> <n>
+                            // cantrip <scope> weight <filler|average|chase|crit> <n>   (old words trash / mid still accepted)
                             if (args.Count < opIdx + 3
                                 || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var weight) || weight < 0)
-                            { Msg("Usage: cantrip <name> weight <trash|mid|chase|crit> <n>   (n >= 0)"); return; }
+                            { Msg("Usage: cantrip <name> weight <filler|average|chase|crit> <n>   (n >= 0)"); return; }
                             var weightStat = args[opIdx + 1].ToLowerInvariant() switch
                             {
-                                "trash" => ZoneStat.CantripWeightTrash,
-                                "mid" => ZoneStat.CantripWeightMid,
+                                "filler" or "trash" => ZoneStat.CantripWeightTrash,
+                                "average" or "mid" => ZoneStat.CantripWeightMid,
                                 "chase" => ZoneStat.CantripWeightChase,
                                 "crit" => ZoneStat.CantripCritWeight,
                                 _ => null,
                             };
-                            if (weightStat == null) { Msg("Class must be trash, mid, chase or crit."); return; }
+                            if (weightStat == null) { Msg("Class must be filler, average, chase or crit."); return; }
                             SetStat(weightStat, weight);
                             Msg($"{scopeTag} {weightStat} = {weight.ToString("0.###", CultureInfo.InvariantCulture)}.");
                             return;
@@ -2353,6 +2355,8 @@ namespace ACE.Server.Command.Handlers
                             ZoneControlManager.MutateVariationDefault(dvar, d =>
                                 d.Profile.Stats[dstat] = new StatCurve { Base = dval, Growth = 1.0, Additive = false });
                             Msg($"Default v{dvar} {dstat} = {dval:0.####}. Every zone at v{dvar} that doesn't set it inherits this.");
+                            if (dstat == ZoneStat.CoreAnchorDr || dstat == ZoneStat.CoreAnchorCdr)
+                                AutoApplyForDefault(session, true, dvar, Msg);
                             return;
                         }
 
@@ -2364,6 +2368,8 @@ namespace ACE.Server.Command.Handlers
                             var dremoved = false;
                             ZoneControlManager.MutateVariationDefault(dvar, d => dremoved = d.Profile.Stats.Remove(dstat));
                             Msg(dremoved ? $"Default v{dvar} {dstat} cleared." : "That stat wasn't set on the Default.");
+                            if (dremoved && (dstat == ZoneStat.CoreAnchorDr || dstat == ZoneStat.CoreAnchorCdr))
+                                AutoApplyForDefault(session, true, dvar, Msg);
                             return;
                         }
 
@@ -2454,7 +2460,7 @@ namespace ACE.Server.Command.Handlers
 
                     case "ladder":
                     {
-                        // Live stat resolution (2026-08-22): status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show
+                        // Live stat resolution (2026-08-22): status | apply [tier|all] | migrate [here|<player>] [--dry] | show
                         HandleLadder(session, args, Msg);
                         return;
                     }
@@ -2519,6 +2525,122 @@ namespace ACE.Server.Command.Handlers
         /// (live stat resolution, 2026-08-22). Sparse: only tiers with version > 0; the plugin shows tiers
         /// 11-25 and treats a missing tier as v0 / never applied. Rebuilt on every sync. APPEND-ONLY tag,
         /// emitted LAST in both [[ZC]] and [[ZCSESS]] so it works zoneless and old plugins ignore it.</summary>
+        /// <summary>
+        /// `ladder apply` proper: bump the per-tier version (null = 11..25), then re-stamp every ONLINE
+        /// player's worn pieces now (bounded 18 per player, on each player's own action chain so it never
+        /// races combat). Packed items, mules and offline characters stay lazy (equip / login). Also called
+        /// by the Default-layer band / core-anchor editors (owner 2026-08-23: "just ladder apply on save").
+        /// Always follows the ladder BOTH ways - the raise-only guard was dropped the same day.
+        /// </summary>
+        private static void LadderApplyNow(Session session, int? tier, Action<string> Msg)
+        {
+            var by = session?.Player?.Name ?? "console";
+            var bumped = ZoneControlManager.BumpLadder(tier, true, by);
+            if (bumped.Count == 0) { Msg("Nothing bumped."); return; }
+
+            var parts = bumped.Select(t => $"T{t}->v{ZoneControlManager.GetLadderVersion(t).Version}");
+            Msg($"Ladder applied by {by}: {string.Join(", ", parts)}");
+
+            var online = PlayerManager.GetAllOnline();
+            foreach (var op in online)
+            {
+                var target = op;
+                var chain = new ACE.Server.Entity.Actions.ActionChain();
+                chain.AddAction(target, ACE.Server.Entity.Actions.ActionType.ZoneControl_LadderReresolve, () =>
+                {
+                    var n = target.ReresolveWornZoneGear();
+                    if (n > 0)
+                        target.Session?.Network?.EnqueueSend(new ACE.Server.Network.GameMessages.Messages.GameMessageSystemChat(
+                            $"Zone Control: {n} worn piece(s) re-resolved against the live ladder.", ChatMessageType.Broadcast));
+                });
+                chain.EnqueueChain();
+            }
+            Msg($"Online players re-resolving worn gear: {online.Count}; everyone else catches up at login / equip.");
+        }
+
+        /// <summary>Default-layer edits auto-apply for their tier (owner 2026-08-23). Zone-scoped band edits do
+        /// NOT: the resolver reads the tier Default, so a zone band only shapes NEW drops in that zone.</summary>
+        private static void AutoApplyForDefault(Session session, bool isDefaultScope, int defaultVar, Action<string> Msg)
+        {
+            if (!isDefaultScope) { Msg("  (zone band: new drops in this zone only - existing gear follows the tier Default)"); return; }
+            if (defaultVar < 11 || defaultVar > 25) return;
+            LadderApplyNow(session, defaultVar, Msg);
+        }
+
+        /// <summary>
+        /// `ladder bench [n]` (owner 2026-08-23: "nothing has ever been tested at scale"): in-process timing of
+        /// the hot paths. Mints ONE T11 armor piece and ONE T11 melee weapon through the real producers (so they
+        /// carry a record / a quality stamp), then times n iterations of: armor Compute (the appraisal cost),
+        /// armor Compute+Apply (the equip / ladder-apply cost, no DB), weapon TryResolve x3 (one swing's worth of
+        /// WeaponScalingCombat lookups). Single thread, so it measures CPU per op - not lock contention.
+        /// Both objects are destroyed afterwards; nothing is saved.
+        /// </summary>
+        private static void LadderBench(Session session, List<string> args, Action<string> Msg)
+        {
+            var n = 10000;
+            if (args.Count >= 3 && int.TryParse(args[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var nn) && nn > 0)
+                n = Math.Min(nn, 1_000_000);
+
+            var player = session?.Player;
+            var p = player != null ? ZoneControlManager.ResolveZoneDefaultForPlayer(player) : null;
+
+            // armor: Iron Celdon Breastplate; weapon: Iron Spada (same wcids the plugin Preview uses)
+            var armor = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject("breastplatecelodoniron")
+                     ?? ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(37);
+            var weapon = ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject("swordspada")
+                      ?? ACE.Server.Factories.WorldObjectFactory.CreateNewWorldObject(30571);
+            if (armor == null || weapon == null) { Msg("bench: could not create the sample items."); return; }
+            if (!(weapon is ACE.Server.WorldObjects.MeleeWeapon)) { Msg($"bench: '{weapon.Name}' is not a melee weapon - weapon timings would be the bail-out path."); armor.Destroy(); weapon.Destroy(); return; }
+
+            try
+            {
+                ACE.Server.Factories.LootGenerationFactory.ApplyT11GearStats(armor, 11, forceMax: false, p: p);
+                if (p != null) ZoneLootMutator.MutateLootItem(armor, p, null, 11);
+                // guarantee at least one graded line on the piece regardless of the zone's roll
+                if (ZoneCantrips.TryGet(28, out var dr))
+                    ZoneCantrips.StampGraded(armor, dr, 500, ZoneStatResolver.EffectiveBand(28, 11));
+                ACE.Server.Factories.LootGenerationFactory.ApplyWeaponAugScaleStamp(weapon, 11);
+
+                var rec = ZoneStatResolver.Read(armor).Count;
+                Msg($"bench: armor '{armor.Name}' record {rec} entries (\"{armor.GetProperty(PropertyString.ZcLines)}\"), weapon '{weapon.Name}' quality {weapon.GetProperty(PropertyInt.WeaponAugScaleQuality)}; n = {n:N0}");
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                for (var i = 0; i < n; i++) ZoneStatResolver.Compute(armor);
+                sw.Stop();
+                Msg($"  armor Compute (appraisal):        {sw.Elapsed.TotalMilliseconds * 1000.0 / n,8:0.00} us/op  ({sw.ElapsedMilliseconds} ms total)");
+
+                sw.Restart();
+                for (var i = 0; i < n; i++) ZoneStatResolver.Apply(armor, ZoneStatResolver.Compute(armor));
+                sw.Stop();
+                var equipUs = sw.Elapsed.TotalMilliseconds * 1000.0 / n;
+                Msg($"  armor Compute+Apply (equip):      {equipUs,8:0.00} us/op  ({sw.ElapsedMilliseconds} ms total, no DB)");
+
+                sw.Restart();
+                for (var i = 0; i < n; i++) ZoneStatResolver.ApplyIfStale(armor);
+                sw.Stop();
+                Msg($"  armor ApplyIfStale (login, current): {sw.Elapsed.TotalMilliseconds * 1000.0 / n,5:0.00} us/op  (the no-op path every login takes)");
+
+                var sink = 0f;
+                sw.Restart();
+                for (var i = 0; i < n; i++)
+                {
+                    sink += ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(weapon, player);
+                    sink += ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetCritDamageBonus(weapon, player);
+                    ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetEffectiveVariance(weapon, out var v); sink += (float)v;
+                }
+                sw.Stop();
+                Msg($"  weapon swing (3 resolves):        {sw.Elapsed.TotalMilliseconds * 1000.0 / n,8:0.00} us/swing  ({sw.ElapsedMilliseconds} ms total, sink {sink:0})");
+
+                var hits = 400 * 2;
+                Msg($"  at 400 players x 2 hits/s: weapons ~{sw.Elapsed.TotalMilliseconds / n * hits:0.0} ms CPU per second; one ladder apply = {400 * 18:N0} armor resolves ~{equipUs * 400 * 18 / 1000.0:0.0} ms CPU total.");
+            }
+            finally
+            {
+                armor.Destroy();
+                weapon.Destroy();
+            }
+        }
+
         private static void AppendLadder(StringBuilder sb)
         {
             sb.Append("|ladder=");
@@ -2543,13 +2665,41 @@ namespace ACE.Server.Command.Handlers
             sb.Append("[[ZCD]]var=").Append(variation)
               .Append("|found=").Append(d != null ? 1 : 0);
 
-            foreach (var stat in ZoneStat.All)
+            // SPARSE since 2026-08-23: only DEFINED stats ride the wire. The full 192-row form was ~4 KB per
+            // reply and each such chat line stalls the client ~0.5 s (tier stepper lock-up). The plugin
+            // marks every row of the variation undefined before applying, so an absent key = cleared.
+            if (stats != null)
+                foreach (var stat in ZoneStat.All)
+                    if (stats.TryGetValue(stat, out var curve) && curve != null)
+                        sb.Append('|').Append(stat).Append("=1,").Append(curve.Base.ToString(CultureInfo.InvariantCulture));
+
+            // APPEND-ONLY (2026-08-23): this Default's OWN authored bands + slot rules, same shapes as the
+            // [[ZC]] sync, so the plugin Catalog at "Default v[N]" scope shows N's bands instead of the last
+            // zone's. Sparse: absent keys fall back to the tier-scaled hardcoded band.
+            var vp = d?.Profile;
+            if (vp?.CustomCantripBands is { Count: > 0 })
             {
-                int defined = 0;
-                double value = 0;
-                if (stats != null && stats.TryGetValue(stat, out var curve) && curve != null)
-                { defined = 1; value = curve.Base; }
-                sb.Append('|').Append(stat).Append('=').Append(defined).Append(',').Append(value.ToString(CultureInfo.InvariantCulture));
+                sb.Append("|cantrips=");
+                bool firstCb = true;
+                foreach (var b in vp.CustomCantripBands)
+                {
+                    if (b.Value == null) continue;
+                    if (!firstCb) sb.Append(';');
+                    firstCb = false;
+                    sb.Append(b.Key).Append(':').Append(b.Value.Min).Append(':').Append(b.Value.Max)
+                      .Append(':').Append(b.Value.ProcMin).Append(':').Append(b.Value.ProcMax);
+                }
+            }
+            if (vp?.CustomCantripSlots is { Count: > 0 })
+            {
+                sb.Append("|ctslots=");
+                bool firstSl = true;
+                foreach (var kv in vp.CustomCantripSlots)
+                {
+                    if (!firstSl) sb.Append(';');
+                    firstSl = false;
+                    sb.Append(kv.Key).Append(':').Append(kv.Value);
+                }
             }
             return sb.ToString();
         }
@@ -3088,15 +3238,15 @@ namespace ACE.Server.Command.Handlers
 
         private const int LadderTierMin = 11, LadderTierMax = 25;
 
-        /// <summary>`/zonecontrol ladder status | apply [tier|all] [--nerf] | migrate [here|&lt;player&gt;] [--dry] | show`.
+        /// <summary>`/zonecontrol ladder status | apply [tier|all] | migrate [here|&lt;player&gt;] [--dry] | show`.
         /// Contract: LiveStat_Contract_2026-08-22.md (Commands). Replies use cantrip NAMES, never keys.</summary>
         private static void HandleLadder(Session session, List<string> args, Action<string> Msg)
         {
             if (args.Count < 2)
             {
-                Msg("Usage: ladder status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show");
+                Msg("Usage: ladder status | apply [tier|all] | migrate [here|<player>] [--dry] | show");
                 Msg("  status  = per-tier ladder apply version (v0 = never applied)");
-                Msg("  apply   = bump a tier's ladder version so its gear re-resolves on next equip; --nerf allows lowering stamped values");
+                Msg("  apply   = bump a tier's ladder version so its gear re-resolves on next equip (online players now, others at login)");
                 Msg("  migrate = dev: grade a player's pre-grade Zone Cantrip pieces (equipped + packs); writes a dated SQL file; --dry = preview");
                 Msg("  show    = the item you last appraised: tier, version, each graded line");
                 return;
@@ -3114,7 +3264,7 @@ namespace ACE.Server.Command.Handlers
                         if (la == null || la.Version <= 0)
                             Msg($"  Tier {t,2}: v0 (never applied)");
                         else
-                            Msg($"  Tier {t,2}: v{la.Version} {(la.AllowNerf ? "nerf allowed" : "raise-only")} by {la.AppliedBy ?? "?"} on {la.AppliedUtc:yyyy-MM-dd HH:mm} UTC");
+                            Msg($"  Tier {t,2}: v{la.Version} by {la.AppliedBy ?? "?"} on {la.AppliedUtc:yyyy-MM-dd HH:mm} UTC");
                     }
                     return;
                 }
@@ -3122,11 +3272,10 @@ namespace ACE.Server.Command.Handlers
                 case "apply":
                 {
                     int? tier = null;
-                    var nerf = false;
                     for (var i = 2; i < args.Count; i++)
                     {
                         var a = args[i];
-                        if (a.Equals("--nerf", StringComparison.OrdinalIgnoreCase) || a.Equals("nerf", StringComparison.OrdinalIgnoreCase)) { nerf = true; continue; }
+                        if (a.Equals("--nerf", StringComparison.OrdinalIgnoreCase)) continue;   // accepted and ignored: apply always follows the ladder both ways (owner 2026-08-23)
                         if (a.Equals("all", StringComparison.OrdinalIgnoreCase)) { tier = null; continue; }
                         if (int.TryParse(a.TrimStart('t', 'T', 'v', 'V'), NumberStyles.Integer, CultureInfo.InvariantCulture, out var tv))
                         {
@@ -3134,23 +3283,20 @@ namespace ACE.Server.Command.Handlers
                             tier = tv;
                             continue;
                         }
-                        Msg($"Unknown apply argument '{a}'. Usage: ladder apply [tier|all] [--nerf]");
+                        Msg($"Unknown apply argument '{a}'. Usage: ladder apply [tier|all]");
                         return;
                     }
 
-                    var by = session?.Player?.Name ?? "console";
-                    var bumped = ZoneControlManager.BumpLadder(tier, nerf, by);
-                    if (bumped.Count == 0) { Msg("Nothing bumped."); return; }
-
-                    var parts = bumped.Select(t => $"T{t}->v{ZoneControlManager.GetLadderVersion(t).Version}");
-                    Msg($"Ladder applied ({(nerf ? "nerf allowed" : "raise-only")}) by {by}: {string.Join(", ", parts)}");
-                    var tierText = bumped.Count == 1 ? $"Tier {bumped[0]}" : $"Tier {bumped.Min()}-{bumped.Max()}";
-                    Msg($"Patch note: {tierText} gear re-resolves against the live ladder on next equip ({(nerf ? "stamped values may go down as well as up" : "raise-only")}).");
+                    LadderApplyNow(session, tier, Msg);
                     return;
                 }
 
                 case "migrate":
                     LadderMigrate(session, args, Msg);
+                    return;
+
+                case "bench":
+                    LadderBench(session, args, Msg);
                     return;
 
                 case "show":
@@ -3159,7 +3305,7 @@ namespace ACE.Server.Command.Handlers
                     return;
 
                 default:
-                    Msg($"Unknown ladder verb '{args[1]}'. Usage: ladder status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show");
+                    Msg($"Unknown ladder verb '{args[1]}'. Usage: ladder status | apply [tier|all] | migrate [here|<player>] [--dry] | show");
                     return;
             }
         }

@@ -487,8 +487,8 @@ namespace ACE.Server.Managers.ZoneControl
                 var def = PickWeighted(candidates);
                 candidates.RemoveAll(c => c.Def.Key == def.Key);   // distinct per piece
 
-                var (min, max, _, _) = p.CantripBands.TryGetValue(def.Key, out var band)
-                    ? band : (def.Min, def.Max, def.ProcMin, def.ProcMax);
+                var (min, max) = p.CantripBands.TryGetValue(def.Key, out var band)
+                    ? (band.Min, band.Max) : ZoneCantrips.CatalogBandAt(def, lootTier);   // hardcoded fallback is tier-scaled (2026-08-23)
 
                 // insurance against hand-edited store bands - an inverted band must not throw mid-loot
                 if (min > max) (min, max) = (max, min);

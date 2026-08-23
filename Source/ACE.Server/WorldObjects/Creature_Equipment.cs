@@ -278,6 +278,29 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         private Dictionary<int, int> zoneCantripCache;
 
+        /// <summary>
+        /// Live stat resolution, `ladder apply` online path (owner 2026-08-23): re-resolve every WORN piece
+        /// whose tier ladder moved, keeping the rating + cantrip caches exact (subtract the old numbers,
+        /// re-stamp, add the new). Bounded by what this creature wears. Returns the number of pieces whose
+        /// values actually changed. Call from the World Manager thread (an ActionChain on the creature).
+        /// </summary>
+        public int ReresolveWornZoneGear()
+        {
+            var changed = 0;
+            foreach (var wo in EquippedObjects.Values)
+            {
+                if (!ACE.Server.Managers.ZoneControl.ZoneStatResolver.HasRecord(wo))
+                    continue;
+                RemoveItemFromEquippedItemsRatingCache(wo);
+                UpdateZoneCantripCache(wo, -1);
+                if (ACE.Server.Managers.ZoneControl.ZoneStatResolver.ApplyIfStale(wo))
+                    changed++;
+                AddItemToEquippedItemsRatingCache(wo);
+                UpdateZoneCantripCache(wo, +1);
+            }
+            return changed;
+        }
+
         private void UpdateZoneCantripCache(WorldObject wo, int sign)
         {
             wo.BiotaDatabaseLock.EnterReadLock();

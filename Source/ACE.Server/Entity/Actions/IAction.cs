@@ -214,6 +214,7 @@ namespace ACE.Server.Entity.Actions
 
         // GameMessage values map 1:1 with networking OpTypes.
         GameMessage_Unknown,
+        ZoneControl_LadderReresolve,   // live stat resolution: online worn-gear re-stamp after `ladder apply`
         GameMessage_None,
         GameMessage_InventoryRemoveObject,
         GameMessage_SetStackSize,

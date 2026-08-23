@@ -1117,16 +1117,13 @@ namespace ACE.Server.Command.Handlers
                 && live != null && live.Max >= live.Min && live.Max > 0)
                 return (live.Min, live.Max);
 
-            var f = 1.0 + (tier - 11) / 14.0;
-            switch (key)
+            // no Default authored: the same tier-scaled hardcoded band real drops fall back to (2026-08-23)
+            if (ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(key, out var cdef))
             {
-                case 32:
-                case 33: return (1, 3);
-                case PremadeArmorOnlyKey: return (50 * f, 250 * f);
-                default:
-                    var max = 1250.0 / 18.0 * f;
-                    return (0.2 * max, max);
+                var (cmin, cmax) = ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(cdef, tier);
+                return (cmin, cmax);
             }
+            return (1, 1);
         }
 
         /// <summary>Deal the Average suit's lines: per-piece count = guaranteed (max - 2) plus one
