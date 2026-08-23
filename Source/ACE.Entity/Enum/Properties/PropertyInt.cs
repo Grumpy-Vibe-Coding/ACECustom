@@ -853,6 +853,14 @@ namespace ACE.Entity.Enum.Properties
         /// A boss-group generator should have MaxCreate 1 and boss-only entries — escorts belong on the
         /// boss creature's own generator table, not on the group gen.</summary>
         BossGroupId = 50108,
+
+        /// <summary>Zone Control live stat resolution (2026-08-22): the loot TIER a ZC-lined piece was
+        /// stamped at. Picks the ladder row (per-variation Default bands / core anchors) that resolves
+        /// its grades. Outside the 50200-50399 cantrip block on purpose - that block is summed on equip.</summary>
+        ZcTier = 50109,
+        /// <summary>The per-tier ladder version this piece's retail props were last resolved against
+        /// (ZoneControlManager.GetLadderVersion). A mismatch on equip re-resolves + re-stamps.</summary>
+        ZcResolvedVersion = 50110,
     }
 
     public static class PropertyIntExtensions

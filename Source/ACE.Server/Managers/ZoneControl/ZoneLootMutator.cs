@@ -487,18 +487,19 @@ namespace ACE.Server.Managers.ZoneControl
                 var def = PickWeighted(candidates);
                 candidates.RemoveAll(c => c.Def.Key == def.Key);   // distinct per piece
 
-                var (min, max, procMin, procMax) = p.CantripBands.TryGetValue(def.Key, out var band)
+                var (min, max, _, _) = p.CantripBands.TryGetValue(def.Key, out var band)
                     ? band : (def.Min, def.Max, def.ProcMin, def.ProcMax);
 
                 // insurance against hand-edited store bands - an inverted band must not throw mid-loot
                 if (min > max) (min, max) = (max, min);
-                if (procMin > procMax) (procMin, procMax) = (procMax, procMin);
 
-                // tier-weighted roll position (Option A curve, owner 2026-08-22): T11 uniform, climbing to 10/30/60 at T25
-                var value = ZoneCantrips.RollBanded(min, max, lootTier, forceMax);
-                var proc = procMax > 0 ? (forceMax ? procMax : ThreadSafeRandom.Next(procMin, procMax)) : 0;
-                // pass the effective band so the drop line advertises what was actually rolled from
-                ZoneCantrips.Stamp(wo, def, value, proc, (min, max, procMin, procMax));
+                // Live stat resolution (owner 2026-08-22): roll a GRADE 0-1000 (tier-weighted thirds,
+                // Option A: T11 uniform, climbing to 10/30/60 at T25) and stamp it through the record;
+                // the prop value is ValueFor(grade) inside the effective band. Key 49 Reinforced routes
+                // to the plain Stamp inside StampGraded (earned + frozen, never in the record).
+                // Proc-shaped bands are gone from the live catalog (no Def carries ProcChancePropId).
+                var grade = ZoneStatResolver.RollGrade(lootTier, forceMax);
+                ZoneCantrips.StampGraded(wo, def, grade, (min, max));
             }
         }
 

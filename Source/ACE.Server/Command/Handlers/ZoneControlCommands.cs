@@ -159,6 +159,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol terrain <name> <hex> <type|clear>   (override the map terrain color for one landblock; type = " + string.Join("/", ZoneControlManager.TerrainTags) + "; display-only)");
                 Msg("  /zonecontrol mobinfo <wcid>   (weenie base data: body parts, resists, wields)");
                 Msg("  /zonecontrol genlist [zone]   (placed generator wcids + counts for the plugin's Generator Settings table; no zone = where you stand)");
+                Msg("  /zonecontrol ladder status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show   (live stat resolution: per-tier ladder versions, re-resolve on next equip, dev migration of pre-grade pieces, inspect the appraised item)");
                 Msg("  parts = " + string.Join(", ", Enum.GetNames(typeof(CombatBodyPart)).Where(n => n != "Undefined")));
                 Msg("  stats = " + string.Join(", ", ZoneStat.All));
                 return;
@@ -178,8 +179,9 @@ namespace ACE.Server.Command.Handlers
             // instead (the zone doesn't exist yet); sync's name sits at args[2].
             if (sub == "sync")
                 CollapseZoneNameTokens(args, 2);
-            else if (sub != "create" && sub != "default")
+            else if (sub != "create" && sub != "default" && sub != "ladder")
                 // 'default' takes a VARIATION at args[1], not a zone name — collapsing would mangle it.
+                // 'ladder' takes a verb / tier / player name, never a zone.
                 CollapseZoneNameTokens(args, 1);
 
             try
@@ -2450,6 +2452,13 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "ladder":
+                    {
+                        // Live stat resolution (2026-08-22): status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show
+                        HandleLadder(session, args, Msg);
+                        return;
+                    }
+
                     default:
                         Msg($"Unknown subcommand '{sub}'. See /zonecontrol help.");
                         return;
@@ -2502,7 +2511,27 @@ namespace ACE.Server.Command.Handlers
             var sb = new StringBuilder("[[ZCSESS]]");
             AppendSessionState(sb, session);
             AppendCombatDefs(sb);
+            AppendLadder(sb);   // APPEND-ONLY (2026-08-22): ladder apply versions, last so older plugins ignore it
             return sb.ToString();
+        }
+
+        /// <summary>"|ladder=tier:version:allowNerf:yyyy-MM-dd;..." - the per-tier ladder apply state
+        /// (live stat resolution, 2026-08-22). Sparse: only tiers with version > 0; the plugin shows tiers
+        /// 11-25 and treats a missing tier as v0 / never applied. Rebuilt on every sync. APPEND-ONLY tag,
+        /// emitted LAST in both [[ZC]] and [[ZCSESS]] so it works zoneless and old plugins ignore it.</summary>
+        private static void AppendLadder(StringBuilder sb)
+        {
+            sb.Append("|ladder=");
+            bool first = true;
+            foreach (var kv in ZoneControlManager.ListLadderVersions())
+            {
+                var la = kv.Value;
+                if (la == null || la.Version <= 0) continue;
+                if (!first) sb.Append(';');
+                first = false;
+                sb.Append(kv.Key).Append(':').Append(la.Version).Append(':').Append(la.AllowNerf ? 1 : 0)
+                  .Append(':').Append(la.AppliedUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            }
         }
 
         private static string BuildVariationDefaultPayload(int variation)
@@ -2897,6 +2926,7 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
+            AppendLadder(sb);   // APPEND-ONLY (2026-08-22): ladder apply versions, last so older plugins ignore it
             return sb.ToString();
         }
 
@@ -3054,6 +3084,355 @@ namespace ACE.Server.Command.Handlers
             => double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out value);
 
         /// <summary>Strip the wire's separator chars from a value so it can't break payload parsing.</summary>
+        // ── live stat resolution: /zonecontrol ladder ... (2026-08-22) ─────────────────────────────
+
+        private const int LadderTierMin = 11, LadderTierMax = 25;
+
+        /// <summary>`/zonecontrol ladder status | apply [tier|all] [--nerf] | migrate [here|&lt;player&gt;] [--dry] | show`.
+        /// Contract: LiveStat_Contract_2026-08-22.md (Commands). Replies use cantrip NAMES, never keys.</summary>
+        private static void HandleLadder(Session session, List<string> args, Action<string> Msg)
+        {
+            if (args.Count < 2)
+            {
+                Msg("Usage: ladder status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show");
+                Msg("  status  = per-tier ladder apply version (v0 = never applied)");
+                Msg("  apply   = bump a tier's ladder version so its gear re-resolves on next equip; --nerf allows lowering stamped values");
+                Msg("  migrate = dev: grade a player's pre-grade Zone Cantrip pieces (equipped + packs); writes a dated SQL file; --dry = preview");
+                Msg("  show    = the item you last appraised: tier, version, each graded line");
+                return;
+            }
+
+            var verb = args[1].ToLowerInvariant();
+            switch (verb)
+            {
+                case "status":
+                {
+                    Msg("Ladder apply state (live stat resolution):");
+                    for (var t = LadderTierMin; t <= LadderTierMax; t++)
+                    {
+                        var la = ZoneControlManager.GetLadderVersion(t);
+                        if (la == null || la.Version <= 0)
+                            Msg($"  Tier {t,2}: v0 (never applied)");
+                        else
+                            Msg($"  Tier {t,2}: v{la.Version} {(la.AllowNerf ? "nerf allowed" : "raise-only")} by {la.AppliedBy ?? "?"} on {la.AppliedUtc:yyyy-MM-dd HH:mm} UTC");
+                    }
+                    return;
+                }
+
+                case "apply":
+                {
+                    int? tier = null;
+                    var nerf = false;
+                    for (var i = 2; i < args.Count; i++)
+                    {
+                        var a = args[i];
+                        if (a.Equals("--nerf", StringComparison.OrdinalIgnoreCase) || a.Equals("nerf", StringComparison.OrdinalIgnoreCase)) { nerf = true; continue; }
+                        if (a.Equals("all", StringComparison.OrdinalIgnoreCase)) { tier = null; continue; }
+                        if (int.TryParse(a.TrimStart('t', 'T', 'v', 'V'), NumberStyles.Integer, CultureInfo.InvariantCulture, out var tv))
+                        {
+                            if (tv < LadderTierMin || tv > LadderTierMax) { Msg($"Tier must be {LadderTierMin}-{LadderTierMax} (or 'all')."); return; }
+                            tier = tv;
+                            continue;
+                        }
+                        Msg($"Unknown apply argument '{a}'. Usage: ladder apply [tier|all] [--nerf]");
+                        return;
+                    }
+
+                    var by = session?.Player?.Name ?? "console";
+                    var bumped = ZoneControlManager.BumpLadder(tier, nerf, by);
+                    if (bumped.Count == 0) { Msg("Nothing bumped."); return; }
+
+                    var parts = bumped.Select(t => $"T{t}->v{ZoneControlManager.GetLadderVersion(t).Version}");
+                    Msg($"Ladder applied ({(nerf ? "nerf allowed" : "raise-only")}) by {by}: {string.Join(", ", parts)}");
+                    var tierText = bumped.Count == 1 ? $"Tier {bumped[0]}" : $"Tier {bumped.Min()}-{bumped.Max()}";
+                    Msg($"Patch note: {tierText} gear re-resolves against the live ladder on next equip ({(nerf ? "stamped values may go down as well as up" : "raise-only")}).");
+                    return;
+                }
+
+                case "migrate":
+                    LadderMigrate(session, args, Msg);
+                    return;
+
+                case "show":
+                case "inspect":
+                    LadderShow(session, Msg);
+                    return;
+
+                default:
+                    Msg($"Unknown ladder verb '{args[1]}'. Usage: ladder status | apply [tier|all] [--nerf] | migrate [here|<player>] [--dry] | show");
+                    return;
+            }
+        }
+
+        /// <summary>`ladder show`: read-only view of the last APPRAISED item's record, resolved through
+        /// ZoneStatResolver.Compute (never writes).</summary>
+        private static void LadderShow(Session session, Action<string> Msg)
+        {
+            var player = session?.Player;
+            if (player == null) { Msg("In-game only."); return; }
+            ACE.Server.WorldObjects.WorldObject wo = null;
+            if (player.CurrentAppraisalTarget.HasValue)
+                wo = player.FindObject(player.CurrentAppraisalTarget.Value, ACE.Server.WorldObjects.Player.SearchLocations.Everywhere, out _, out _, out _);
+            if (wo == null) { Msg("No item selected - appraise (examine) the piece first, then run ladder show."); return; }
+
+            Msg($"{wo.Name} (0x{wo.Guid.Full:X8}, wcid {wo.WeenieClassId}):");
+            if (!ZoneStatResolver.HasRecord(wo))
+            {
+                var hasLines = (wo.LongDesc ?? "").Contains("Zone Cantrip:", StringComparison.Ordinal);
+                Msg(hasLines
+                    ? "  no grade record (pre-grade piece: Zone Cantrip lines but no ZcLines) - 'ladder migrate' grades it"
+                    : "  no grade record (not a Zone Control piece)");
+                return;
+            }
+
+            var r = ZoneStatResolver.Compute(wo);
+            if (r == null) { Msg("  record present but nothing resolved."); return; }
+            var ladder = ZoneControlManager.GetLadderVersion(r.Tier);
+            var seen = wo.GetProperty(PropertyInt.ZcResolvedVersion) ?? 0;
+            Msg($"  Tier {r.Tier}  resolved v{seen} / ladder v{ladder.Version}{(seen < ladder.Version ? "  STALE - re-resolves on next equip" : "  current")}");
+            foreach (var line in r.Lines)
+                Msg($"  {line.Name} {line.Record.Grade}/{ZoneStatResolver.GradeMax} -> {line.Value} [{line.Min}-{line.Max}]");
+            if (r.ArmorLevel.HasValue)
+                Msg($"  Armor Level resolves to {r.ArmorLevel.Value} (base {ZoneStatResolver.BaseArmorLevel(r.Tier)}; stamped {wo.ArmorLevel ?? 0})");
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex ZcTierLine =
+            new(@"^\s*Tier:\s*(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex ZcBand =
+            new(@"\[\s*(-?\d+)\s*-\s*(-?\d+)\s*\]", System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex ZcInt =
+            new(@"[+-]?\d+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>Parse one "Zone Cantrip: ..." LongDesc line: catalog def by Name (longest match,
+        /// case-insensitive), the integer right after the name (any ValFmt shape: "+41", "x3", "+5% vitals",
+        /// "50", "2 pct HP per hit"), and the [min-max] band when present. Proc-shaped lines ("N% to ...")
+        /// return false with proc=true.</summary>
+        private static bool TryParseZcLine(string line, out ZoneCantrips.Def def, out int? value, out (int Min, int Max)? band, out bool proc)
+        {
+            def = null; value = null; band = null; proc = false;
+            var idx = line.IndexOf("Zone Cantrip:", StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return false;
+            var rest = line.Substring(idx + "Zone Cantrip:".Length).Trim();
+            if (rest.Length == 0) return false;
+
+            foreach (var d in ZoneCantrips.Catalog.Values.OrderByDescending(d => d.Name?.Length ?? 0))
+            {
+                if (string.IsNullOrEmpty(d.Name)) continue;
+                if (!rest.StartsWith(d.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (rest.Length > d.Name.Length && !char.IsWhiteSpace(rest[d.Name.Length])) continue;
+                def = d;
+                break;
+            }
+            if (def == null) return false;
+
+            var tail = rest.Substring(def.Name.Length).Trim();
+            if (tail.Contains("% to", StringComparison.OrdinalIgnoreCase) || tail.Contains(" to +", StringComparison.OrdinalIgnoreCase))
+            { proc = true; return false; }
+
+            var bm = ZcBand.Match(tail);
+            if (bm.Success)
+            {
+                band = (int.Parse(bm.Groups[1].Value, CultureInfo.InvariantCulture), int.Parse(bm.Groups[2].Value, CultureInfo.InvariantCulture));
+                tail = tail.Substring(0, bm.Index);
+            }
+            var vm = ZcInt.Match(tail);
+            if (vm.Success && int.TryParse(vm.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v))
+                value = v;
+            return true;
+        }
+
+        /// <summary>Equipped + inventory, packs walked recursively, no duplicates.</summary>
+        private static List<ACE.Server.WorldObjects.WorldObject> WalkPossessions(ACE.Server.WorldObjects.Player player)
+        {
+            var seen = new HashSet<uint>();
+            var list = new List<ACE.Server.WorldObjects.WorldObject>();
+            void Visit(ACE.Server.WorldObjects.WorldObject wo)
+            {
+                if (wo == null || !seen.Add(wo.Guid.Full)) return;
+                list.Add(wo);
+                if (wo is ACE.Server.WorldObjects.Container c)
+                    foreach (var inner in c.Inventory.Values.ToList())
+                        Visit(inner);
+            }
+            foreach (var e in player.EquippedObjects.Values.ToList()) Visit(e);
+            foreach (var i in player.Inventory.Values.ToList()) Visit(i);
+            return list;
+        }
+
+        private static string SqlStr(string s) => "'" + (s ?? "").Replace("\\", "\\\\").Replace("'", "''") + "'";
+
+        /// <summary>`ladder migrate [here|&lt;player&gt;] [--dry]` - grade a player's pre-grade Zone Cantrip pieces
+        /// (plan §5): the stamped numbers become grades against the tier's live bands, the record is written,
+        /// identity stamped, biota saved, and the same rows land in a dated SQL file.</summary>
+        private static void LadderMigrate(Session session, List<string> args, Action<string> Msg)
+        {
+            var dry = false;
+            var nameTokens = new List<string>();
+            for (var i = 2; i < args.Count; i++)
+            {
+                if (args[i].Equals("--dry", StringComparison.OrdinalIgnoreCase) || args[i].Equals("dry", StringComparison.OrdinalIgnoreCase)) dry = true;
+                else nameTokens.Add(args[i]);
+            }
+            var who = string.Join(" ", nameTokens);
+
+            ACE.Server.WorldObjects.Player target;
+            if (who.Length == 0 || who.Equals("here", StringComparison.OrdinalIgnoreCase))
+                target = session?.Player;
+            else
+                target = PlayerManager.GetOnlinePlayer(who);
+            if (target == null) { Msg(who.Length == 0 ? "In-game only (or name an ONLINE player)." : $"Player '{who}' is not online - migrate walks live objects only."); return; }
+
+            var items = WalkPossessions(target);
+            int migrated = 0, skippedHasRecord = 0, skippedNoLines = 0, skippedTier = 0;
+            var unparsable = new List<string>();
+            var sql = new StringBuilder();
+
+            foreach (var wo in items)
+            {
+                var desc = wo.LongDesc ?? "";
+                if (!desc.Contains("Zone Cantrip:", StringComparison.Ordinal)) { skippedNoLines++; continue; }
+                if (ZoneStatResolver.HasRecord(wo)) { skippedHasRecord++; continue; }
+
+                // tier: "Tier: N" provenance line, else WeaponAugScaleTier, else 11
+                var tier = 0;
+                var tm = ZcTierLine.Match(desc);
+                if (tm.Success) int.TryParse(tm.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out tier);
+                if (tier <= 0) tier = wo.GetProperty(PropertyInt.WeaponAugScaleTier) ?? 0;
+                if (tier <= 0) tier = LadderTierMin;
+                if (tier < LadderTierMin || tier > LadderTierMax)
+                {
+                    skippedTier++;
+                    unparsable.Add($"{wo.Name} (0x{wo.Guid.Full:X8}): tier {tier} outside {LadderTierMin}-{LadderTierMax}");
+                    continue;
+                }
+
+                var records = new List<ZoneStatResolver.LineRecord>();
+                void Put(int key, int grade)
+                {
+                    records.RemoveAll(r => r.Key == key);
+                    records.Add(new ZoneStatResolver.LineRecord { Key = key, Grade = Math.Clamp(grade, 0, ZoneStatResolver.GradeMax) });
+                }
+                var hasArmorLevelLine = false;
+                var detail = new List<string>();
+
+                foreach (var raw in desc.Split('\n'))
+                {
+                    var line = raw.Trim();
+                    if (!line.Contains("Zone Cantrip:", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!TryParseZcLine(line, out var def, out var lineValue, out var lineBand, out var proc))
+                    {
+                        if (proc) { detail.Add($"skip proc line: {line}"); continue; }
+                        unparsable.Add($"{wo.Name} (0x{wo.Guid.Full:X8}): {line}");
+                        continue;
+                    }
+                    if (def.SetsProtection) { detail.Add($"skip {def.Name} (earned, frozen)"); continue; }
+                    if (def.ProcChancePropId != 0) { detail.Add($"skip {def.Name} (proc line)"); continue; }
+                    if (def.ArmorOnly && def.Ints == null) { hasArmorLevelLine = true; continue; }   // key 25: graded from AL below
+
+                    var band = lineBand ?? ZoneStatResolver.EffectiveBand(def.Key, tier);
+                    int? v = lineValue;
+                    if (def.SlotSpecial)
+                    {
+                        // specials: the prop value is the truth (the line may carry no number at all)
+                        band = ZoneStatResolver.EffectiveBand(def.Key, tier);
+                        if (def.Ints != null && def.Ints.Length > 0)
+                        {
+                            var pv = wo.GetProperty((PropertyInt)def.Ints[0].PropId);
+                            if (pv.HasValue) v = pv.Value;
+                        }
+                    }
+                    else if (!v.HasValue && def.Ints != null && def.Ints.Length > 0)
+                        v = wo.GetProperty((PropertyInt)def.Ints[0].PropId);
+                    if (!v.HasValue)
+                    {
+                        unparsable.Add($"{wo.Name} (0x{wo.Guid.Full:X8}): {def.Name} has no value on the line or the item");
+                        continue;
+                    }
+                    var grade = ZoneStatResolver.GradeFor(band.Min, band.Max, v.Value);
+                    Put(def.Key, grade);
+                    detail.Add($"{def.Name} {v.Value} in [{band.Min}-{band.Max}] -> {grade}");
+                }
+
+                // core four from the stamped Gear* props against the tier's window
+                foreach (var coreKey in ZoneStatResolver.CoreKeys)
+                {
+                    var pv = wo.GetProperty(ZoneStatResolver.CoreProp(coreKey));
+                    if (!pv.HasValue) continue;
+                    var (cmin, cmax) = ZoneStatResolver.CoreWindow(coreKey, tier);
+                    var grade = ZoneStatResolver.GradeFor(cmin, cmax, pv.Value);
+                    Put(coreKey, grade);
+                    detail.Add($"{ZoneStatResolver.CoreName(coreKey)} {pv.Value} in [{cmin}-{cmax}] -> {grade}");
+                }
+
+                // key 25 Armor Level: only an Armor piece above the tier base, and only when the line exists
+                if (hasArmorLevelLine && wo.ItemType == ItemType.Armor && wo.ArmorLevel.HasValue
+                    && wo.ArmorLevel.Value > ZoneStatResolver.BaseArmorLevel(tier))
+                {
+                    var (amin, amax) = ZoneStatResolver.EffectiveBand(25, tier);
+                    var bonus = wo.ArmorLevel.Value - ZoneStatResolver.BaseArmorLevel(tier);
+                    var grade = ZoneStatResolver.GradeFor(amin, amax, bonus);
+                    Put(25, grade);
+                    detail.Add($"Armor Level +{bonus} in [{amin}-{amax}] -> {grade}");
+                }
+
+                if (records.Count == 0)
+                {
+                    unparsable.Add($"{wo.Name} (0x{wo.Guid.Full:X8}): no gradable line");
+                    continue;
+                }
+
+                var version = ZoneControlManager.GetLadderVersion(tier).Version;
+                var recordText = ZoneStatResolver.Format(records);
+                Msg($"{(dry ? "[dry] " : "")}{wo.Name} (0x{wo.Guid.Full:X8}) T{tier}: {string.Join("; ", detail)}");
+                if (dry) { migrated++; continue; }
+
+                ZoneStatResolver.Write(wo, records);
+                ZoneStatResolver.StampIdentity(wo, tier);
+                wo.ChangesDetected = true;
+                wo.SaveBiotaToDatabase();
+                migrated++;
+
+                var oid = wo.Guid.Full;
+                sql.AppendLine($"-- {wo.Name.Replace('\n', ' ')} T{tier}")
+                   .AppendLine($"INSERT INTO biota_properties_string (object_Id, type, value) VALUES ({oid}, {(int)PropertyString.ZcLines}, {SqlStr(recordText)}) ON DUPLICATE KEY UPDATE value=VALUES(value);")
+                   .AppendLine($"INSERT INTO biota_properties_int (object_Id, type, value) VALUES ({oid}, {(int)PropertyInt.ZcTier}, {tier}) ON DUPLICATE KEY UPDATE value=VALUES(value);")
+                   .AppendLine($"INSERT INTO biota_properties_int (object_Id, type, value) VALUES ({oid}, {(int)PropertyInt.ZcResolvedVersion}, {version}) ON DUPLICATE KEY UPDATE value=VALUES(value);");
+            }
+
+            string sqlNote = "";
+            if (!dry && sql.Length > 0)
+            {
+                try
+                {
+                    var path = $@"C:\AI\ZoneControl\T11_LiveStat_Migration_{DateTime.UtcNow:yyyy-MM-dd}.sql";
+                    var isNew = !System.IO.File.Exists(path);
+                    var block = new StringBuilder();
+                    if (isNew)
+                        block.AppendLine("-- T11 Live Stat Resolution migration (pre-grade pieces -> ZcLines grade records)")
+                             .AppendLine("-- Written by /zonecontrol ladder migrate; rows mirror what SaveBiotaToDatabase already wrote live.")
+                             .AppendLine("-- biota_properties_string type 50100 = ZcLines; biota_properties_int 50109 = ZcTier, 50110 = ZcResolvedVersion.")
+                             .AppendLine();
+                    block.AppendLine($"-- run {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC by {session?.Player?.Name ?? "console"} on player {target.Name} ({migrated} pieces)");
+                    block.Append(sql).AppendLine();
+                    System.IO.File.AppendAllText(path, block.ToString());
+                    sqlNote = $" SQL appended to {path}.";
+                }
+                catch (Exception ex)
+                {
+                    sqlNote = $" SQL file NOT written: {ex.Message}";
+                }
+            }
+
+            Msg($"{(dry ? "[dry] " : "")}Migrate {target.Name}: {migrated} pieces {(dry ? "would be " : "")}migrated, {skippedHasRecord} skipped (already graded), " +
+                $"{skippedTier} skipped (tier out of range), {items.Count - skippedNoLines} Zone Control pieces of {items.Count} objects walked.{sqlNote}");
+            if (unparsable.Count > 0)
+            {
+                Msg($"Unparsable ({unparsable.Count}):");
+                foreach (var u in unparsable.Take(40)) Msg("  " + u);
+                if (unparsable.Count > 40) Msg($"  ... and {unparsable.Count - 40} more");
+            }
+        }
+
         private static string CleanWire(string s) => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
 
         /// <summary>The raw-SQL statements that write an appearance set into a weenie — shared by

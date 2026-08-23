@@ -351,32 +351,35 @@ namespace ACE.Server.Factories
             // Rounded at the END only: rounding the cap first breaks the 750-class T11 window
             // (spec wants 40-42). Damage Rating and Max Health are NOT here any more - they are
             // random chase lines (keys 28 / 19). Mobs are tuned against the FLOOR of the core.
-            var scale = 1.0 + (tier - 11) / 14.0;
 
             // zone override surface for the anchors (core_anchor_dr / core_anchor_cdr); C# is the default
             var anchorDr = p?.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CoreAnchorDr, 1250.0) ?? 1250.0;
             var anchorCdr = p?.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CoreAnchorCdr, 750.0) ?? 750.0;
 
-            int RollCore(double anchor)
+            // Live stat resolution (owner 2026-08-22): the core four are GRADED. Window = the same
+            // formula (ZoneStatResolver.CoreWindow, fed the ZONE's evaluated anchor so the drop is
+            // identical to before), grade = uniform 0-1000 inside it (the core is uniform today and
+            // stays so - RollGrade's tier thirds are for the cantrip lines only), value = ValueFor.
+            // The grade is recorded in ZcLines; the Gear* prop is its cache. A piece is authored from
+            // scratch here, so any pre-existing record is cleared first.
+            ACE.Server.Managers.ZoneControl.ZoneStatResolver.Write(wo, null);
+            int RollCore(int coreKey, double anchor)
             {
-                var cap = anchor / 18.0 * scale;
-                var step = anchor / 18.0 / 14.0;
-                var lo = cap - (tier == 11 ? 0.5 : 1.5) * step;
-                var min = (int)System.Math.Round(lo);
-                var max = (int)System.Math.Round(cap);
-                if (min > max) min = max;
-                if (forceMax) return max;
+                var (min, max) = ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreWindow(coreKey, tier, anchor);
+                int grade;
+                if (forceMax) grade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax;
                 // coreFrac: deterministic point inside the window (premade "Average" suits pass
                 // 0.5 = the midpoint). forceMax still wins above; null = the live random roll.
-                if (coreFrac.HasValue)
-                    return min + (int)System.Math.Round((max - min) * coreFrac.Value);
-                return ThreadSafeRandom.Next(min, max);   // inclusive both ends
+                else if (coreFrac.HasValue) grade = (int)System.Math.Round(coreFrac.Value * ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax);
+                else grade = ThreadSafeRandom.Next(0, ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax);   // inclusive both ends
+                ACE.Server.Managers.ZoneControl.ZoneStatResolver.AddLine(wo, coreKey, grade);
+                return ACE.Server.Managers.ZoneControl.ZoneStatResolver.ValueFor(min, max, grade);
             }
 
             switch (wo.ItemType)
             {
                 case ACE.Entity.Enum.ItemType.Armor:
-                    wo.ArmorLevel = 1100 + 100 * (tier - 11);
+                    wo.ArmorLevel = ACE.Server.Managers.ZoneControl.ZoneStatResolver.BaseArmorLevel(tier);
 
                     // Every element authored explicitly: ArmorModVs* defaults to 0.0 and
                     // MULTIPLIES the piece AL - an absent prop is literally zero protection
@@ -396,15 +399,19 @@ namespace ACE.Server.Factories
                     return;
             }
 
+            // identity FIRST: tier + current ladder version, so StampGraded's key-25 path (TierOf) and
+            // Compute see the tier before any line lands
+            ACE.Server.Managers.ZoneControl.ZoneStatResolver.StampIdentity(wo, tier);
+
             // Damage / Max Health left the fixed base (random pool now). REMOVE rather than skip:
             // TryMutateGearRatingT10's coin-flip rolls would otherwise leak onto T11 drops.
             wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamage);
             wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearMaxHealth);
 
-            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamageResist, RollCore(anchorDr));
-            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritDamageResist, RollCore(anchorCdr));
-            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritResist, RollCore(anchorCdr));
-            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearNetherResist, RollCore(anchorCdr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamageResist, RollCore(ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreDamageResist, anchorDr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritDamageResist, RollCore(ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreCritDamageResist, anchorCdr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritResist, RollCore(ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreCritResist, anchorCdr));
+            wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearNetherResist, RollCore(ACE.Server.Managers.ZoneControl.ZoneStatResolver.CoreNetherResist, anchorCdr));
 
             // Gear Creature Augs used to get a fixed 30/20/12 x scale base here, written straight
             // into prop 50213 alongside its own "Creature Augmentation:" LongDesc line. DELETED

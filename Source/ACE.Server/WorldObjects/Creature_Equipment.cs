@@ -37,6 +37,10 @@ namespace ACE.Server.WorldObjects
                 var worldObject = WorldObjectFactory.CreateWorldObject(biota);
                 EquippedObjects[worldObject.Guid] = worldObject;
 
+                // live stat resolution: a piece whose tier ladder moved since it was last resolved
+                // re-stamps its cache BEFORE the rating / cantrip caches read it (login path)
+                ACE.Server.Managers.ZoneControl.ZoneStatResolver.ApplyIfStale(worldObject);
+
                 AddItemToEquippedItemsRatingCache(worldObject);
                 UpdateZoneCantripCache(worldObject, +1);
 
@@ -438,6 +442,9 @@ namespace ACE.Server.WorldObjects
             worldObject.Wielder = this;
 
             EquippedObjects[worldObject.Guid] = worldObject;
+
+            // live stat resolution (plan §3): resolve-on-EQUIP, the only place the cache is re-stamped
+            ACE.Server.Managers.ZoneControl.ZoneStatResolver.ApplyIfStale(worldObject);
 
             AddItemToEquippedItemsRatingCache(worldObject);
             UpdateZoneCantripCache(worldObject, +1);

@@ -113,7 +113,26 @@ namespace ACE.Server.Managers.ZoneControl
             /// <summary>Per-VARIATION Defaults (2026-07-30): variation -> the baseline layer every zone at
             /// that variation inherits, per stat. Absent on older stores = no Defaults = prior behavior.</summary>
             public Dictionary<int, VariationDefault> VariationDefaults { get; set; } = new();
+
+            /// <summary>Live stat resolution (2026-08-22): per-TIER ladder apply state. Absent / empty =
+            /// version 0 everywhere = no apply has ever run. See <see cref="GetLadderVersion"/>.</summary>
+            public Dictionary<int, LadderApply> LadderApplies { get; set; } = new();
         }
+
+        /// <summary>One `ladder apply` state for a tier. Version is a counter an item compares its
+        /// ZcResolvedVersion against; AllowNerf = the last apply was passed --nerf, so re-resolution may
+        /// LOWER a stamped value (default: apply only raises - owner policy, plan 7b).</summary>
+        public class LadderApply
+        {
+            public int Version { get; set; }
+            public bool AllowNerf { get; set; }
+            public string AppliedBy { get; set; }
+            public DateTime AppliedUtc { get; set; }
+        }
+
+        // tier -> ladder apply state. Guarded by _lock; read through the volatile copy below (hot equip path).
+        private static readonly Dictionary<int, LadderApply> _ladderApplies = new();
+        private static volatile Dictionary<int, LadderApply> _ladderSnapshot = new();
 
         // variation -> Default layer. Guarded by _lock; copied into the lock-free snapshot at rebuild.
         private static readonly Dictionary<int, VariationDefault> _variationDefaults = new();
@@ -147,6 +166,7 @@ namespace ACE.Server.Managers.ZoneControl
             _areas.Clear();
             _evalCache.Clear();
             _variationDefaults.Clear();
+            _ladderApplies.Clear();
 
             string json = null;
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
@@ -181,6 +201,12 @@ namespace ACE.Server.Managers.ZoneControl
                     _variationDefaults[kv.Key] = kv.Value;
                 }
             }
+
+            if (store.LadderApplies != null)
+                foreach (var kv in store.LadderApplies)
+                    if (kv.Value != null)
+                        _ladderApplies[kv.Key] = kv.Value;
+            _ladderSnapshot = new Dictionary<int, LadderApply>(_ladderApplies);
 
             RebuildIndexes();
         }
@@ -256,7 +282,9 @@ namespace ACE.Server.Managers.ZoneControl
             {
                 Areas = _areas.Values.ToList(),
                 VariationDefaults = new Dictionary<int, VariationDefault>(_variationDefaults),
+                LadderApplies = new Dictionary<int, LadderApply>(_ladderApplies),
             };
+            _ladderSnapshot = new Dictionary<int, LadderApply>(_ladderApplies);
             var jsonOut = JsonConvert.SerializeObject(store);
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
                 DatabaseManager.ShardConfig.SaveString(new ConfigPropertiesString { Key = StoreKey, Value = jsonOut, Description = "Zone Control store (JSON)" });
@@ -1097,6 +1125,51 @@ namespace ACE.Server.Managers.ZoneControl
             EnsureInitialized();
             lock (_lock)
                 return DefaultFor(variation);
+        }
+
+        // ── live stat resolution: ladder apply versions (2026-08-22) ──
+
+        /// <summary>Lock-free: the ladder apply state for a tier (version 0 / no nerf when never applied).
+        /// Called on every equip of a ZC-lined piece, so no lock and no init side effects beyond the first call.</summary>
+        public static LadderApply GetLadderVersion(int tier)
+        {
+            EnsureInitialized();
+            return _ladderSnapshot.TryGetValue(tier, out var la) ? la : new LadderApply();
+        }
+
+        /// <summary>Every tier with an apply on record, ascending.</summary>
+        public static List<KeyValuePair<int, LadderApply>> ListLadderVersions()
+        {
+            EnsureInitialized();
+            return _ladderSnapshot.OrderBy(kv => kv.Key).ToList();
+        }
+
+        /// <summary>`/zonecontrol ladder apply`: bump the version for one tier (or every tier 11-25 when
+        /// tier is null) so existing items re-resolve against the live ladder on their next equip.
+        /// allowNerf = the --nerf flag; without it re-resolution never lowers a stamped value.
+        /// Returns the tiers bumped. Persists immediately.</summary>
+        public static List<int> BumpLadder(int? tier, bool allowNerf, string by)
+        {
+            EnsureInitialized();
+            var bumped = new List<int>();
+            lock (_lock)
+            {
+                var tiers = tier.HasValue ? new[] { tier.Value } : Enumerable.Range(11, 15).ToArray();
+                foreach (var t in tiers)
+                {
+                    _ladderApplies.TryGetValue(t, out var cur);
+                    _ladderApplies[t] = new LadderApply
+                    {
+                        Version = (cur?.Version ?? 0) + 1,
+                        AllowNerf = allowNerf,
+                        AppliedBy = by,
+                        AppliedUtc = DateTime.UtcNow,
+                    };
+                    bumped.Add(t);
+                }
+                Save();
+            }
+            return bumped;
         }
 
         /// <summary>Variations that currently have an authored Default, ascending.</summary>

@@ -13,6 +13,7 @@ using ACE.Server.Managers;
 using ACE.Server.Network.Enum;
 using ACE.Server.WorldObjects;
 using ACE.Server.WorldObjects.Entity;
+using ZoneStatResolver = ACE.Server.Managers.ZoneControl.ZoneStatResolver;
 
 namespace ACE.Server.Network.Structure
 {
@@ -80,6 +81,13 @@ namespace ACE.Server.Network.Structure
             BuildProperties(wo, examiner);
             BuildSpells(wo);
 
+            // Live Stat Resolution (owner 2026-08-22, plan 3b): a piece with a ZcLines record is
+            // resolved from its grades against the LIVE ladder for the RESPONSE COPY only - wo is
+            // never written, never marked dirty (equip is the only re-stamp site: ApplyIfStale).
+            var zcResolved = ZoneStatResolver.Compute(wo);
+            if (zcResolved != null)
+                SubstituteZoneResolvedInts(wo, zcResolved);
+
             // Help us make sure the item identify properly
             NPCLooksLikeObject = wo.GetProperty(PropertyBool.NpcLooksLikeObject) ?? false;
 
@@ -125,7 +133,7 @@ namespace ACE.Server.Network.Structure
             // Owner 2026-08-22: Zone Cantrip lines belong in the Property Details section, not
             // adrift in the description block. Runs here so downstream LongDesc edits see the same
             // shape they always have (a block already pinned to the top).
-            PromoteZoneCantripLines();
+            PromoteZoneCantripLines(zcResolved);
 
             // TODO: Resolve this issue a better way?
             // Because of the way ACE handles default base values in recipe system (or rather the lack thereof)
@@ -900,7 +908,34 @@ namespace ACE.Server.Network.Structure
         /// becomes a SEPARATE section right after it, never folded in. Armor has no other details
         /// entries, so it gets "Cantrips:" alone rather than an empty outer header (owner ruling).
         /// </summary>
-        private void PromoteZoneCantripLines()
+        /// <summary>
+        /// Live Stat Resolution (plan 3b, READ-ONLY): swap the response copy's int props for the values
+        /// the record resolves to against the live ladder. Only keys the client is sent anyway
+        /// (AssessmentProperties - the retail Gear* ratings) are substituted; the 502xx custom block is
+        /// not an assessment property today and stays off the wire exactly as before. Armor Level is
+        /// carried to the client as PropertyInt.ArmorLevel (ArmorProfile holds only the per-damage-type
+        /// mods); BuildProperties already added the enchantment armor mod on top of the stamped base,
+        /// so the same mod goes on top of the resolved base. wo is never touched.
+        /// </summary>
+        private void SubstituteZoneResolvedInts(WorldObject wo, ZoneStatResolver.Resolved r)
+        {
+            foreach (var kv in r.Ints)
+            {
+                if (AssessmentProperties.PropertiesInt.Contains(kv.Key))
+                    PropertiesInt[kv.Key] = kv.Value;
+            }
+
+            if (r.ArmorLevel.HasValue && AssessmentProperties.PropertiesInt.Contains(PropertyInt.ArmorLevel))
+                PropertiesInt[PropertyInt.ArmorLevel] = r.ArmorLevel.Value + wo.EnchantmentManager.GetArmorMod();
+        }
+
+        private const string ReinforcedLineName = "Reinforced";
+
+        /// <param name="resolved">Live Stat Resolution record (null = legacy piece / weapon): when present
+        /// the bullets come from the record (record order, specials and Armor Level included, the core
+        /// four excluded - they are ratings, not cantrip lines) plus any baked Reinforced text line
+        /// (earned + frozen, never in the record). The baked "Zone Cantrip:" text is stripped either way.</param>
+        private void PromoteZoneCantripLines(ZoneStatResolver.Resolved resolved = null)
         {
             if (!PropertiesString.TryGetValue(PropertyString.LongDesc, out var ld) || string.IsNullOrEmpty(ld))
                 return;
@@ -908,6 +943,7 @@ namespace ACE.Server.Network.Structure
                 return;
 
             var cantrips = new List<string>();
+            var reinforced = new List<string>();
             var rest = new List<string>();
             foreach (var raw in ld.Split('\n'))
             {
@@ -915,11 +951,26 @@ namespace ACE.Server.Network.Structure
                 if (line.StartsWith(ZoneCantripPrefix, StringComparison.Ordinal))
                 {
                     var name = line.Substring(ZoneCantripPrefix.Length).Trim();
-                    if (name.Length > 0)
+                    if (name.Length == 0)
+                        continue;
+                    if (resolved == null)
                         cantrips.Add("- " + name);
+                    else if (name.StartsWith(ReinforcedLineName, StringComparison.Ordinal))
+                        reinforced.Add("- " + name);
                 }
                 else
                     rest.Add(raw);
+            }
+
+            if (resolved != null)
+            {
+                foreach (var line in resolved.Lines)
+                {
+                    if (ZoneStatResolver.IsCoreKey(line.Record.Key))
+                        continue;
+                    cantrips.Add("- " + line.Text);
+                }
+                cantrips.AddRange(reinforced);
             }
 
             if (cantrips.Count == 0)

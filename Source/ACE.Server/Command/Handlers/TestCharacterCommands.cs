@@ -1129,13 +1129,6 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
-        private static int PremadeBandMax(int key, int tier) => (int)Math.Round(PremadeBand(key, tier).Max);
-        private static int PremadeBandMid(int key, int tier)
-        {
-            var (min, max) = PremadeBand(key, tier);
-            return (int)Math.Round((min + max) / 2.0);
-        }
-
         /// <summary>Deal the Average suit's lines: per-piece count = guaranteed (max - 2) plus one
         /// extra on pieces 1,3,5,...,15 (the 8 leftover lines of 18 x 0.44); keys pulled round-robin
         /// from the class-weight multiset (trash round(L x 10/108) each, Aegis half of that on armor,
@@ -2123,7 +2116,8 @@ namespace ACE.Server.Command.Handlers
                 ACE.Server.Factories.LootGenerationFactory.ApplyT11GearStats(wo, tier,
                     forceMax: bis, p: null, coreFrac: bis ? null : 0.5);
 
-                // the explicit lines - Stamp is ADDITIVE, so each key at most once per piece
+                // the explicit lines - graded (live stat resolution 2026-08-22): bis = grade 1000, avg = 500,
+                // stamped through the ZcLines record; each key at most once per piece
                 var keys = bis ? bisKeys.Take(bisCount) : avgDeal[i];
                 var stamped = new HashSet<int>();
                 foreach (var k in keys)
@@ -2141,9 +2135,10 @@ namespace ACE.Server.Command.Handlers
                     if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneCantrips.PieceMask(wo)))
                         continue;
                     var (bMin, bMax) = PremadeBand(k, tier);
-                    var value = bis ? PremadeBandMax(k, tier) : PremadeBandMid(k, tier);
-                    ACE.Server.Managers.ZoneControl.ZoneCantrips.Stamp(wo, def, value,
-                        band: ((int)Math.Round(bMin), (int)Math.Round(bMax), def.ProcMin, def.ProcMax));
+                    var grade = bis ? ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax
+                                    : ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax / 2;
+                    ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, def, grade,
+                        ((int)Math.Round(bMin), (int)Math.Round(bMax)));
                     lines++;
                 }
 

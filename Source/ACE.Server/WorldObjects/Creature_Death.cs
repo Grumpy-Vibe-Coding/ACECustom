@@ -1061,7 +1061,9 @@ namespace ACE.Server.WorldObjects
                         var (sMin, sMax, _, _) = zoneLoot.CantripBands.TryGetValue(specialDef.Key, out var sBand)
                             ? sBand : (specialDef.Min, specialDef.Max, specialDef.ProcMin, specialDef.ProcMax);
                         if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
-                        ACE.Server.Managers.ZoneControl.ZoneCantrips.Stamp(wo, specialDef, ACE.Common.ThreadSafeRandom.Next(sMin, sMax));
+                        // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcLines
+                        var sGrade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.RollGrade(effectiveTreasure.Tier, false);
+                        ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, specialDef, sGrade, (sMin, sMax));
                     }
 
                     // Tier 11+ presentation sweep. Runs LAST so it also covers values that came
@@ -1081,6 +1083,10 @@ namespace ACE.Server.WorldObjects
                         // description cleanup LAST: drop inherited weenie flavor text, keep our
                         // lines in order, provenance ("Dropped by") to the very bottom
                         LootGenerationFactory.FinalizeT11LongDesc(wo);
+
+                        // Live stat resolution self-check: the record must resolve to exactly what
+                        // was stamped (grades are the truth, props the cache). Cheap, once per piece.
+                        VerifyLiveStatCache(wo);
 
                         // NOTE (owner 2026-07-21): the server-composed info block / full panel
                         // takeover was REVERTED -- the client renders its stock examine panel.
@@ -1391,6 +1397,37 @@ namespace ACE.Server.WorldObjects
             if (slag == null) return;
 
             corpse.TryAddToInventory(slag);
+        }
+
+        /// <summary>
+        /// Debug assertion for live stat resolution (2026-08-22): ZoneStatResolver.Compute(wo) must equal the
+        /// props the producers stamped. Any difference means a producer bypassed the record, a zone override
+        /// (core anchor / armor_al_mult / armor_al_bonus) diverged from the tier Default layer the resolver
+        /// reads, or a later mutation touched a ZC-owned prop. Warn only - never alters the drop.
+        /// </summary>
+        private static void VerifyLiveStatCache(WorldObject wo)
+        {
+            try
+            {
+                var r = ACE.Server.Managers.ZoneControl.ZoneStatResolver.Compute(wo);
+                if (r == null)
+                    return;
+                var diffs = new List<string>();
+                foreach (var kv in r.Ints)
+                {
+                    var cur = wo.GetProperty(kv.Key);
+                    if (cur != kv.Value)
+                        diffs.Add($"{kv.Key} item={(cur.HasValue ? cur.Value.ToString() : "null")} resolved={kv.Value}");
+                }
+                if (r.ArmorLevel.HasValue && wo.ArmorLevel != r.ArmorLevel.Value)
+                    diffs.Add($"ArmorLevel item={(wo.ArmorLevel.HasValue ? wo.ArmorLevel.Value.ToString() : "null")} resolved={r.ArmorLevel.Value}");
+                if (diffs.Count > 0)
+                    log.Warn($"[ZONELOOT] LIVESTAT MISMATCH on {wo.Name} ({wo.WeenieClassId}, tier {r.Tier}, record \"{wo.GetProperty(PropertyString.ZcLines)}\"): {string.Join(", ", diffs)}");
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[ZONELOOT] LIVESTAT self-check threw on {wo?.Name}: {ex.Message}");
+            }
         }
 
         public void DoCantripLogging(DamageHistoryInfo killer, WorldObject wo)

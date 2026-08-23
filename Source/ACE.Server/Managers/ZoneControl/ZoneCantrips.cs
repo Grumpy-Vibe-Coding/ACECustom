@@ -368,6 +368,52 @@ namespace ACE.Server.Managers.ZoneControl
             wo.SetProperty((PropertyInt)propId, cur + value);
         }
 
+        /// <summary>
+        /// GRADED stamp (live stat resolution, 2026-08-22): records (key, grade) in the piece's ZcLines
+        /// record, SETS the line's props to the value the grade resolves to inside the EFFECTIVE band
+        /// (what a later ladder apply will recompute against the live band), and writes the same drop line
+        /// text as <see cref="Stamp"/>. SET, not additive - one line per key per piece, the record is the
+        /// truth and the props are its cache. Reinforced (SetsProtection) is NOT graded - it is earned and
+        /// frozen (owner ruling) - so callers route key 49 through the plain Stamp. Returns the value.
+        /// Callers must also <see cref="ZoneStatResolver.StampIdentity"/> the piece once (tier + version).
+        /// </summary>
+        public static int StampGraded(WorldObject wo, Def def, int grade, (int Min, int Max) band)
+        {
+            if (wo == null || def == null)
+                return 0;
+            if (def.SetsProtection)
+            {
+                var rank = ZoneStatResolver.ValueFor(band.Min, band.Max, grade);
+                Stamp(wo, def, rank, 0, (band.Min, band.Max, def.ProcMin, def.ProcMax));
+                return rank;
+            }
+
+            var value = ZoneStatResolver.ValueFor(band.Min, band.Max, grade);
+            ZoneStatResolver.AddLine(wo, def.Key, grade);
+
+            if (def.ArmorOnly && def.Ints == null)
+            {
+                // key 25 Armor Level: the piece's AL = tier base + the line; SET through the base so a
+                // re-roll of the same key never stacks
+                var tier = ZoneStatResolver.TierOf(wo);
+                if (wo.ArmorLevel.HasValue)
+                    wo.ArmorLevel = (tier > 0 ? ZoneStatResolver.BaseArmorLevel(tier) : wo.ArmorLevel.Value) + value;
+            }
+            else if (def.Ints != null)
+            {
+                foreach (var (propId, _) in def.Ints)
+                    wo.SetProperty((PropertyInt)propId, value);
+            }
+
+            string line;
+            if (def.SlotSpecial)
+                line = string.IsNullOrEmpty(def.ValFmt) ? $"Zone Cantrip: {def.Name}" : $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt, value)}";
+            else
+                line = $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt ?? "+{0}", value)} [{band.Min}-{band.Max}]";
+            wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? line : wo.LongDesc + "\n\n" + line;
+            return value;
+        }
+
         // The pre-band fixed-value Stamp(wo, def) overload was DELETED 2026-08-21: it had zero
         // callers left, and for the banded-only keys 33-42 (Ints Value = 0 / no Ints at all) it
         // would stamp nothing while still marking the item. Roll a value and use the overload below.
