@@ -297,8 +297,7 @@ namespace ACE.Server.Managers.ZoneControl
                         r.Ints[(PropertyInt)propId] = value;
             }
 
-            // AL is resolved ONLY when the piece carries an Armor Level line: a piece without one keeps
-            // whatever the zone's armor_al_bonus / armor_al_mult left on it (those are not in the record)
+            // AL is resolved ONLY when the piece carries an Armor Level line (a piece without one keeps its tier base)
             if (hasArmor && hasAlLine)
                 r.ArmorLevel = BaseArmorLevel(tier) + alBonus;
             return r;

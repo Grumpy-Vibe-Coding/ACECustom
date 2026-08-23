@@ -115,29 +115,13 @@ namespace ACE.Server.Managers.ZoneControl
                     wo.ResistMagic = 9999;
             }
 
-            if (wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0 &&
-                (p.Has(ZoneStat.ArmorAlMult) || p.Has(ZoneStat.ArmorAlBonus)))
-            {
-                var al = (double)wo.ArmorLevel.Value;
-                var mult = p.Get(ZoneStat.ArmorAlMult, 1.0);
-                if (mult > 0)
-                    al *= mult;
-                al += p.Get(ZoneStat.ArmorAlBonus, 0.0);
-                wo.ArmorLevel = Math.Max(0, (int)Math.Round(al));
-            }
-
-            // workmanship SET range, split by item kind: the weapon pair touches only weapons, the armor
-            // pair only AL-bearing non-weapons (armor, shields, AL clothing). Replaces the rolled value —
+            // workmanship SET range: the weapon pair touches only weapons (the armor pair was removed 2026-08-23). Replaces the rolled value —
             // one of the pair set = exact, both = uniform roll per drop, reversed auto-swap, clamp 1..10.
             if (wo.ItemWorkmanship.HasValue)
             {
                 if (isWeapon && (p.Has(ZoneStat.WeaponWorkmanshipMin) || p.Has(ZoneStat.WeaponWorkmanshipMax)))
                     wo.ItemWorkmanship = (int)Math.Round(
                         RollRange(p, ZoneStat.WeaponWorkmanshipMin, ZoneStat.WeaponWorkmanshipMax, 1, 1, 10));
-                else if (!isWeapon && wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0 &&
-                         (p.Has(ZoneStat.ArmorWorkmanshipMin) || p.Has(ZoneStat.ArmorWorkmanshipMax)))
-                    wo.ItemWorkmanship = (int)Math.Round(
-                        RollRange(p, ZoneStat.ArmorWorkmanshipMin, ZoneStat.ArmorWorkmanshipMax, 1, 1, 10));
             }
 
             if (p.Has(ZoneStat.ValueMult) && wo.Value.HasValue)
@@ -225,26 +209,6 @@ namespace ACE.Server.Managers.ZoneControl
             SpellLevelProgression.LightningBolt, SpellLevelProgression.ShockWave, SpellLevelProgression.ForceBolt,
             SpellLevelProgression.WhirlingBlade, SpellLevelProgression.HarmOther,
         };
-
-        // The Paragon gem spell lists (same spells the vendor gems add to armor), tiers I..V each.
-        private static readonly List<SpellId>[] ParagonGemPool =
-        {
-            SpellLevelProgression.ParagonsDualWieldMastery, SpellLevelProgression.ParagonsFinesseWeaponMastery,
-            SpellLevelProgression.ParagonsHeavyWeaponMastery, SpellLevelProgression.ParagonsLifeMagicMastery,
-            SpellLevelProgression.ParagonsLightWeaponMastery, SpellLevelProgression.ParagonsMissileWeaponMastery,
-            SpellLevelProgression.ParagonsRecklessnessMastery, SpellLevelProgression.ParagonsSneakAttackMastery,
-            SpellLevelProgression.ParagonsTwoHandedCombatMastery, SpellLevelProgression.ParagonsVoidMagicMastery,
-            SpellLevelProgression.ParagonsWarMagicMastery, SpellLevelProgression.ParagonsDirtyFightingMastery,
-            SpellLevelProgression.ParagonsWillpower, SpellLevelProgression.ParagonsCoordination,
-            SpellLevelProgression.ParagonsEndurance, SpellLevelProgression.ParagonsFocus,
-            SpellLevelProgression.ParagonQuickness, SpellLevelProgression.ParagonsStrength,
-            SpellLevelProgression.ParagonsStamina, SpellLevelProgression.ParagonsCriticalDamageBoost,
-            SpellLevelProgression.ParagonsCriticalDamageReduction, SpellLevelProgression.ParagonsDamageBoost,
-            SpellLevelProgression.ParagonsDamageReduction, SpellLevelProgression.ParagonsMana,
-        };
-
-        // Gem tier I..V weights (sum 100) — weighted toward the low tiers.
-        private static readonly int[] GemTierWeights = { 40, 25, 17, 11, 7 };
 
         private static void TrySpecialRolls(WorldObject wo, EvaluatedProfile p, Creature killed, int lootTier, bool forceMax)
         {
@@ -361,14 +325,6 @@ namespace ACE.Server.Managers.ZoneControl
                 wo.ItemTotalXp = wo.ItemTotalXp ?? 0;
             }
 
-            // one random Paragon gem spell on rolled armor (as if pre-gemmed)
-            if (!isWeapon && wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0 && Won(p, ZoneStat.ArmorGemChance))
-            {
-                var list = ParagonGemPool[ThreadSafeRandom.Next(0, ParagonGemPool.Length - 1)];
-                var spell = list[Math.Min(RollWeighted(GemTierWeights), list.Count) - 1];
-                wo.Biota.GetOrAddKnownSpell((int)spell, wo.BiotaDatabaseLock, out _);
-            }
-
             // ── pre-applied crafts — ALWAYS LAST (owner rule: hilts/strings go on after every other
             // tuner, so their bonuses ADD on top of whatever the cards above set). Numbers mirror the
             // live recipes; adds land on the item's EFFECTIVE value (engine default when no prop). ──
@@ -418,7 +374,7 @@ namespace ACE.Server.Managers.ZoneControl
         ///   (a) line COUNT = cantrip_lines_min guaranteed, then extra slots up to cantrip_lines_max roll
         ///       cantrip_lines_chance_1/2/3 IN ORDER - the first miss stops (slots past 3 reuse chance_3);
         ///   (b) each slot picks a DISTINCT key from the zone pool, weighted by Def.Class
-        ///       (cantrip_weight_trash/mid/chase; key 33 Crit Rating reads cantrip_crit_weight);
+        ///       (cantrip_weight_trash/mid/chase);
         ///       SlotSpecial defs never enter; the per-line slot rule decides which piece kinds may roll it;
         ///   (c) bands: the zone override (CustomCantripBands) wins over the catalog, unchanged;
         ///   (d) forceMax (the piece carries the per-kill slot special) = every line at band MAX.
@@ -461,7 +417,6 @@ namespace ACE.Server.Managers.ZoneControl
             var weightTrash = Math.Max(0.0, p.Get(ZoneStat.CantripWeightTrash, 10.0));
             var weightMid = Math.Max(0.0, p.Get(ZoneStat.CantripWeightMid, 6.0));
             var weightChase = Math.Max(0.0, p.Get(ZoneStat.CantripWeightChase, 1.0));
-            var weightCrit = Math.Max(0.0, p.Get(ZoneStat.CantripCritWeight, 1.0));
 
             var candidates = new List<(ZoneCantrips.Def Def, double Weight)>();
             var seen = new HashSet<int>();
@@ -471,7 +426,7 @@ namespace ACE.Server.Managers.ZoneControl
                     continue;
                 if (!ZoneCantrips.SlotAllowed(ZoneCantrips.EffectiveSlotMask(def, p.CantripSlots), pieceMask))
                     continue;
-                var weight = def.Key == 33 ? weightCrit : def.Class switch
+                var weight = def.Class switch   // Crit Chance is a plain Chase line since 2026-08-23 (crit weight removed)
                 {
                     ZoneCantrips.CantripClass.Trash => weightTrash,
                     ZoneCantrips.CantripClass.Mid => weightMid,

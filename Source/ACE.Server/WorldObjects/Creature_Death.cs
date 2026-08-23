@@ -916,10 +916,25 @@ namespace ACE.Server.WorldObjects
             // currency for this mob (null for players/exempt/non-endgame/no-match -> normal loot).
             var zoneLoot = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
 
+            // Zone loot FLOOR (owner 2026-08-23): anything that dies inside a governed variant zone (v11+)
+            // drops that variation's set - a mis-tiered T8/T9/T10 WCID, a retail mob with its own table,
+            // or a retail mob with NO table (it gets the zone fallback profile). Exempt creatures never
+            // reach here (zoneLoot is null for them), T11+ profiles are untouched (max, not add).
+            var zoneFloorTier = zoneLoot != null ? (Location?.Variation ?? 0) : 0;
+            if (zoneFloorTier < ACE.Server.Managers.ZoneControl.ZoneControlManager.MinBoundedVariation) zoneFloorTier = 0;
+            var deathTreasure = DeathTreasure;
+            if (deathTreasure == null && zoneFloorTier > 0)
+                deathTreasure = DatabaseManager.World.GetCachedDeathTreasure(LootGenerationFactory.ZoneLootFallbackProfile);
+
             // create death treasure from loot generation factory
-            if (DeathTreasure != null)
+            if (deathTreasure != null)
             {
-                var effectiveTreasure = BuildZoneScaledTreasure(DeathTreasure, zoneLoot);
+                var effectiveTreasure = BuildZoneScaledTreasure(deathTreasure, zoneLoot);
+                if (zoneFloorTier > 0 && effectiveTreasure.Tier < zoneFloorTier)
+                {
+                    effectiveTreasure = CloneTreasureDeath(effectiveTreasure);
+                    effectiveTreasure.Tier = zoneFloorTier;
+                }
 
                 // Zone Control QB scaling: the killer's Quest Bonus count lifts the profile's
                 // LootQualityMod (per-kill clone; enabled by the zone's qb_quality_per_step stat)
@@ -984,6 +999,9 @@ namespace ACE.Server.WorldObjects
                     if (ACE.Common.ThreadSafeRandom.Next(1, denom) == 1)
                     {
                         var specials = ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotSpecials();
+                        // per-special on/off (owner 2026-08-23): a special turned off at this scope never rolls;
+                        // the odds are unchanged, the remaining specials share the hit
+                        specials.RemoveAll(d => !zoneLoot.SpecialEnabled(d.Key));
                         if (specials.Count > 0)
                         {
                             specialDef = specials[ACE.Common.ThreadSafeRandom.Next(0, specials.Count - 1)];
@@ -1044,7 +1062,7 @@ namespace ACE.Server.WorldObjects
                         PrestigeManager.ApplyLootScaling(wo, tier);
 
                     // T11+ deterministic per-slot gear budget (fixed base; cantrips carry the
-                    // variance). BEFORE MutateLootItem so armor_al_bonus/mult and the cantrip
+                    // variance). BEFORE MutateLootItem so the cantrip
                     // stamps layer ON TOP of it rather than being clobbered.
                     var isSpecial = specialPiece != null && ReferenceEquals(wo, specialPiece);
                     if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
@@ -1402,7 +1420,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Debug assertion for live stat resolution (2026-08-22): ZoneStatResolver.Compute(wo) must equal the
         /// props the producers stamped. Any difference means a producer bypassed the record, a zone override
-        /// (core anchor / armor_al_mult / armor_al_bonus) diverged from the tier Default layer the resolver
+        /// (core anchor) diverged from the tier Default layer the resolver
         /// reads, or a later mutation touched a ZC-owned prop. Warn only - never alters the drop.
         /// </summary>
         private static void VerifyLiveStatCache(WorldObject wo)

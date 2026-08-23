@@ -919,9 +919,23 @@ namespace ACE.Server.Network.Structure
         /// </summary>
         private void SubstituteZoneResolvedInts(WorldObject wo, ZoneStatResolver.Resolved r)
         {
+            // Core four -> Ratings (resolved). A Gear* prop that a CANTRIP LINE produced is REMOVED from the
+            // Ratings copy instead (owner 2026-08-23: it showed twice - once in the client's Ratings, once
+            // under Cantrips). Display only: the prop stays on the item, combat and character totals read it
+            // as before. Gated on the record, so pre-T11 gear never enters this path.
+            var lineProps = new HashSet<PropertyInt>();
+            foreach (var line in r.Lines)
+                if (line.Def?.Ints != null)
+                    foreach (var (propId, _) in line.Def.Ints)
+                        lineProps.Add((PropertyInt)propId);
+
             foreach (var kv in r.Ints)
             {
-                if (AssessmentProperties.PropertiesInt.Contains(kv.Key))
+                if (!AssessmentProperties.PropertiesInt.Contains(kv.Key))
+                    continue;
+                if (lineProps.Contains(kv.Key))
+                    PropertiesInt.Remove(kv.Key);
+                else
                     PropertiesInt[kv.Key] = kv.Value;
             }
 

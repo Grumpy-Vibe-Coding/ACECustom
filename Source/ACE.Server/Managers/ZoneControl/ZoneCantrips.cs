@@ -229,7 +229,7 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         /// <summary>Armor v2 random-pool weight class (Cantrip_Band_Ladder v2 section 2). The per-class
-        /// weights are zone stats cantrip_weight_trash/mid/chase; key 33 Crit Rating reads cantrip_crit_weight.</summary>
+        /// weights are zone stats cantrip_weight_trash/mid/chase.</summary>
         public enum CantripClass
         {
             None = 0,   // retired / specials - never drawn as a line
@@ -276,7 +276,7 @@ namespace ACE.Server.Managers.ZoneControl
             // ── 2026-08-22 pool additions (owner cantrip walkthrough; design in Cantrip_Pool_Decisions_2026-08-22.md) ──
             // Pct Max Health - chase, pinned 1-3 like Crit Chance, SUMMED across pieces (18 x 3 = 54 pct at BiS),
             // stacks on top of the Helm special Fortify Vitals (max-wins). Read in CreatureVital (MaxHealth only).
-            { 47, new Def { Key = 47, Bucket = 1, Class = CantripClass.Chase, Name = "Pct Max Health", Effect = "+1-3 pct max health", ValFmt = "+{0} pct", Min = 1, Max = 3, Ints = P(PctMaxHealthPct, 0) } },
+            { 47, new Def { Key = 47, Bucket = 1, Class = CantripClass.Chase, Name = "Max Health Pct", Effect = "+1-3 pct max health", ValFmt = "+{0} pct", Min = 1, Max = 3, Ints = P(PctMaxHealthPct, 0) } },
             // Life on Hit - chase, JEWELRY ONLY (6 slots), 1-3 pct of the wielder's max HP per landed hit, summed,
             // worn cap lifeonhit_cap (25 pct), lifeonhit_cooldown (3 s). Read in Player.ZcTryLifeOnHit from both hit paths.
             { 48, new Def { Key = 48, Bucket = 4, Class = CantripClass.Chase, JewelryOnly = true, Name = "Life on Hit", Effect = "heal 1-3 pct max HP per hit", ValFmt = "{0} pct HP per hit", Min = 1, Max = 3, Ints = P(LifeOnHitPct, 0) } },

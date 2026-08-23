@@ -171,10 +171,6 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponUnenchantable = "weapon_unenchantable"; // nonzero = rolled weapons drop unenchantable (ResistMagic 9999)
         public const string WeaponWorkmanshipMin = "weapon_workmanship_min"; // workmanship SET range on rolled WEAPONS only, clamp 1..10
         public const string WeaponWorkmanshipMax = "weapon_workmanship_max"; //   (set one of the pair = exact value, both = roll per drop)
-        public const string ArmorAlBonus = "armor_al_bonus";         // flat AL added to rolled armor
-        public const string ArmorAlMult = "armor_al_mult";           // AL multiplier on rolled armor
-        public const string ArmorWorkmanshipMin = "armor_workmanship_min"; // workmanship SET range on rolled AL items only, clamp 1..10
-        public const string ArmorWorkmanshipMax = "armor_workmanship_max"; //   (set one of the pair = exact value, both = roll per drop)
         public const string CoinMult = "coin_mult";                  // multiplies rolled pyreal stacks
         public const string ValueMult = "value_mult";                // multiplies vendor value of rolled loot
         public const string ValueMin = "value_min";                  // flat re-roll range for rolled loot value, clamped 0..1,000,000
@@ -189,7 +185,6 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponSlayerMin = "weapon_slayer_min";       // SlayerDamageBonus min (raw multiplier, floor 1.5, cap 10.0)
         public const string WeaponSlayerMax = "weapon_slayer_max";       // SlayerDamageBonus max
         public const string WeaponParagonChance = "weapon_paragon_chance"; // drops pre-Paragoned (+1 ItemMaxLevel, levels from use)
-        public const string ArmorGemChance = "armor_gem_chance";         // one random Paragon gem spell stamped on rolled armor (tier weighted low)
         public const string WeaponCantripChance = "weapon_cantrip_chance"; // one EXTRA cantrip on a rolled weapon, from the zone's custom pool ONLY
         public const string ArmorCantripChance = "armor_cantrip_chance";   // one EXTRA cantrip on rolled armor/clothing/jewelry, custom pool ONLY
         // Zone-cantrip draw counts: DISTINCT picks per catalog bucket for the extra-loot-cantrip roll
@@ -213,7 +208,6 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string CantripWeightTrash = "cantrip_weight_trash";   // pick weight per Trash-class key (default 10)
         public const string CantripWeightMid = "cantrip_weight_mid";       // per Mid-class key (default 6)
         public const string CantripWeightChase = "cantrip_weight_chase";   // per Chase-class key (default 1)
-        public const string CantripCritWeight = "cantrip_crit_weight";     // key 33 Crit Rating alone (default 1)
         // Guaranteed core four anchors (SET totals at T25; per piece = anchor/18 x f(t)); see
         // LootGenerationFactory.ApplyT11GearStats
         public const string CoreAnchorDr = "core_anchor_dr";               // Damage Resist anchor (default 1250)
@@ -319,10 +313,9 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponStatMult, WeaponDamageMin, WeaponDamageMax, WeaponDamageRoll, WeaponCasterElemMin, WeaponCasterElemMax,
             WeaponMissileElemMin, WeaponMissileElemMax,
             WeaponAttuned, WeaponBonded, WeaponUnenchantable, WeaponWorkmanshipMin, WeaponWorkmanshipMax,
-            ArmorAlBonus, ArmorAlMult, ArmorWorkmanshipMin, ArmorWorkmanshipMax,
             CoinMult, ValueMult, ValueMin, ValueMax,
             WeaponProcChance, WeaponProcRate, WeaponProcSpell, WeaponImbueChance,
-            WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax, WeaponParagonChance, ArmorGemChance,
+            WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax, WeaponParagonChance,
             WeaponCantripChance, ArmorCantripChance,
             CantripDrawsB1, CantripDrawsB3, CantripDrawsB4, CantripDrawsB5,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,
@@ -340,7 +333,7 @@ namespace ACE.Server.Managers.ZoneScaling
             QbStepSize, QbQualityPerStep, QbMaxSteps, QbQuantityPerStep,
             // Armor v2 (2026-08-21) - APPEND-ONLY, the plugin indexes positionally
             CantripLinesMin, CantripLinesMax, CantripLinesChance1, CantripLinesChance2, CantripLinesChance3,
-            CantripWeightTrash, CantripWeightMid, CantripWeightChase, CantripCritWeight,
+            CantripWeightTrash, CantripWeightMid, CantripWeightChase,
             CoreAnchorDr, CoreAnchorCdr,
             SpecialOdds, SpecialBossMult, SpecialLeaderMult,
             BattleMendThreshold, BattleMendCooldown, PctHpCooldown, CheatDeathCooldown, CheatDeathImmunity,
@@ -518,6 +511,11 @@ namespace ACE.Server.Managers.ZoneScaling
         /// merged OVERWRITE per key like the bands. Missing on deserialize of older profiles = empty dict.</summary>
         public Dictionary<int, int> CustomCantripSlots { get; set; } = new();
 
+        /// <summary>Per-SPECIAL on/off (owner 2026-08-23): catalog key -> enabled. A key absent here is ON. Authored by
+        /// `cantrip <scope> special <key> on|off`, merged OVERWRITE per key (a zone can re-enable what the Default
+        /// turned off). Consulted by the per-kill special roll only. Missing on older profiles = empty dict.</summary>
+        public Dictionary<int, bool> CustomSpecials { get; set; } = new();
+
         /// <summary>Bonus-currency drop table: each entry rolls independently on every governed kill and
         /// injects a stack onto the corpse. Missing on deserialize of older profiles = empty list.</summary>
         public List<ZoneCurrencyDrop> CurrencyDrops { get; set; } = new();
@@ -598,6 +596,10 @@ namespace ACE.Server.Managers.ZoneScaling
                     foreach (var kv in layer.CustomCantripSlots)
                         result.CustomCantripSlots[kv.Key] = kv.Value;
 
+                if (layer.CustomSpecials != null)
+                    foreach (var kv in layer.CustomSpecials)
+                        result.CustomSpecials[kv.Key] = kv.Value;
+
                 if (layer.CurrencyDrops != null)
                     foreach (var drop in layer.CurrencyDrops)
                     {
@@ -631,6 +633,7 @@ namespace ACE.Server.Managers.ZoneScaling
             && (CustomCantrips == null || CustomCantrips.Count == 0)
             && (CustomCantripBands == null || CustomCantripBands.Count == 0)
             && (CustomCantripSlots == null || CustomCantripSlots.Count == 0)
+            && (CustomSpecials == null || CustomSpecials.Count == 0)
             && (CurrencyDrops == null || CurrencyDrops.Count == 0)
             && (SpellRules == null || SpellRules.Count == 0);
     }
@@ -712,9 +715,10 @@ namespace ACE.Server.Managers.ZoneScaling
             Dictionary<int, double> propFloats = null, Dictionary<int, bool> propBools = null,
             List<int> customCantrips = null, List<ZoneCurrencyDrop> currencyDrops = null,
             List<ZoneSpellRule> spellRules = null, Dictionary<int, CantripBand> cantripBands = null,
-            Dictionary<int, int> cantripSlots = null)
+            Dictionary<int, int> cantripSlots = null, Dictionary<int, bool> specialToggles = null)
         {
             CantripSlots = cantripSlots is { Count: > 0 } ? new Dictionary<int, int>(cantripSlots) : EmptyCantripSlots;
+            SpecialToggles = specialToggles is { Count: > 0 } ? new Dictionary<int, bool>(specialToggles) : EmptySpecialToggles;
             ScopeKey = scopeKey;
             Tier = tier;
             Variant = variant;
@@ -746,6 +750,10 @@ namespace ACE.Server.Managers.ZoneScaling
 
         /// <summary>Per-key slot rule overrides (ZoneCantrips.SlotMask bits), merged view. Empty = catalog defaults everywhere.</summary>
         public IReadOnlyDictionary<int, int> CantripSlots { get; }
+        private static readonly IReadOnlyDictionary<int, bool> EmptySpecialToggles = new Dictionary<int, bool>();
+        /// <summary>Per-special on/off (absent = on). See ZoneVariantProfile.CustomSpecials.</summary>
+        public IReadOnlyDictionary<int, bool> SpecialToggles { get; }
+        public bool SpecialEnabled(int key) => !SpecialToggles.TryGetValue(key, out var on) || on;
 
         /// <summary>Custom cantrip SpellIds for the extra-loot-cantrip roll (may be null = none defined).</summary>
         public IReadOnlyList<int> CustomCantrips { get; }

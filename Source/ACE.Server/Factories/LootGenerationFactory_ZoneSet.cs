@@ -42,6 +42,10 @@ namespace ACE.Server.Factories
         /// </summary>
         public const int ZoneLootSetMinTier = 11;
 
+        /// <summary>Death-treasure profile handed to a creature that dies inside a governed v11+ zone with NO
+        /// table of its own (owner 2026-08-23, zone loot floor): 73001 = the Tou Tou T11 profile.</summary>
+        public const uint ZoneLootFallbackProfile = 73001;
+
         /// <summary>
         /// Per-slot drop counts for one kill. Weapons = drops PER FAMILY (9 families). Each armor
         /// slot counts pieces whose coverage includes that slot; a multi-slot piece (coat) credits
@@ -322,8 +326,7 @@ namespace ACE.Server.Factories
         /// piece of zone-set loot and /asforge gear carries the same fixed per-slot stats,
         /// doubling per tier - "fixed base, variable extras", all drop variance lives in
         /// cantrips so damage-taken tuning works against a known floor. C# is the DEFAULT
-        /// layer only; the zone stats stay the override surface (ZoneLootMutator armor_al_bonus
-        /// / armor_al_mult and the cantrip stamps run AFTER this and layer on top).
+        /// layer only; the cantrip stamps run AFTER this and layer on top (the armor_al_* zone knobs were removed 2026-08-23).
         /// Shared by Creature_Death (loot sweep) and TestCharacterCommands (/asforge) so
         /// premades match drops exactly. Classifier is ItemType: Armor=2 covers body armor
         /// AND shields; Clothing=4 is shirt/pants/cloak (never authored AL); Jewelry=8

@@ -108,7 +108,7 @@ namespace ACE.Server.Command.Handlers
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
             + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | seticon <wcid> <iconDid|clear> [layer] | "
-            + "cantrip <name> <add|remove|list|catalog|band|draws> [args] [--wcid <id>] | "
+            + "cantrip <name> <add|remove|list|catalog|band|slots|special|draws> [args] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
@@ -150,7 +150,7 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol cantrip <name> band <key> <min> <max> [procMin procMax]   (override a key's roll band; 'band <key> clear' drops the override; 'cantrip default <var> band ...' authors the variation Default)");
                 Msg("  /zonecontrol cantrip <name> draws <bucket> <n>   (LEGACY bucket draws - still stored, no longer read since Armor v2)");
                 Msg("  /zonecontrol cantrip <name> lines <min> <max> [c1] [c2] [c3]   (Armor v2 line ladder: min guaranteed, extra slots up to max roll c1/c2/c3 in order, first miss stops; writes cantrip_lines_*)");
-                Msg("  /zonecontrol cantrip <name> weight <trash|mid|chase|crit> <n>   (key pick weight per class; crit = key 33 alone; writes cantrip_weight_* / cantrip_crit_weight)");
+                Msg("  /zonecontrol cantrip <name> weight <filler|average|chase> <n>   (key pick weight per class; writes cantrip_weight_*)");
                 Msg("  /zonecontrol cantrip <name> special <odds|bossmult|leadermult> <n>   (slot specials: 1-in-odds per KILL, boss/leader divide the odds; writes special_*)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
@@ -624,7 +624,7 @@ namespace ACE.Server.Command.Handlers
                         // (weapon/armor_cantrip_chance). Scope is a zone (+ optional --wcid), or
                         // 'cantrip default <var> ...' = the variation Default layer (band/draws only —
                         // the pool itself stays zone-scope).
-                        if (args.Count < 3) { Msg("Usage: cantrip <name> <add|remove|list|catalog|band|draws> [args] [--wcid <id>]"); return; }
+                        if (args.Count < 3) { Msg("Usage: cantrip <name> <add|remove|list|catalog|band|slots|special|draws> [args] [--wcid <id>]"); return; }
 
                         var isDefaultScope = args[1].Equals("default", StringComparison.OrdinalIgnoreCase);
                         var defaultVar = -1;
@@ -633,7 +633,7 @@ namespace ACE.Server.Command.Handlers
                         if (isDefaultScope)
                         {
                             if (args.Count < 4 || !int.TryParse(args[2].TrimStart('v', 'V'), out defaultVar) || defaultVar < 0)
-                            { Msg("Usage: cantrip default <variation> <band|draws> ..."); return; }
+                            { Msg("Usage: cantrip default <variation> <band|slots|special|draws> ..."); return; }
                             opIdx = 3;
                         }
                         else
@@ -715,6 +715,28 @@ namespace ACE.Server.Command.Handlers
                             Msg($"{scopeTag} cantrip band: {bandDef.Name} rolls {bandMin}-{bandMax}"
                                 + (procMax > 0 ? $", proc {procMin}-{procMax} pct." : "."));
                             AutoApplyForDefault(session, isDefaultScope, defaultVar, Msg);
+                            return;
+                        }
+
+                        if (op == "special")
+                        {
+                            // cantrip <scope> special <key> <on|off|clear> (owner 2026-08-23): per-special on/off for the
+                            // per-kill special roll. clear = drop the override (back to the next layer / on).
+                            if (args.Count < opIdx + 3 || !int.TryParse(args[opIdx + 1], out var spKey))
+                            { Msg("Usage: cantrip <name> special <key> <on|off|clear>"); return; }
+                            if (!ZoneCantrips.TryGet(spKey, out var spDef) || !spDef.SlotSpecial)
+                            { Msg($"Key {spKey} is not a slot special."); return; }
+                            var spTok = args[opIdx + 2].ToLowerInvariant();
+                            if (spTok == "clear")
+                            {
+                                MutateScope(vp => vp.CustomSpecials.Remove(spKey));
+                                Msg($"{scopeTag} special: {spDef.Name} override cleared (rolls unless a lower layer turns it off).");
+                                return;
+                            }
+                            if (spTok != "on" && spTok != "off") { Msg("Usage: cantrip <name> special <key> <on|off|clear>"); return; }
+                            var spOn = spTok == "on";
+                            MutateScope(vp => vp.CustomSpecials[spKey] = spOn);
+                            Msg($"{scopeTag} special: {spDef.Name} {(spOn ? "ON" : "OFF")} - {(spOn ? "rolls" : "never rolls")} on kills here.");
                             return;
                         }
 
@@ -816,19 +838,18 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "weight")
                         {
-                            // cantrip <scope> weight <filler|average|chase|crit> <n>   (old words trash / mid still accepted)
+                            // cantrip <scope> weight <filler|average|chase> <n>   (old words trash / mid still accepted)
                             if (args.Count < opIdx + 3
                                 || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var weight) || weight < 0)
-                            { Msg("Usage: cantrip <name> weight <filler|average|chase|crit> <n>   (n >= 0)"); return; }
+                            { Msg("Usage: cantrip <name> weight <filler|average|chase> <n>   (n >= 0)"); return; }
                             var weightStat = args[opIdx + 1].ToLowerInvariant() switch
                             {
                                 "filler" or "trash" => ZoneStat.CantripWeightTrash,
                                 "average" or "mid" => ZoneStat.CantripWeightMid,
                                 "chase" => ZoneStat.CantripWeightChase,
-                                "crit" => ZoneStat.CantripCritWeight,
                                 _ => null,
                             };
-                            if (weightStat == null) { Msg("Class must be filler, average, chase or crit."); return; }
+                            if (weightStat == null) { Msg("Class must be filler, average or chase."); return; }
                             SetStat(weightStat, weight);
                             Msg($"{scopeTag} {weightStat} = {weight.ToString("0.###", CultureInfo.InvariantCulture)}.");
                             return;
@@ -889,7 +910,7 @@ namespace ACE.Server.Command.Handlers
                                 var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
                                 if (vp != null) removed = vp.CustomCantrips.Remove(cantripKey);
                             });
-                            Msg(removed ? $"'{name}' zone cantrip {cantripKey} removed." : "That key wasn't in the pool.");
+                            Msg(removed ? $"'{name}' zone cantrip removed: {(ZoneCantrips.TryGet(cantripKey, out var rdef) ? rdef.Name : "key " + cantripKey)}." : "That line wasn't in the pool.");
                         }
                         else
                             Msg("op must be add | remove | list | catalog | band | slots | draws");
@@ -2641,6 +2662,16 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
+        /// <summary>ctspoff=key,key,... - the specials turned OFF at this (evaluated) scope. Sparse; absent = all on.
+        /// APPEND-ONLY tag (2026-08-23).</summary>
+        private static void AppendSpecialsOff(StringBuilder sb, Dictionary<int, bool> toggles)
+        {
+            if (toggles == null || toggles.Count == 0) return;
+            var off = toggles.Where(kv => !kv.Value).Select(kv => kv.Key).OrderBy(k => k).ToList();
+            if (off.Count == 0) return;
+            sb.Append("|ctspoff=").Append(string.Join(",", off));
+        }
+
         private static void AppendLadder(StringBuilder sb)
         {
             sb.Append("|ladder=");
@@ -2701,6 +2732,7 @@ namespace ACE.Server.Command.Handlers
                     sb.Append(kv.Key).Append(':').Append(kv.Value);
                 }
             }
+            AppendSpecialsOff(sb, vp?.CustomSpecials);
             return sb.ToString();
         }
 
@@ -2952,6 +2984,8 @@ namespace ACE.Server.Command.Handlers
                     sb.Append(kv.Key).Append(':').Append(kv.Value);
                 }
             }
+
+            AppendSpecialsOff(sb, vp?.CustomSpecials);
 
             // Per-bucket draw counts (sparse, EVALUATED view like the bands): ctdraws=<bucket>:<n>;...
             // — only buckets some layer authors; absent = default 2 everywhere.

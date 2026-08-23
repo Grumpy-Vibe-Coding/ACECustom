@@ -272,6 +272,7 @@ namespace ACE.Server.Managers.ZoneControl
                 && (vp.CustomCantrips == null || vp.CustomCantrips.Count == 0)
                 && (vp.CustomCantripBands == null || vp.CustomCantripBands.Count == 0)
                 && (vp.CustomCantripSlots == null || vp.CustomCantripSlots.Count == 0)
+                && (vp.CustomSpecials == null || vp.CustomSpecials.Count == 0)
                 && (vp.CurrencyDrops == null || vp.CurrencyDrops.Count == 0)
                 && (vp.SpellRules == null || vp.SpellRules.Count == 0);
         }
@@ -535,7 +536,7 @@ namespace ACE.Server.Managers.ZoneControl
             }
 
             return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops, spellRules, cantripBands,
-                variantProfile?.CustomCantripSlots);
+                variantProfile?.CustomCantripSlots, variantProfile?.CustomSpecials);
         }
 
         // CopyEffects removed 2026-07-30 — ZoneEffects.Merge(default, zone) both layers AND clones.
