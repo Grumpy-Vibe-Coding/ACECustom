@@ -262,14 +262,11 @@ namespace ACE.Server.Factories
                     continue;
                 if (line.StartsWith("Dropped by") || line.StartsWith("Dropped in ") || line.StartsWith("Location:"))
                     provenance.Append(provenance.Length > 0 ? "\n" : "").Append(line);
-                else if (line.StartsWith("Creature Augmentation:"))
-                {
-                    // regenerate from the live prop: the fixed base is baked BEFORE MutateLootItem,
-                    // where a key-35 zone cantrip may have ADDED to 50213 - the baked text goes stale
-                    var ca = wo.GetProperty((ACE.Entity.Enum.Properties.PropertyInt)
-                        ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus) ?? 0;
-                    keep.Append(keep.Length > 0 ? "\n" : "").Append("Creature Augmentation: +").Append(ca);
-                }
+                // A "Creature Augmentation:" line used to be regenerated here from prop 50213.
+                // The fixed base that stamped it was deleted 2026-08-22 - Creature Augs is now a
+                // plain banded cantrip (key 35) and stamps "Zone Cantrip: Creature Augs" like the
+                // other six augs. Legacy drops still carrying the old line fall through to the
+                // discard below, which is what we want: the line is stale by definition.
                 else if (line.StartsWith("Wield requires:") || line.StartsWith("Weapon Grade:") || line.StartsWith("Aug Scaling")
                       || line.StartsWith("Zone Cantrip:"))
                     keep.Append(keep.Length > 0 ? "\n" : "").Append(line);
@@ -355,7 +352,6 @@ namespace ACE.Server.Factories
             // (spec wants 40-42). Damage Rating and Max Health are NOT here any more - they are
             // random chase lines (keys 28 / 19). Mobs are tuned against the FLOOR of the core.
             var scale = 1.0 + (tier - 11) / 14.0;
-            int S(int baseValue) => (int)System.Math.Round(baseValue * scale);
 
             // zone override surface for the anchors (core_anchor_dr / core_anchor_cdr); C# is the default
             var anchorDr = p?.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CoreAnchorDr, 1250.0) ?? 1250.0;
@@ -377,12 +373,9 @@ namespace ACE.Server.Factories
                 return ThreadSafeRandom.Next(min, max);   // inclusive both ends
             }
 
-            int ca;
             switch (wo.ItemType)
             {
                 case ACE.Entity.Enum.ItemType.Armor:
-                    ca = 30;
-
                     wo.ArmorLevel = 1100 + 100 * (tier - 11);
 
                     // Every element authored explicitly: ArmorModVs* defaults to 0.0 and
@@ -395,11 +388,7 @@ namespace ACE.Server.Factories
                     break;
 
                 case ACE.Entity.Enum.ItemType.Clothing:
-                    ca = 20;
-                    break;
-
                 case ACE.Entity.Enum.ItemType.Jewelry:
-                    ca = 12;
                     break;
 
                 default:
@@ -417,12 +406,14 @@ namespace ACE.Server.Factories
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearCritResist, RollCore(anchorCdr));
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.GearNetherResist, RollCore(anchorCdr));
 
-            // Gear Creature Augs - the tier gate fixed base ("live route", owner 2026-08-21):
-            // summed by zoneCantripCache on equip/dequip and read by CreatureSkill.Current on
-            // every skill. NOT the buff-bake path.
-            var gearCa = S(ca);
-            wo.SetProperty((ACE.Entity.Enum.Properties.PropertyInt)ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus, gearCa);
-            AppendLongDescLine(wo, $"Creature Augmentation: +{gearCa}");
+            // Gear Creature Augs used to get a fixed 30/20/12 x scale base here, written straight
+            // into prop 50213 alongside its own "Creature Augmentation:" LongDesc line. DELETED
+            // 2026-08-22 (owner): it pre-dated the 08-21 band pass and was never removed, so
+            // Creature Augs was the ONLY aug carrying a guaranteed floor on top of its banded
+            // cantrip. All seven aug keys (34 Item, 35 Creature, 36 Life, 37 War, 38 Void,
+            // 39 Melee, 40 Missile) now come from the cantrip roll alone, on the same [14-69]
+            // T11 band, so the set totals land on the authored 2500-at-T25 ladder instead of
+            // overshooting it into the gear_cap_line clamp.
         }
 
         public static void EqualizeT11ArmorResists(WorldObject wo)

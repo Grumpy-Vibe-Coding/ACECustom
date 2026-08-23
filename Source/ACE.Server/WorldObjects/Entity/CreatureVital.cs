@@ -135,6 +135,11 @@ namespace ACE.Server.WorldObjects.Entity
 
                 var pts = Math.Max(0, creature.GetZoneCantripMax(ACE.Server.Managers.ZoneControl.ZoneCantrips.FortifyVitalsPct));
 
+                // Pct Max Health (key 47, chase, 2026-08-22): percentage points SUMMED across worn pieces,
+                // MaxHealth only, additive with the Fortify Vitals points (owner: they stack).
+                if (Vital == PropertyAttribute2nd.MaxHealth)
+                    pts += Math.Max(0, creature.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.PctMaxHealthPct));
+
                 return 1.0 + pts / 100.0;
             }
         }
@@ -160,11 +165,6 @@ namespace ACE.Server.WorldObjects.Entity
                     case PropertyAttribute2nd.MaxHealth:
                         // retail gear prop (also carries the Zone Control health cantrip)
                         return (uint)player.GetGearMaxHealth();
-                    case PropertyAttribute2nd.MaxStamina:
-                        // Zone Control cantrip gear
-                        return (uint)player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxStaminaBonus);
-                    case PropertyAttribute2nd.MaxMana:
-                        return (uint)player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxManaBonus);
                     default:
                         return 0;
                 }

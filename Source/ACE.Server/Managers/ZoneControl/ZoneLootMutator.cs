@@ -410,7 +410,7 @@ namespace ACE.Server.Managers.ZoneControl
 
             // the zone-cantrip LINES on top of whatever the roll produced — the zone's pool only
             // (prop-based ZoneCantrips catalog; retail cantrips deliberately excluded)
-            TryExtraCantrip(wo, p, isWeapon, forceMax);
+            TryExtraCantrip(wo, p, isWeapon, forceMax, lootTier);
         }
 
         /// <summary>
@@ -419,12 +419,12 @@ namespace ACE.Server.Managers.ZoneControl
         ///       cantrip_lines_chance_1/2/3 IN ORDER - the first miss stops (slots past 3 reuse chance_3);
         ///   (b) each slot picks a DISTINCT key from the zone pool, weighted by Def.Class
         ///       (cantrip_weight_trash/mid/chase; key 33 Crit Rating reads cantrip_crit_weight);
-        ///       Retired and SlotSpecial defs never enter, ArmorOnly needs an AL piece;
+        ///       SlotSpecial defs never enter; the per-line slot rule decides which piece kinds may roll it;
         ///   (c) bands: the zone override (CustomCantripBands) wins over the catalog, unchanged;
         ///   (d) forceMax (the piece carries the per-kill slot special) = every line at band MAX.
         /// armor_cantrip_chance / weapon_cantrip_chance stay the master on/off gate.
         /// </summary>
-        private static void TryExtraCantrip(WorldObject wo, EvaluatedProfile p, bool isWeapon, bool forceMax)
+        private static void TryExtraCantrip(WorldObject wo, EvaluatedProfile p, bool isWeapon, bool forceMax, int lootTier = 11)
         {
             if (!Won(p, isWeapon ? ZoneStat.WeaponCantripChance : ZoneStat.ArmorCantripChance))
                 return;
@@ -454,6 +454,8 @@ namespace ACE.Server.Managers.ZoneControl
                 return;
 
             var hasArmor = !isWeapon && wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0;
+            // per-line slot rule (owner 2026-08-22): zone / Default override per key, else the catalog's ArmorOnly / JewelryOnly
+            var pieceMask = ZoneCantrips.PieceMask(wo);
 
             // (b) zone pool -> weighted candidate list (retired / special / armor-only-on-armorless never enter)
             var weightTrash = Math.Max(0.0, p.Get(ZoneStat.CantripWeightTrash, 10.0));
@@ -465,9 +467,9 @@ namespace ACE.Server.Managers.ZoneControl
             var seen = new HashSet<int>();
             foreach (var key in pool)
             {
-                if (!seen.Add(key) || !ZoneCantrips.TryGet(key, out var def) || def.Retired || def.SlotSpecial)
+                if (!seen.Add(key) || !ZoneCantrips.TryGet(key, out var def) || def.SlotSpecial)   // unknown keys (retired, removed from the catalog) are skipped
                     continue;
-                if (def.ArmorOnly && !hasArmor)
+                if (!ZoneCantrips.SlotAllowed(ZoneCantrips.EffectiveSlotMask(def, p.CantripSlots), pieceMask))
                     continue;
                 var weight = def.Key == 33 ? weightCrit : def.Class switch
                 {
@@ -492,7 +494,8 @@ namespace ACE.Server.Managers.ZoneControl
                 if (min > max) (min, max) = (max, min);
                 if (procMin > procMax) (procMin, procMax) = (procMax, procMin);
 
-                var value = forceMax ? max : ThreadSafeRandom.Next(min, max);
+                // tier-weighted roll position (Option A curve, owner 2026-08-22): T11 uniform, climbing to 10/30/60 at T25
+                var value = ZoneCantrips.RollBanded(min, max, lootTier, forceMax);
                 var proc = procMax > 0 ? (forceMax ? procMax : ThreadSafeRandom.Next(procMin, procMax)) : 0;
                 // pass the effective band so the drop line advertises what was actually rolled from
                 ZoneCantrips.Stamp(wo, def, value, proc, (min, max, procMin, procMax));

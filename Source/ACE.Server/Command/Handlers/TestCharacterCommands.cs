@@ -1082,19 +1082,23 @@ namespace ACE.Server.Command.Handlers
         // cantrip lines written EXPLICITLY instead of rolled, so a tester can wear "the average
         // T-whatever suit" or "the best possible one" without farming. Two presets:
         //   BiS     = core four at window cap, the tier's MAX line count, every line at band MAX,
-        //             lines in the fixed order below (melee: Melee Aug first; caster: War Aug).
+        //             lines in the fixed order below.
         //   Average = core four at window midpoint, floor(expected) lines per piece dealt
         //             round-robin from the class-weight mix (trash 10 / mid 6 / chase 1), every
         //             line at band MIDPOINT.
         // Line count ladder (max / guaranteed): T11 2/0, T12-14 3/1, T15-17 4/2, T18-20 5/3,
         // T21-24 6/4, T25 7/5 (owner ruling 08-21 late: T25 = 5 guaranteed, BiS 7th = 34 Item Aug).
-        private static readonly int[] PremadeBisLinesMelee = { 39, 43, 28, 29, 33, 19, 34 };
-        private static readonly int[] PremadeBisLinesCaster = { 37, 43, 28, 29, 33, 19, 31 };
+        // ONE BiS list as of 2026-08-22: the class-split aug keys 37-40 are retired, so there is no
+        // longer a melee vs caster suit - the universal damage lines lead. The melee|caster words are
+        // still accepted on the command line and ignored, so old habits don't error.
+        // 2026-08-22 pool: all seven aug keys retired; 47 Pct Max Health + 49 Reinforced (armor) / 48 Life on Hit (jewelry)
+        // added. ArmorOnly / JewelryOnly keys are skipped per piece below, so armor and jewelry each reach the cap.
+        private static readonly int[] PremadeBisLines = { 28, 29, 43, 33, 19, 47, 49, 48 };
         // Average mix - deal order. 43 All Attributes = the one chase line per suit; 25 Aegis is
         // armor-only; 33 Crit Rating ladders by COUNT through the per-tier chance, so an average
         // suit carries none of it (Math file section 2).
         private static readonly int[] PremadeAvgTrashKeys = { 20, 21, 32 };
-        private static readonly int[] PremadeAvgMidKeys = { 19, 28, 29, 31, 34, 35, 36, 37, 38, 39, 40 };
+        private static readonly int[] PremadeAvgMidKeys = { 19, 28, 29, 31, 49 };
         private const int PremadeAvgChaseKey = 43;
         private const int PremadeArmorOnlyKey = 25;
 
@@ -2031,14 +2035,12 @@ namespace ACE.Server.Command.Handlers
                     Msg($"asforge premade: mode must be avg or bis. {usage}");
                     return;
             }
-            var caster = false;
             var force = false;
             foreach (var a in parameters.Skip(3))
             {
                 switch (a.ToLowerInvariant())
                 {
-                    case "melee": caster = false; break;
-                    case "caster": caster = true; break;
+                    case "melee": case "caster": break;   // accepted and ignored - one BiS list since 2026-08-22
                     case "force": force = true; break;
                     default:
                         Msg($"asforge premade: unknown option '{a}'. {usage}");
@@ -2048,7 +2050,6 @@ namespace ACE.Server.Command.Handlers
 
             var tierLabel = $"T{tier}";
             var modeTag = bis ? "BiS" : "Avg";
-            var buildTag = caster ? "caster" : "melee";
 
             // the `all` roster, in deal order (armor first so the Aegis lines land where AL lives)
             var roster = new List<(string Piece, WorldObject Wo)>();
@@ -2077,7 +2078,7 @@ namespace ACE.Server.Command.Handlers
             // ItemType.Armor gets the flat ladder (clothing never, jewelry by engine rule).
             var hasAl = roster.Select(r => r.Wo != null && r.Wo.ItemType == ItemType.Armor).ToArray();
             var avgDeal = bis ? null : PremadeDealAverage(tier, hasAl);
-            var bisKeys = caster ? PremadeBisLinesCaster : PremadeBisLinesMelee;
+            var bisKeys = PremadeBisLines;
             var bisCount = Math.Min(PremadeLineMax(tier), bisKeys.Length);
 
             var bagName = $"{tierLabel} {modeTag} Suit";
@@ -2128,16 +2129,19 @@ namespace ACE.Server.Command.Handlers
                 foreach (var k in keys)
                 {
                     if (!stamped.Add(k)) continue;
-                    if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(k, out var def) || def.Retired || def.SlotSpecial)
+                    if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(k, out var def) || def.SlotSpecial)
                     {
                         Msg($"asforge premade: key {k} is not a live pool line - skipped on {piece}");
                         continue;
                     }
-                    if (def.ArmorOnly && !(wo.ArmorLevel > 0))
-                        continue;                                            // Aegis needs an AL piece
+                    // live slot rule (owner 2026-08-22): the tier's Default-layer override when authored, else the
+                    // catalog's ArmorOnly / JewelryOnly - exactly what a real drop at this tier would obey
+                    var slotRule = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSlotMask(def,
+                        ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile?.CustomCantripSlots);
+                    if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneCantrips.PieceMask(wo)))
+                        continue;
                     var (bMin, bMax) = PremadeBand(k, tier);
                     var value = bis ? PremadeBandMax(k, tier) : PremadeBandMid(k, tier);
-                    // key 35 lands on 50213 here, BEFORE Finalize regenerates the "Creature Augmentation" line
                     ACE.Server.Managers.ZoneControl.ZoneCantrips.Stamp(wo, def, value,
                         band: ((int)Math.Round(bMin), (int)Math.Round(bMax), def.ProcMin, def.ProcMax));
                     lines++;
@@ -2153,7 +2157,7 @@ namespace ACE.Server.Command.Handlers
                 // drop-style description: known lines in stamp order, inherited flavor text gone.
                 // Provenance goes AFTER - Finalize's whitelist would discard it.
                 ACE.Server.Factories.LootGenerationFactory.FinalizeT11LongDesc(wo);
-                var provenance = $"Created by: {player.Name}\nTier: {tier}\nPremade: {modeTag} {buildTag}";
+                var provenance = $"Created by: {player.Name}\nTier: {tier}\nPremade: {modeTag}";
                 wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? provenance : wo.LongDesc + "\n\n" + provenance;
 
                 // the bag is created lazily so a fully-skipped re-press leaves no empty bag behind
@@ -2170,7 +2174,7 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
-            Msg($"Premade {tierLabel} {modeTag} {buildTag} suit: {minted} pieces created"
+            Msg($"Premade {tierLabel} {modeTag} suit: {minted} pieces created"
                 + (lines > 0 ? $", {lines} cantrip lines" : "")
                 + (failed > 0 ? $", {failed} failed" : "")
                 + (skipped > 0 ? $", {skipped} skipped (already held - add 'force' to re-mint)" : "")

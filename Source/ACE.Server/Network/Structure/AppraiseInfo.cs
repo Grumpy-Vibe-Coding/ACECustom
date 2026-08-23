@@ -878,7 +878,6 @@ namespace ACE.Server.Network.Structure
         }
 
         private const string ZoneCantripPrefix = "Zone Cantrip:";
-        private const string CreatureAugPrefix = "Creature Augmentation:";
         private const string CantripSectionHeader = "Cantrips:";
         private const string WeaponDetailsHeader = "Property Details:";
 
@@ -886,8 +885,9 @@ namespace ACE.Server.Network.Structure
         /// Cantrip lines are baked into wo.LongDesc at stamp time (ZoneCantrips.Stamp), so on
         /// armor / clothing / shields / jewelry they render as raw description text - none of those
         /// build a details section, only BuildWeapon does. Owner 2026-08-22: they get their own
-        /// "Cantrips:" section, and Creature Augmentation belongs in it (key 35 adds to the same
-        /// prop 50213 the fixed gear base writes).
+        /// "Cantrips:" section. Creature Augmentation used to be lifted in here as a special case
+        /// beside them; the fixed gear base that stamped that line was deleted the same day, so
+        /// Creature Augs arrives as an ordinary "Zone Cantrip:" line (key 35) like the other augs.
         ///
         /// Lifts them out of the APPRAISAL copy only - wo.LongDesc, the stamped source of truth,
         /// is never touched, so nothing is re-rolled and existing drops re-render correctly on the
@@ -904,8 +904,7 @@ namespace ACE.Server.Network.Structure
         {
             if (!PropertiesString.TryGetValue(PropertyString.LongDesc, out var ld) || string.IsNullOrEmpty(ld))
                 return;
-            if (ld.IndexOf(ZoneCantripPrefix, StringComparison.Ordinal) < 0
-                && ld.IndexOf(CreatureAugPrefix, StringComparison.Ordinal) < 0)
+            if (ld.IndexOf(ZoneCantripPrefix, StringComparison.Ordinal) < 0)
                 return;
 
             var cantrips = new List<string>();
@@ -918,12 +917,6 @@ namespace ACE.Server.Network.Structure
                     var name = line.Substring(ZoneCantripPrefix.Length).Trim();
                     if (name.Length > 0)
                         cantrips.Add("- " + name);
-                }
-                else if (line.StartsWith(CreatureAugPrefix, StringComparison.Ordinal))
-                {
-                    // Colon dropped so it reads like its neighbours, which carry no colon either.
-                    var val = line.Substring(CreatureAugPrefix.Length).Trim();
-                    cantrips.Add(val.Length > 0 ? "- Creature Augmentation " + val : "- Creature Augmentation");
                 }
                 else
                     rest.Add(raw);

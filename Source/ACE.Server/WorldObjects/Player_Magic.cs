@@ -1977,16 +1977,11 @@ namespace ACE.Server.WorldObjects
                         {
                             if (EffectiveWarAugCount >= 1)
                                 baseDamage += EffectiveWarAugCount;
-                            // Zone Control cantrip gear (War) - keeps ring casts in step with
-                            // SpellProjectile, which adds the same equipped sum.
-                            baseDamage += GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.WarAugBonus);
                         }
                         else if (spell.School == MagicSchool.VoidMagic)
                         {
                             if (EffectiveVoidAugCount >= 1)
                                 baseDamage += EffectiveVoidAugCount;
-                            // Zone Control cantrip gear (Void) - see the War branch note.
-                            baseDamage += GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.VoidAugBonus);
                         }
                     }
 

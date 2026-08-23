@@ -229,6 +229,8 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string CheatDeathCooldown = "cheatdeath_cooldown";    // seconds per character (default 600)
         public const string CheatDeathImmunity = "cheatdeath_immunity";    // immunity window, seconds (default 5)
         public const string RegenSpecialMult = "regen_special_mult";       // Bracers regen special multiplier (default 3.0)
+        public const string LifeOnHitCap = "lifeonhit_cap";                 // key 48: worn-total cap in pct of max HP per hit (default 25)
+        public const string LifeOnHitCooldown = "lifeonhit_cooldown";       // key 48: per-character seconds between heals (default 3)
         // Worn-gear HARD caps (owner 2026-08-21: "everything we set at 2500 must cap at EXACTLY 2500, not
         // around 2500"). The flat per-piece bands overshoot the anchor by rounding (18 x 139 = 2502 at T25),
         // so the cap is enforced on the EQUIPPED SUM at read time - equipment term only, never enchantments /
@@ -342,7 +344,7 @@ namespace ACE.Server.Managers.ZoneScaling
             CoreAnchorDr, CoreAnchorCdr,
             SpecialOdds, SpecialBossMult, SpecialLeaderMult,
             BattleMendThreshold, BattleMendCooldown, PctHpCooldown, CheatDeathCooldown, CheatDeathImmunity,
-            RegenSpecialMult,
+            RegenSpecialMult, LifeOnHitCap, LifeOnHitCooldown,
             GearCapDr, GearCapCdr, GearCapLine,
         };
     }
@@ -511,6 +513,11 @@ namespace ACE.Server.Managers.ZoneScaling
         /// the catalog's own band. Missing on deserialize of older profiles = empty dict (backward compatible).</summary>
         public Dictionary<int, CantripBand> CustomCantripBands { get; set; } = new();
 
+        /// <summary>Per-key SLOT RULE overrides (ZoneCantrips.SlotMask bits; 0 = Any), keyed by catalog key. A key
+        /// absent here uses the catalog's ArmorOnly / JewelryOnly default. Authored by `cantrip <scope> slots`,
+        /// merged OVERWRITE per key like the bands. Missing on deserialize of older profiles = empty dict.</summary>
+        public Dictionary<int, int> CustomCantripSlots { get; set; } = new();
+
         /// <summary>Bonus-currency drop table: each entry rolls independently on every governed kill and
         /// injects a stack onto the corpse. Missing on deserialize of older profiles = empty list.</summary>
         public List<ZoneCurrencyDrop> CurrencyDrops { get; set; } = new();
@@ -586,6 +593,11 @@ namespace ACE.Server.Managers.ZoneScaling
                         if (kv.Value != null)
                             result.CustomCantripBands[kv.Key] = kv.Value.Clone();
 
+                // slot rules: same OVERWRITE-per-key semantics
+                if (layer.CustomCantripSlots != null)
+                    foreach (var kv in layer.CustomCantripSlots)
+                        result.CustomCantripSlots[kv.Key] = kv.Value;
+
                 if (layer.CurrencyDrops != null)
                     foreach (var drop in layer.CurrencyDrops)
                     {
@@ -618,6 +630,7 @@ namespace ACE.Server.Managers.ZoneScaling
             && (PropBools == null || PropBools.Count == 0)
             && (CustomCantrips == null || CustomCantrips.Count == 0)
             && (CustomCantripBands == null || CustomCantripBands.Count == 0)
+            && (CustomCantripSlots == null || CustomCantripSlots.Count == 0)
             && (CurrencyDrops == null || CurrencyDrops.Count == 0)
             && (SpellRules == null || SpellRules.Count == 0);
     }
@@ -698,8 +711,10 @@ namespace ACE.Server.Managers.ZoneScaling
             Dictionary<int, long> propInts = null, Dictionary<int, long> propInt64s = null,
             Dictionary<int, double> propFloats = null, Dictionary<int, bool> propBools = null,
             List<int> customCantrips = null, List<ZoneCurrencyDrop> currencyDrops = null,
-            List<ZoneSpellRule> spellRules = null, Dictionary<int, CantripBand> cantripBands = null)
+            List<ZoneSpellRule> spellRules = null, Dictionary<int, CantripBand> cantripBands = null,
+            Dictionary<int, int> cantripSlots = null)
         {
+            CantripSlots = cantripSlots is { Count: > 0 } ? new Dictionary<int, int>(cantripSlots) : EmptyCantripSlots;
             ScopeKey = scopeKey;
             Tier = tier;
             Variant = variant;
@@ -727,6 +742,10 @@ namespace ACE.Server.Managers.ZoneScaling
 
         private static readonly IReadOnlyDictionary<int, (int Min, int Max, int ProcMin, int ProcMax)> EmptyCantripBands
             = new Dictionary<int, (int Min, int Max, int ProcMin, int ProcMax)>();
+        private static readonly IReadOnlyDictionary<int, int> EmptyCantripSlots = new Dictionary<int, int>();
+
+        /// <summary>Per-key slot rule overrides (ZoneCantrips.SlotMask bits), merged view. Empty = catalog defaults everywhere.</summary>
+        public IReadOnlyDictionary<int, int> CantripSlots { get; }
 
         /// <summary>Custom cantrip SpellIds for the extra-loot-cantrip roll (may be null = none defined).</summary>
         public IReadOnlyList<int> CustomCantrips { get; }

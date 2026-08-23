@@ -711,9 +711,6 @@ namespace ACE.Server.WorldObjects
                         {
                             baseDamage += sourceCreature.EffectiveWarAugCount;
                         }
-                        // Zone Control cantrip gear (War) - live equipped sum, outside the >=1 guard
-                        // so a caster with no purchased augs still gets it. Mirrored in Player_Magic.
-                        baseDamage += sourceCreature.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.WarAugBonus);
                     }
                     else if (Spell.School == MagicSchool.VoidMagic)
                     {
@@ -721,8 +718,6 @@ namespace ACE.Server.WorldObjects
                         {
                             baseDamage += sourceCreature.EffectiveVoidAugCount;
                         }
-                        // Zone Control cantrip gear (Void) - see the War branch note.
-                        baseDamage += sourceCreature.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.VoidAugBonus);
                     }
                 }
 
@@ -1188,7 +1183,10 @@ namespace ACE.Server.WorldObjects
                 // every rating/mitigation step so nothing scales it (mirrors DamageEvent.cs). Player
                 // caster vs a zone-profiled monster only; NO-KILL + cooldown inside.
                 if (damage > 0 && sourcePlayer != null && targetPlayer == null)
+                {
                     damage += sourcePlayer.ZcTryPctHpDamage(target);
+                    sourcePlayer.ZcTryLifeOnHit(target);             // key 48 Life on Hit (heals the caster; cooldown inside)
+                }
 
                 percent = damage / target.Health.MaxValue;
 

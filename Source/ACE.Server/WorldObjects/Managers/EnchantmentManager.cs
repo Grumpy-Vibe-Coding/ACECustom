@@ -436,13 +436,6 @@ namespace ACE.Server.WorldObjects.Managers
 
         }
 
-        /// <summary>Zone Control cantrip gear (Life track): public entry for Creature_Properties.
-        /// GetResistanceMod. The equipped-item sum rides the same new-curve tuning knobs as purchased
-        /// augs (life_aug_prot_tuning_constant / life_aug_prot_max_bonus + per-creature overrides)
-        /// but is applied LIVE - never baked into enchantment StatModValue.</summary>
-        public static float GetGearLifeAugProtectRating(long lifeAugAmt, Creature creature)
-            => GetLifeAugProtectRatingNew(lifeAugAmt, creature);
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float GetLifeAugProtectRating(long LifeAugAmt)
         {

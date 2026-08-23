@@ -325,14 +325,6 @@ namespace ACE.Server.Entity
                 damageBonus = cachedLuminanceAugmentCount.Value;
             }
 
-            // Zone Control cantrip gear: Melee/Missile augs summed across equipped items. LIVE per
-            // swing, deliberately NOT an Effective*AugCount read - stays out of the enchantment
-            // bake, the relief axis and every wield gate. Kept out of cachedLuminanceAugmentCount
-            // so the gear flat stays crit-blind like the purchased-aug flat. 0 on mobs (cache null).
-            damageBonus += attacker.GetZoneCantripBonus(isMissile
-                ? Managers.ZoneControl.ZoneCantrips.MissileAugBonus
-                : Managers.ZoneControl.ZoneCantrips.MeleeAugBonus);
-
             BaseDamage += damageBonus;
             DebugLuminanceFlatDamageBonus = damageBonus;
 
@@ -656,7 +648,10 @@ namespace ACE.Server.Entity
             // mitigation figure does not go negative). Player attacker vs a zone-profiled monster only;
             // the NO-KILL rule, immune bool and per-character cooldown live in Player.ZcTryPctHpDamage.
             if (Damage > 0 && playerAttacker != null && playerDefender == null)
+            {
                 Damage += playerAttacker.ZcTryPctHpDamage(defender);
+                playerAttacker.ZcTryLifeOnHit(defender);            // key 48 Life on Hit (heals the attacker; cooldown inside)
+            }
 
             //Console.WriteLine($"[DEBUG] Final Damage: {Damage}");
             return Damage;

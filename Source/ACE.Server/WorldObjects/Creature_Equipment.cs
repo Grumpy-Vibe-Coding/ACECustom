@@ -323,22 +323,7 @@ namespace ACE.Server.WorldObjects
         {
             const int attrLo = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 1;     // 50201 Strength
             const int attrHi = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 6;     // 50206 Self
-            if (propId >= attrLo && propId <= attrHi)
-                return true;
-            switch (propId)
-            {
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxStaminaBonus:    // key 20
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MaxManaBonus:       // key 21
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.CreatureAugBonus:   // key 35
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.ItemAugBonus:       // key 34
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.LifeAugBonus:       // key 36
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.WarAugBonus:        // key 37
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.VoidAugBonus:       // key 38
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MeleeAugBonus:      // key 39
-                case ACE.Server.Managers.ZoneControl.ZoneCantrips.MissileAugBonus:    // key 40
-                    return true;
-            }
-            return false;
+            return propId >= attrLo && propId <= attrHi;
         }
 
         /// <summary>

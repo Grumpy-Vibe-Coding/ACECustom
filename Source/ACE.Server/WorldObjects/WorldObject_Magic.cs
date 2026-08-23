@@ -563,15 +563,13 @@ namespace ACE.Server.WorldObjects
             }
             // Normally, life augs (gem count + Triune Weave) add a flat bonus to all Boost spell damage/healing.
             // When useHarmCap is active, we skip this so the damage stays within the spell's fixed raw range.
-            // The Zone Control cantrip gear (Life track) rides the same flat, live from the equipped sum.
-            var gearLifeAugs = player?.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.LifeAugBonus) ?? 0;
             if (!useHarmCap && player != null && tryBoost > 0)
             {
-                tryBoost += (int)player.EffectiveLifeAugCount + gearLifeAugs;
+                tryBoost += (int)player.EffectiveLifeAugCount;
             }
             if (!useHarmCap && player != null && tryBoost < 0)
             {
-                tryBoost -= (int)player.EffectiveLifeAugCount + gearLifeAugs;
+                tryBoost -= (int)player.EffectiveLifeAugCount;
             }
 
             string srcVital;

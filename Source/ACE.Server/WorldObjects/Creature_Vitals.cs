@@ -141,18 +141,6 @@ namespace ACE.Server.WorldObjects
                 if (player.AugmentationFasterRegen > 0)
                     augMod += player.AugmentationFasterRegen;
 
-                // Zone Control cantrip gear: per-vital regen boosters (multiply with the enchantment
-                // regen mods, so they stack on top of Prodigal Regeneration etc.)
-                var regenProp = vital.Vital switch
-                {
-                    PropertyAttribute2nd.MaxHealth => ACE.Server.Managers.ZoneControl.ZoneCantrips.HealthRegenAdd,
-                    PropertyAttribute2nd.MaxStamina => ACE.Server.Managers.ZoneControl.ZoneCantrips.StaminaRegenAdd,
-                    PropertyAttribute2nd.MaxMana => ACE.Server.Managers.ZoneControl.ZoneCantrips.ManaRegenAdd,
-                    _ => 0,
-                };
-                if (regenProp != 0)
-                    augMod += player.GetZoneCantripBonus(regenProp);
-
                 // Zone Control Regen slot special (key 46, bracers; prop 50231 = the stamped MULTIPLIER,
                 // default band 3): MAX-wins across worn pieces and against the aug/legacy-line augMod -
                 // whichever is larger applies, they never stack. Prodigal suppression + the zone regen

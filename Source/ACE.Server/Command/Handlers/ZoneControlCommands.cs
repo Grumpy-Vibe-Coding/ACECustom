@@ -657,10 +657,8 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "catalog")
                         {
-                            // Retired keys (bucket 2 masteries) are hidden — they survive only in saved pools.
                             foreach (var d in ZoneCantrips.Catalog.Values)
-                                if (!d.Retired)
-                                    Msg($"  {d.Key,3}  {d.Name} - {d.Effect}  [rolls {d.Min}-{d.Max}{(d.ProcMax > 0 ? $", proc {d.ProcMin}-{d.ProcMax} pct" : "")}]");
+                                Msg($"  {d.Key,3}  {d.Name} - {d.Effect}  [rolls {d.Min}-{d.Max}{(d.ProcMax > 0 ? $", proc {d.ProcMin}-{d.ProcMax} pct" : "")}]");
                             return;
                         }
 
@@ -687,8 +685,6 @@ namespace ACE.Server.Command.Handlers
                             { Msg("Usage: cantrip <name> band <key> <min> <max> [procMin procMax]"); return; }
                             if (!ZoneCantrips.TryGet(bandKey, out var bandDef))
                             { Msg($"No Zone Cantrip with key {bandKey}. See 'cantrip <name> catalog'."); return; }
-                            if (bandDef.Retired)
-                            { Msg($"Zone Cantrip {bandKey} ({bandDef.Name}) is Retired - it cannot be banded."); return; }
                             if (bandMin < 0) { Msg("min must be >= 0."); return; }
                             if (bandMin > bandMax) { Msg("min must be <= max."); return; }
 
@@ -715,6 +711,47 @@ namespace ACE.Server.Command.Handlers
                                 new CantripBand { Min = bandMin, Max = bandMax, ProcMin = procMin, ProcMax = procMax });
                             Msg($"{scopeTag} cantrip band: {bandDef.Name} rolls {bandMin}-{bandMax}"
                                 + (procMax > 0 ? $", proc {procMin}-{procMax} pct." : "."));
+                            return;
+                        }
+
+                        if (op == "slots")
+                        {
+                            // cantrip <scope> slots <key> <any|armor|shield|jewelry|clothing|cloak[,...] | mask | clear>
+                            // (owner 2026-08-22): which piece kinds this line may roll on, live. clear = back to the catalog default.
+                            if (args.Count < opIdx + 3 || !int.TryParse(args[opIdx + 1], out var slotKey))
+                            { Msg("Usage: cantrip <name> slots <key> <any|armor|shield|jewelry|clothing|cloak[,...]|clear>"); return; }
+                            if (!ZoneCantrips.TryGet(slotKey, out var slotDef))
+                            { Msg($"No Zone Cantrip with key {slotKey}. See 'cantrip <name> catalog'."); return; }
+                            var spec = string.Join(" ", args.Skip(opIdx + 2));
+                            if (slotDef.SlotSpecial)
+                            {
+                                // a SPECIAL has ONE home slot: helm|chest|shoulders|bracers|gauntlets|girth|tassets|greaves|boots|shield|neck|trinket|ring|bracelet|cloak
+                                if (!ZoneCantrips.TryParseSpecialSlot(spec, out var specialSlot))
+                                { Msg("Special slots: helm, chest, shoulders, bracers, gauntlets, girth, tassets, greaves, boots, shield, neck, trinket, ring, bracelet, cloak - or clear."); return; }
+                                if (specialSlot < 0)
+                                {
+                                    MutateScope(vp => vp.CustomCantripSlots.Remove(slotKey));
+                                    Msg($"{scopeTag} cantrip slots: {slotDef.Name} override cleared at this scope - next authored layer, else the catalog slot ({ZoneCantrips.DefaultSpecialSlot(slotDef)}).");
+                                }
+                                else
+                                {
+                                    MutateScope(vp => vp.CustomCantripSlots[slotKey] = specialSlot);
+                                    Msg($"{scopeTag} cantrip slots: {slotDef.Name} special now lands on {ZoneCantrips.SpecialSlotName(specialSlot)}.");
+                                }
+                                return;
+                            }
+                            if (!ZoneCantrips.TryParseSlotSpec(spec, out var slotMask))
+                            { Msg("Slot names: any, armor, shield, jewelry, clothing, cloak (comma-separated), or clear."); return; }
+                            if (slotMask < 0)
+                            {
+                                MutateScope(vp => vp.CustomCantripSlots.Remove(slotKey));
+                                Msg($"{scopeTag} cantrip slots: {slotDef.Name} override cleared at this scope - the next authored layer applies, else the catalog default ({ZoneCantrips.SlotMaskName((int)ZoneCantrips.DefaultSlotMask(slotDef))}).");
+                            }
+                            else
+                            {
+                                MutateScope(vp => vp.CustomCantripSlots[slotKey] = slotMask);
+                                Msg($"{scopeTag} cantrip slots: {slotDef.Name} rolls on {ZoneCantrips.SlotMaskName(slotMask)}.");
+                            }
                             return;
                         }
 
@@ -813,7 +850,7 @@ namespace ACE.Server.Command.Handlers
                         }
 
                         if (isDefaultScope)
-                        { Msg("Default scope supports band | draws | lines | weight | special only (the pool add | remove | list are zone-scope)."); return; }
+                        { Msg("Default scope supports band | slots | draws | lines | weight | special only (the pool add | remove | list are zone-scope)."); return; }
 
                         if (op == "list")
                         {
@@ -833,8 +870,6 @@ namespace ACE.Server.Command.Handlers
                         {
                             if (!ZoneCantrips.TryGet(cantripKey, out var def))
                             { Msg($"No zone cantrip with key {cantripKey}. See 'cantrip <name> catalog'."); return; }
-                            if (def.Retired)
-                            { Msg($"Zone Cantrip {cantripKey} ({def.Name}) is Retired - it cannot be added to a pool."); return; }
                             ZoneControlManager.MutateArea(name, a =>
                             {
                                 var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
@@ -853,7 +888,7 @@ namespace ACE.Server.Command.Handlers
                             Msg(removed ? $"'{name}' zone cantrip {cantripKey} removed." : "That key wasn't in the pool.");
                         }
                         else
-                            Msg("op must be add | remove | list | catalog | band | draws");
+                            Msg("op must be add | remove | list | catalog | band | slots | draws");
                         return;
                     }
 
@@ -2722,6 +2757,20 @@ namespace ACE.Server.Command.Handlers
                     firstCb = false;
                     sb.Append(b.Key).Append(':').Append(b.Value.Min).Append(':').Append(b.Value.Max)
                       .Append(':').Append(b.Value.ProcMin).Append(':').Append(b.Value.ProcMax);
+                }
+            }
+
+            // Slot rules (sparse, EVALUATED view like the bands): ctslots=<key>:<mask>;... - only authored keys.
+            // APPEND-ONLY tag (2026-08-22); old plugins ignore it.
+            if (vp?.CustomCantripSlots is { Count: > 0 })
+            {
+                sb.Append("|ctslots=");
+                bool firstSl = true;
+                foreach (var kv in vp.CustomCantripSlots)
+                {
+                    if (!firstSl) sb.Append(';');
+                    firstSl = false;
+                    sb.Append(kv.Key).Append(':').Append(kv.Value);
                 }
             }
 

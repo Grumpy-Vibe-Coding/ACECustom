@@ -58,6 +58,7 @@ namespace ACE.Server.WorldObjects
         private const int ZcBattleMendHealProp = 50228;
         private const int ZcPctHpDamageProp = 50229;
         private const int ZcCheatDeathProp = 50230;
+        private const int ZcLifeOnHitProp = 50233;      // key 48 Life on Hit: pct of max HP per landed hit, SUMMED across worn jewelry
 
         // TRANSIENT per-session timers (unix seconds). Never persisted, never exposed as properties:
         // a relog resets them, which is the accepted cost of keeping them out of the biota.
@@ -65,6 +66,7 @@ namespace ACE.Server.WorldObjects
         public double ZcPctHpReadyAt;
         public double ZcCheatDeathReadyAt;
         public double ZcCheatDeathImmuneUntil;
+        public double ZcLifeOnHitReadyAt;
 
         /// <summary>Cheat Death window: TRUE while the player is immune to ALL damage. OR'd into every
         /// Invincible guard and unguarded HP writer (melee/missile/magic/DoT/zone tick/hotspot/falling/
@@ -202,6 +204,44 @@ namespace ACE.Server.WorldObjects
             ZcPctHpReadyAt = now + ZcSpecialKnob(defender, "pcthp_cooldown", 2.0);
 
             return (float)(frac * max);
+        }
+
+        /// <summary>
+        /// Life on Hit (key 48, jewelry-only chase line, owner 2026-08-22): after a landed damaging hit on a
+        /// monster, heal the attacker a pct of THEIR OWN max HP - the summed worn value, capped at
+        /// lifeonhit_cap (25 pct), on a per-character cooldown lifeonhit_cooldown (3 s) so multi-strike and
+        /// split arrows cannot pump it. Not a pct of damage dealt: "life on hit", not "lifesteal", on purpose.
+        /// Fires from both hit paths (DamageEvent melee/missile, SpellProjectile spells) when damage > 0.
+        /// Heals nothing at full HP and never starts the cooldown unless it actually healed.
+        /// </summary>
+        public void ZcTryLifeOnHit(Creature defender)
+        {
+            if (defender == null || defender is Player || IsDead || Health == null)
+                return;
+
+            var pct = GetZoneCantripBonus(ZcLifeOnHitProp);
+            if (pct <= 0)
+                return;
+
+            var now = Time.GetUnixTime();
+            if (now < ZcLifeOnHitReadyAt)
+                return;
+
+            var cap = (int)Math.Round(ZcSpecialKnob(defender, "lifeonhit_cap", 25.0));
+            pct = Math.Min(pct, Math.Max(0, cap));
+            if (pct <= 0)
+                return;
+
+            var max = Health.MaxValue;
+            var missing = (long)max - Health.Current;
+            if (missing <= 0)
+                return;
+
+            var heal = (uint)Math.Min(missing, Math.Max(1L, (long)Math.Round(max * pct / 100.0)));
+            UpdateVitalDelta(Health, (int)heal);
+            DamageHistory.OnHeal(heal);
+
+            ZcLifeOnHitReadyAt = now + ZcSpecialKnob(defender, "lifeonhit_cooldown", 3.0);
         }
 
         #endregion

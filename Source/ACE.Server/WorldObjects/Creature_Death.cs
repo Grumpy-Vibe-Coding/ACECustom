@@ -987,31 +987,43 @@ namespace ACE.Server.WorldObjects
                         if (specials.Count > 0)
                         {
                             specialDef = specials[ACE.Common.ThreadSafeRandom.Next(0, specials.Count - 1)];
-                            var mask = specialDef.SpecialSlot;
-                            specialPiece = items.FirstOrDefault(i => i.ClothingPriority.HasValue && (i.ClothingPriority.Value & mask) != 0 && (i.ArmorLevel ?? 0) > 0);
+                            // the special's home slot: the zone / Default override when authored (`cantrip <scope>
+                            // slots <key> helm|...|cloak`, owner 2026-08-22), else the catalog's SpecialSlot
+                            var slotId = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSpecialSlot(specialDef, zoneLoot.CantripSlots);
+                            specialPiece = items.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialPieceMatches(i, slotId));
                             if (specialPiece == null)
                             {
                                 // the set rolled no piece for that slot (zone turned it off) - spawn exactly one
                                 var one = new LootGenerationFactory.ZoneLootSetCounts();
-                                switch (mask)
+                                switch (slotId)
                                 {
-                                    case CoverageMask.Head: one.Helm = 1; break;
-                                    case CoverageMask.OuterwearChest: one.Chest = 1; break;
-                                    case CoverageMask.Hands: one.Glove = 1; break;
-                                    case CoverageMask.Feet: one.Boot = 1; break;
-                                    case CoverageMask.OuterwearLowerArms: one.Bracer = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Helm: one.Helm = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Chest: one.Chest = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Shoulders: one.Shoulder = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Bracers: one.Bracer = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Gauntlets: one.Glove = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Girth: one.Girth = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Tassets: one.UpperLeg = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Greaves: one.LowerLeg = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Boots: one.Boot = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Shield: one.Shield = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Neck: one.Amulet = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Trinket: one.Trinket = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Ring: one.Ring = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Bracelet: one.Bracelet = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Cloak: one.Cloak = 1; break;
                                     default: one.Chest = 1; break;
                                 }
                                 var spawned = LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, one);
-                                specialPiece = spawned.FirstOrDefault(i => i.ClothingPriority.HasValue && (i.ClothingPriority.Value & mask) != 0);
+                                specialPiece = spawned.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialPieceMatches(i, slotId));
                                 items.AddRange(spawned);
                             }
 
                             if (specialPiece != null)
-                                log.Info($"[ZONELOOT] SLOT SPECIAL: {killer?.Name ?? "(unknown)"} killed {Name} ({WeenieClassId}) -> {specialDef.Name} (key {specialDef.Key}, {mask}) on {specialPiece.Name}, odds 1 in {denom}");
+                                log.Info($"[ZONELOOT] SLOT SPECIAL: {killer?.Name ?? "(unknown)"} killed {Name} ({WeenieClassId}) -> {specialDef.Name} (key {specialDef.Key}, {slotId}) on {specialPiece.Name}, odds 1 in {denom}");
                             else
                             {
-                                log.Warn($"[ZONELOOT] SLOT SPECIAL won by {killer?.Name ?? "(unknown)"} on {Name} ({WeenieClassId}) but no {mask} piece could be found or spawned");
+                                log.Warn($"[ZONELOOT] SLOT SPECIAL won by {killer?.Name ?? "(unknown)"} on {Name} ({WeenieClassId}) but no {slotId} piece could be found or spawned");
                                 specialDef = null;
                             }
                         }
