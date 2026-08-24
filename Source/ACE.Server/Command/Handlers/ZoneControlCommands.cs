@@ -659,7 +659,7 @@ namespace ACE.Server.Command.Handlers
                         if (op == "catalog")
                         {
                             foreach (var d in ZoneCantrips.Catalog.Values)
-                                Msg($"  {d.Key,3}  {d.Name} - {d.Effect}  [rolls {d.Min}-{d.Max}{(d.ProcMax > 0 ? $", proc {d.ProcMin}-{d.ProcMax} pct" : "")}]");
+                                Msg($"  {d.Key,3}  {d.Name} - {d.Effect}  [rolls {d.Min}-{d.Max}]");
                             return;
                         }
 
@@ -679,40 +679,20 @@ namespace ACE.Server.Command.Handlers
                                 return;
                             }
 
-                            // cantrip <scope> band <key> <min> <max> [procMin procMax] — override the roll band.
+                            // cantrip <scope> band <key> <min> <max> — override the roll band.
                             if (args.Count < opIdx + 4
                                 || !int.TryParse(args[opIdx + 1], out var bandKey)
                                 || !int.TryParse(args[opIdx + 2], out var bandMin)
                                 || !int.TryParse(args[opIdx + 3], out var bandMax))
-                            { Msg("Usage: cantrip <name> band <key> <min> <max> [procMin procMax]"); return; }
+                            { Msg("Usage: cantrip <name> band <key> <min> <max>"); return; }
                             if (!ZoneCantrips.TryGet(bandKey, out var bandDef))
                             { Msg($"No Zone Cantrip with key {bandKey}. See 'cantrip <name> catalog'."); return; }
                             if (bandMin < 0) { Msg("min must be >= 0."); return; }
                             if (bandMin > bandMax) { Msg("min must be <= max."); return; }
 
-                            int procMin = 0, procMax = 0;
-                            if (args.Count > opIdx + 4)
-                            {
-                                if (bandDef.ProcChancePropId == 0)
-                                { Msg($"Zone Cantrip {bandKey} ({bandDef.Name}) is a passive line - it takes no proc band."); return; }
-                                if (args.Count < opIdx + 6
-                                    || !int.TryParse(args[opIdx + 4], out procMin)
-                                    || !int.TryParse(args[opIdx + 5], out procMax))
-                                { Msg("procMin and procMax must be given as a PAIR of numbers."); return; }
-                                if (procMin > procMax) { Msg("procMin must be <= procMax."); return; }
-                            }
-                            else if (bandDef.ProcChancePropId != 0)
-                            {
-                                // proc line with the pair omitted: inherit the catalog proc band -
-                                // storing 0/0 would overwrite it and permanently dead the proc
-                                procMin = bandDef.ProcMin;
-                                procMax = bandDef.ProcMax;
-                            }
-
                             MutateScope(vp => vp.CustomCantripBands[bandKey] =
-                                new CantripBand { Min = bandMin, Max = bandMax, ProcMin = procMin, ProcMax = procMax });
-                            Msg($"{scopeTag} cantrip band: {bandDef.Name} rolls {bandMin}-{bandMax}"
-                                + (procMax > 0 ? $", proc {procMin}-{procMax} pct." : "."));
+                                new CantripBand { Min = bandMin, Max = bandMax });
+                            Msg($"{scopeTag} cantrip band: {bandDef.Name} rolls {bandMin}-{bandMax}.");
                             AutoApplyForDefault(session, isDefaultScope, defaultVar, Msg);
                             return;
                         }
@@ -3409,7 +3389,6 @@ namespace ACE.Server.Command.Handlers
                         continue;
                     }
                     if (def.SetsProtection) { detail.Add($"skip {def.Name} (earned, frozen)"); continue; }
-                    if (def.ProcChancePropId != 0) { detail.Add($"skip {def.Name} (proc line)"); continue; }
                     if (def.ArmorOnly && def.Ints == null) { hasArmorLevelLine = true; continue; }   // key 25: graded from AL below
 
                     var band = lineBand ?? ZoneStatResolver.EffectiveBand(def.Key, tier);

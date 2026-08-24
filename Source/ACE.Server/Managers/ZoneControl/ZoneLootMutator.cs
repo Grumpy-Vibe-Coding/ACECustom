@@ -377,7 +377,7 @@ namespace ACE.Server.Managers.ZoneControl
                 // Option A: T11 uniform, climbing to 10/30/60 at T25) and stamp it through the record;
                 // the prop value is ValueFor(grade) inside the effective band. Key 49 Reinforced routes
                 // to the plain Stamp inside StampGraded (earned + frozen, never in the record).
-                // Proc-shaped bands are gone from the live catalog (no Def carries ProcChancePropId).
+                // Proc-shaped bands are gone from the catalog and from Def entirely (2026-08-24).
                 var grade = ZoneStatResolver.RollGrade(lootTier, forceMax);
                 ZoneCantrips.StampGraded(wo, def, grade, (min, max));
             }

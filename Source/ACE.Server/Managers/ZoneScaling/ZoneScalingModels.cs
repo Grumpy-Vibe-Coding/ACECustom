@@ -299,6 +299,20 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string LootSlotTrinketMax = "loot_slot_trinket_max";
         public const string LootSlotCloakMax = "loot_slot_cloak_max";
 
+        // BUDGET MODE (owner 2026-08-24). Defining loot_max_drops switches the structured set from
+        // "each slot drops its own count" to "roll this many ITEMS total, distributed by weight".
+        // In budget mode the loot_slot_<slot> values above are reinterpreted as WEIGHTS WITHIN THEIR
+        // CATEGORY (0 still = never); the _max range keys apply to LEGACY mode only, since the range
+        // now lives on the budget. Unset = legacy, i.e. the pre-2026-08-24 behaviour, unchanged.
+        // The budget is a CEILING, not a quota: armor coverage credit (one coat covering three slots)
+        // can land under it. Slot specials are deliberately OUTSIDE the budget.
+        public const string LootMaxDrops = "loot_max_drops";               // total items per kill; defining it enables budget mode
+        public const string LootMaxDropsMax = "loot_max_drops_max";        // optional ceiling: budget rolls uniform-inclusive
+        public const string LootWeightWeapon = "loot_weight_weapon";       // relative category weights, normalized at roll time
+        public const string LootWeightArmor = "loot_weight_armor";         //   (shield rides armor)
+        public const string LootWeightJewelry = "loot_weight_jewelry";
+        public const string LootWeightCloak = "loot_weight_cloak";
+
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
@@ -335,6 +349,8 @@ namespace ACE.Server.Managers.ZoneScaling
             LootSlotHelmMax, LootSlotChestMax, LootSlotShoulderMax, LootSlotBracerMax, LootSlotGloveMax,
             LootSlotGirthMax, LootSlotUpperLegMax, LootSlotLowerLegMax, LootSlotBootMax,
             LootSlotShieldMax, LootSlotAmuletMax, LootSlotRingMax, LootSlotBraceletMax, LootSlotTrinketMax, LootSlotCloakMax,
+            LootMaxDrops, LootMaxDropsMax,
+            LootWeightWeapon, LootWeightArmor, LootWeightJewelry, LootWeightCloak,
             // Armor v2 (2026-08-21). Order here is cosmetic ONLY: every wire payload that carries these
             // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin
             // matches by NAME - adding, reordering or REMOVING an entry mid-list is safe. (The genuinely

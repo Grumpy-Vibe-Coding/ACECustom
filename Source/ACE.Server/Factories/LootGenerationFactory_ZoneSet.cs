@@ -59,7 +59,12 @@ namespace ACE.Server.Factories
             public int Amulet, Ring, Bracelet, Trinket;
             public int Cloak;
 
+            /// <summary>BUDGET MODE only: the exact weapon families to create, one weapon each. Null in
+            /// legacy mode, where Weapons is instead a MULTIPLIER over every family (1 = all nine).</summary>
+            public List<int> WeaponFamilyPicks;
+
             public bool Any =>
+                (WeaponFamilyPicks != null && WeaponFamilyPicks.Count > 0) ||
                 Weapons > 0 || Helm > 0 || Chest > 0 || Shoulder > 0 || Bracer > 0 || Glove > 0 ||
                 Girth > 0 || UpperLeg > 0 || LowerLeg > 0 || Boot > 0 || Shield > 0 ||
                 Amulet > 0 || Ring > 0 || Bracelet > 0 || Trinket > 0 || Cloak > 0;
@@ -560,6 +565,138 @@ namespace ACE.Server.Factories
         private static readonly ZoneSetFamily[] zoneSetFamilies = (ZoneSetFamily[])System.Enum.GetValues(typeof(ZoneSetFamily));
 
         /// <summary>
+        /// BUDGET MODE sampler (owner 2026-08-24). Turns a total item budget plus category weights into
+        /// an ordinary ZoneLootSetCounts, so every existing creation path downstream is reused unchanged.
+        ///
+        /// For each of <paramref name="budget"/> items: weighted-pick a CATEGORY (weapon / armor /
+        /// jewelry / cloak - shield rides armor), then weighted-pick a SLOT inside it using the
+        /// per-slot weights carried on <paramref name="w"/>. Per-item sampling is what makes "on
+        /// average 3 armor" true: the split varies kill to kill and converges on the weights.
+        ///
+        /// Weapon families are drawn WITHOUT REPLACEMENT (owner): three weapon picks yield three
+        /// DIFFERENT families, never three swords. Once all nine are used the weapon category drops
+        /// out of the draw. Armor and jewelry DO allow repeats - two rings is a legitimate roll.
+        ///
+        /// The budget is a CEILING, not a quota: armor coverage credit (one coat covering chest +
+        /// abdomen + upper arms) can satisfy several sampled slots with a single item, so the corpse
+        /// can land under budget. That is intended - the owner asked for "max drops".
+        /// </summary>
+        public static ZoneLootSetCounts RollBudgetedCounts(
+            ZoneLootSetCounts w, int budget,
+            double wWeapon, double wArmor, double wJewelry, double wCloak)
+        {
+            var result = new ZoneLootSetCounts { WeaponFamilyPicks = new List<int>() };
+            if (budget <= 0)
+                return result;
+
+            // slots per category, paired with their authored weight (0 = never)
+            var armorSlots = new (int Slot, double Weight)[]
+            {
+                (0, w.Helm), (1, w.Chest), (2, w.Shoulder), (3, w.Bracer), (4, w.Glove),
+                (5, w.Girth), (6, w.UpperLeg), (7, w.LowerLeg), (8, w.Boot), (9, w.Shield),
+            };
+            var jewelSlots = new (int Slot, double Weight)[]
+            {
+                (0, w.Amulet), (1, w.Ring), (2, w.Bracelet), (3, w.Trinket),
+            };
+
+            var freeFamilies = new List<int>();
+            for (var i = 0; i < zoneSetFamilies.Length; i++)
+                freeFamilies.Add(i);
+
+            static double Sum((int Slot, double Weight)[] a)
+            {
+                var t = 0.0;
+                foreach (var e in a) if (e.Weight > 0) t += e.Weight;
+                return t;
+            }
+
+            static int PickSlot((int Slot, double Weight)[] a, double total)
+            {
+                var roll = ACE.Common.ThreadSafeRandom.Next(0.0f, (float)total);
+                var run = 0.0;
+                foreach (var e in a)
+                {
+                    if (e.Weight <= 0) continue;
+                    run += e.Weight;
+                    if (roll < run) return e.Slot;
+                }
+                for (var i = a.Length - 1; i >= 0; i--) if (a[i].Weight > 0) return a[i].Slot;
+                return -1;
+            }
+
+            for (var n = 0; n < budget; n++)
+            {
+                // rebuild category availability each pick: weapons fall out once all nine are drawn,
+                // and a category whose every slot is weighted 0 must never be chosen
+                var armorTotal = Sum(armorSlots);
+                var jewelTotal = Sum(jewelSlots);
+                var cats = new List<(int Cat, double Weight)>();
+                // w.Weapons gates the category on/off exactly like every other slot ("a slot at 0 is
+                // off"). Without this the weapon pool is always non-empty, so a sub-tier-11 profile -
+                // where TierDefault zeroes every slot - would drop WEAPONS ONLY instead of nothing.
+                if (wWeapon > 0 && w.Weapons > 0 && freeFamilies.Count > 0) cats.Add((0, wWeapon));
+                if (wArmor > 0 && armorTotal > 0) cats.Add((1, wArmor));
+                if (wJewelry > 0 && jewelTotal > 0) cats.Add((2, wJewelry));
+                if (wCloak > 0 && w.Cloak > 0) cats.Add((3, wCloak));
+                if (cats.Count == 0)
+                    break;
+
+                var catTotal = 0.0;
+                foreach (var c in cats) catTotal += c.Weight;
+                var catRoll = ACE.Common.ThreadSafeRandom.Next(0.0f, (float)catTotal);
+                var picked = cats[cats.Count - 1].Cat;
+                var acc = 0.0;
+                foreach (var c in cats)
+                {
+                    acc += c.Weight;
+                    if (catRoll < acc) { picked = c.Cat; break; }
+                }
+
+                switch (picked)
+                {
+                    case 0:   // weapon - without replacement
+                        var fi = ACE.Common.ThreadSafeRandom.Next(0, freeFamilies.Count - 1);
+                        result.WeaponFamilyPicks.Add(freeFamilies[fi]);
+                        freeFamilies.RemoveAt(fi);
+                        break;
+
+                    case 1:   // armor (shield included)
+                        switch (PickSlot(armorSlots, armorTotal))
+                        {
+                            case 0: result.Helm++; break;
+                            case 1: result.Chest++; break;
+                            case 2: result.Shoulder++; break;
+                            case 3: result.Bracer++; break;
+                            case 4: result.Glove++; break;
+                            case 5: result.Girth++; break;
+                            case 6: result.UpperLeg++; break;
+                            case 7: result.LowerLeg++; break;
+                            case 8: result.Boot++; break;
+                            case 9: result.Shield++; break;
+                        }
+                        break;
+
+                    case 2:   // jewelry
+                        switch (PickSlot(jewelSlots, jewelTotal))
+                        {
+                            case 0: result.Amulet++; break;
+                            case 1: result.Ring++; break;
+                            case 2: result.Bracelet++; break;
+                            case 3: result.Trinket++; break;
+                        }
+                        break;
+
+                    default:  // cloak
+                        result.Cloak++;
+                        break;
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Generates the full structured loot set for one kill, one category per configured slot,
         /// all mutated against <paramref name="profile"/>.
         /// </summary>
@@ -567,15 +704,32 @@ namespace ACE.Server.Factories
         {
             var items = new List<WorldObject>();
 
-            for (var i = 0; i < counts.Weapons; i++)
+            if (counts.WeaponFamilyPicks != null)
             {
-                foreach (var family in zoneSetFamilies)
+                // budget mode: exactly the sampled families, ONE weapon each
+                foreach (var famIdx in counts.WeaponFamilyPicks)
                 {
+                    var family = (ZoneSetFamily)famIdx;
                     var weapon = CreateZoneSetWeapon(profile, family);
                     if (weapon != null)
                         items.Add(weapon);
                     else
                         log.Warn($"[ZONELOOT] CreateZoneLootSet({profile.TreasureType}): failed to create {family} weapon");
+                }
+            }
+            else
+            {
+                // legacy mode: the count is a MULTIPLIER over every family - 1 yields all nine
+                for (var i = 0; i < counts.Weapons; i++)
+                {
+                    foreach (var family in zoneSetFamilies)
+                    {
+                        var weapon = CreateZoneSetWeapon(profile, family);
+                        if (weapon != null)
+                            items.Add(weapon);
+                        else
+                            log.Warn($"[ZONELOOT] CreateZoneLootSet({profile.TreasureType}): failed to create {family} weapon");
+                    }
                 }
             }
 

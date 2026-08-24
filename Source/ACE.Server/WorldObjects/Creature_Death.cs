@@ -1014,6 +1014,29 @@ namespace ACE.Server.WorldObjects
                     slotCounts.Cloak = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotCloak, slotCounts.Cloak);
                 }
 
+                // BUDGET MODE (owner 2026-08-24): defining loot_max_drops switches from "every slot
+                // drops its own count" to "roll this many ITEMS total, distributed by category weight".
+                // The loot_slot_* values then mean WEIGHT WITHIN CATEGORY rather than count, and the
+                // budget is a CEILING - armor coverage credit can land the corpse under it. Slot
+                // specials below are deliberately OUTSIDE the budget. Unset = legacy, unchanged.
+                if (zoneLoot != null && zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDrops))
+                {
+                    var budgetLo = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDrops, 0.0));
+                    var budgetHi = budgetLo;
+                    if (zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDropsMax))
+                        budgetHi = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDropsMax, budgetLo));
+                    if (budgetHi < budgetLo)
+                        (budgetLo, budgetHi) = (budgetHi, budgetLo);
+                    var budget = budgetHi > budgetLo ? ACE.Common.ThreadSafeRandom.Next(budgetLo, budgetHi) : budgetLo;
+
+                    slotCounts = LootGenerationFactory.RollBudgetedCounts(
+                        slotCounts, budget,
+                        zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootWeightWeapon, 1.0),
+                        zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootWeightArmor, 1.0),
+                        zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootWeightJewelry, 1.0),
+                        zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootWeightCloak, 1.0));
+                }
+
                 if (slotCounts.Any)
                     items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, slotCounts));
 
