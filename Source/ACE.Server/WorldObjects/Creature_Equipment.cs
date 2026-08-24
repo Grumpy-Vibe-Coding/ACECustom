@@ -328,7 +328,7 @@ namespace ACE.Server.WorldObjects
 
         /// <summary>
         /// Sum of a Zone Control cantrip prop across this creature's equipped items, HARD-CAPPED for the
-        /// anchored 2500 lines (gear_cap_line): the six attributes (key 43), Max Stamina 20, Max Mana 21
+        /// anchored SET lines (gear_cap_line): the six attributes (key 43), Max Stamina 20, Max Mana 21
         /// and every aug track 34-40. The cache keeps the TRUE sum so dequip arithmetic stays exact; the
         /// cap is applied here at read time only. Everything else in the block (skills, spell duration,
         /// specials) is uncapped. Creature_Rating clamps the retail-prop lines (Dmg / CritDmg / MaxHP /
@@ -345,7 +345,7 @@ namespace ACE.Server.WorldObjects
             return v;
         }
 
-        /// <summary>The 50200-block props that are anchored 2500 SET lines and read under gear_cap_line.</summary>
+        /// <summary>The 50200-block props that are anchored SET lines and read under gear_cap_line.</summary>
         private static bool IsGearCapLineProp(int propId)
         {
             const int attrLo = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 1;     // 50201 Strength
@@ -358,22 +358,27 @@ namespace ACE.Server.WorldObjects
         /// DEFAULT they stand in; no governing zone (or a monster) = the C# default, so the cap holds
         /// everywhere and a zone only re-tunes it. Never below 0.
         /// </summary>
-        public int GetGearCap(string capStat, int defaultCap)
+        public int GetGearCap(string capStat, int ladderCap)
         {
+            // Zone Control off: the T10 fallback cap wins outright - no zone is consulted (owner 2026-08-23).
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return ACE.Server.Managers.ZoneControl.ZoneFallback.GearCap(capStat);
             if (this is not Player player)
-                return defaultCap;
+                return ladderCap;
             var zone = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveZoneDefaultForPlayer(player);
             if (zone == null || !zone.Has(capStat))
-                return defaultCap;
-            return Math.Max(0, (int)Math.Round(zone.Get(capStat, defaultCap)));
+                return ladderCap;
+            return Math.Max(0, (int)Math.Round(zone.Get(capStat, ladderCap)));
         }
 
         /// <summary>
         /// <see cref="GetEquippedItemsRatingSum"/> clamped to a worn-gear cap. Owner 2026-08-21: a set
         /// anchored at 2500 reads EXACTLY 2500, not 2502 (18 x 139 flat bands). Equipment term only -
         /// enchantments / augs / enlightenment stack on top untouched in the rating getters.
-        /// Worked check, T25 BiS premade (18 pieces): DR 18 x 139 = 2502 -> 2500 (gear_cap_dr);
-        /// CDR 18 x 83 = 1494 -> 1494 (under gear_cap_cdr 1500); Damage Rating 18 x 139 = 2502 -> 2500.
+        /// The cap arguments are the LADDER ceilings (gear_cap_dr 2500, gear_cap_cdr 1500,
+        /// gear_cap_line 2500) - calibrated so a maxed T25 set lands EXACTLY on them. A zone that
+        /// authors gear_cap_* tightens them for its own content; with zonecontrol_enabled OFF the
+        /// T10 fallback set replaces them entirely (ZoneFallback).
         /// </summary>
         public int GetEquippedItemsRatingSumCapped(PropertyInt rating, string capStat, int defaultCap)
         {

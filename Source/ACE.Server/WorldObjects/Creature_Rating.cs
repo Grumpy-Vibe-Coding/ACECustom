@@ -267,7 +267,7 @@ namespace ACE.Server.WorldObjects
             // additive enchantments
             var enchantments = EnchantmentManager.GetRating(PropertyInt.DamageResistRating);
 
-            // equipment ratings - worn sum HARD-CAPPED at gear_cap_dr (owner 2026-08-21: 2500 means EXACTLY 2500;
+            // equipment ratings - worn sum HARD-CAPPED at gear_cap_dr (owner 2026-08-21: the cap means EXACTLY the cap;
             // the flat bands give 18 x 139 = 2502 at T25). Equipment term only; everything below stacks untouched.
             // CritDmgResist / CritResist / NetherResist cap at gear_cap_cdr, the Dmg / CritDmg / MaxHP / HealBoost
             // lines at gear_cap_line, all via GetEquippedItemsRatingSumCapped (Creature_Equipment).

@@ -191,6 +191,16 @@ namespace ACE.Server.Factories
         {
             if (wo == null || wo is MeleeWeapon || wo is MissileLauncher || wo is Caster)
                 return 0;
+
+            // WIELD GATES IGNORE zonecontrol_enabled ON PURPOSE (owner 2026-08-23). Clearing them off the
+            // switch was built, then removed: a wield requirement is checked ONLY at the moment of equipping
+            // (Player_Inventory.DoHandleActionGetAndWieldItem -> CheckWieldRequirements) and never again -
+            // there is no login revalidation and no periodic sweep. An ungated window is therefore permanent
+            // for anyone who equips during it: switch off -> gate gone -> a 0-aug character equips a T25
+            // piece -> switch on -> the piece re-resolves to full ladder stats while the restored gate is
+            // never rechecked, because they are already wearing it. They keep it until they choose to
+            // unequip. Keeping the gate costs only cosmetics (a T25 piece asks 5,000 Triune while its stats
+            // read T10 in fallback); clearing it costs a hole. DO NOT re-add the clearing branch.
             var tierRow = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(tier);
             var minWield = tierRow != null && tierRow.MinWieldAugs > 0 ? tierRow.MinWieldAugs : ZoneLootSetWieldItemAugs;
             var triune = tierRow != null ? tierRow.MinWieldTriune : 0;

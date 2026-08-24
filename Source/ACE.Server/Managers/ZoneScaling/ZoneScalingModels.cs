@@ -188,8 +188,8 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string CantripWeightChase = "cantrip_weight_chase";   // per Chase-class key (default 1)
         // Guaranteed core four anchors (SET totals at T25; per piece = anchor/18 x f(t)); see
         // LootGenerationFactory.ApplyT11GearStats
-        public const string CoreAnchorDr = "core_anchor_dr";               // Damage Resist anchor (default 1250)
-        public const string CoreAnchorCdr = "core_anchor_cdr";             // CritDmgResist / CritResist / NetherResist anchor (default 750)
+        public const string CoreAnchorDr = "core_anchor_dr";               // Damage Resist worn-set anchor (ladder 1250, authored on Default 11; ZoneFallback.AnchorDr 92 when off)
+        public const string CoreAnchorCdr = "core_anchor_cdr";             // CritDmgResist / CritResist / NetherResist worn-set anchor (ladder 750, authored on Default 11; ZoneFallback.AnchorCdr 73 when off)
         // Slot specials: ONE roll per KILL (retail-rare model), 1-in-odds; boss/leader divide the odds
         public const string SpecialOdds = "special_odds";                  // denominator (default 750000)
         public const string SpecialBossMult = "special_boss_mult";         // IsZcBoss: odds / this (default 3.0)
@@ -208,9 +208,9 @@ namespace ACE.Server.Managers.ZoneScaling
         // augs / enlightenment. Read for PLAYERS via the zone default the player stands in; no zone = the C#
         // default, so the caps apply everywhere. Creature.GetGearCap / GetEquippedItemsRatingSumCapped /
         // GetZoneCantripBonus are the read sites.
-        public const string GearCapDr = "gear_cap_dr";                     // worn Damage Resist sum (default 2500)
-        public const string GearCapCdr = "gear_cap_cdr";                   // worn CritDmgResist / CritResist / NetherResist sums, EACH (default 1500)
-        public const string GearCapLine = "gear_cap_line";                 // every anchored 2500 cantrip line: Dmg / CritDmg / MaxHP / MaxStam / MaxMana / HealBoost / each aug track / each attribute (default 2500)
+        public const string GearCapDr = "gear_cap_dr";                     // worn Damage Resist sum (ladder ceiling 2500; ZoneFallback.CapDr 92 when zonecontrol_enabled is off)
+        public const string GearCapCdr = "gear_cap_cdr";                   // worn CritDmgResist / CritResist / NetherResist sums, EACH (ladder ceiling 1500; ZoneFallback.CapCdr 73 when off)
+        public const string GearCapLine = "gear_cap_line";                 // every anchored cantrip line: Dmg / CritDmg / MaxHP / MaxStam / MaxMana / HealBoost / each aug track / each attribute (ladder ceiling 2500; ZoneFallback.CapLine 211 when off)
         // Kill rewards (2026-08-23): authored per zone, by rank. xp_minion is the MASTER key - when set,
         // weenie XpOverride is ignored for every mob the zone governs (boss/leader fall back to minion
         // when their own key is unset; unranked random mobs pay minion). lum_award set = LuminanceAward
@@ -312,7 +312,10 @@ namespace ACE.Server.Managers.ZoneScaling
             LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,
             LootSlotShield, LootSlotAmulet, LootSlotRing, LootSlotBracelet, LootSlotTrinket, LootSlotCloak,
             QbStepSize, QbQualityPerStep, QbMaxSteps,
-            // Armor v2 (2026-08-21) - APPEND-ONLY, the plugin indexes positionally
+            // Armor v2 (2026-08-21). Order here is cosmetic ONLY: every wire payload that carries these
+            // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin
+            // matches by NAME - adding, reordering or REMOVING an entry mid-list is safe. (The genuinely
+            // positional lists are the bare comma payloads combatdefs= / diagdefs= in ZoneControlCommands.)
             CantripLinesMin, CantripLinesMax, CantripLinesChance1, CantripLinesChance2, CantripLinesChance3,
             CantripWeightTrash, CantripWeightMid, CantripWeightChase,
             CoreAnchorDr, CoreAnchorCdr,

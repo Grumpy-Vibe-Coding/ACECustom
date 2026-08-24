@@ -106,6 +106,10 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (!ZoneCantrips.TryGet(key, out var def))
                 return (0, 0);
+            // Zone Control off: the shrunk fallback band, and nothing authored is consulted (same rule
+            // as CoreWindow). owner 2026-08-23.
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return ZoneFallback.Band(def);
             var vd = ZoneControlManager.GetVariationDefault(tier);
             if (vd?.Profile?.CustomCantripBands != null
                 && vd.Profile.CustomCantripBands.TryGetValue(key, out var live)
@@ -126,14 +130,22 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>
         /// The core-four window at a tier - THE SAME formula as LootGenerationFactory.ApplyT11GearStats.RollCore
         /// (cap = anchor/18 x (1+(t-11)/14), fixed T11 step = anchor/18/14, floor = cap - 1.5 step, T11 - 0.5 step,
-        /// rounded at the end). Anchors: the tier's Default-layer core_anchor_dr / core_anchor_cdr, else 1250 / 750.
-        /// anchorOverride lets a drop-time caller pass the ZONE's evaluated anchors instead.
+        /// rounded at the end). Anchors: the tier's Default-layer core_anchor_dr / core_anchor_cdr, else the LADDER
+        /// constants 1250 / 750. anchorOverride lets a drop-time caller pass the ZONE's evaluated anchors instead.
+        /// With zonecontrol_enabled OFF nothing authored is consulted at all - the T10 FALLBACK anchors win
+        /// outright, including over anchorOverride (owner 2026-08-23).
         /// </summary>
         public static (int Min, int Max) CoreWindow(int coreKey, int tier, double? anchorOverride = null)
         {
             var isDr = coreKey == CoreDamageResist;
-            var anchor = anchorOverride ?? DefaultLayerStat(tier, isDr ? ZoneStat.CoreAnchorDr : ZoneStat.CoreAnchorCdr, isDr ? 1250.0 : 750.0);
-            var scale = 1.0 + (tier - 11) / 14.0;
+            var zcOn = ServerConfig.zonecontrol_enabled.Value;
+            var anchor = !zcOn
+                ? (isDr ? ZoneFallback.AnchorDr : ZoneFallback.AnchorCdr)
+                : anchorOverride ?? DefaultLayerStat(tier, isDr ? ZoneStat.CoreAnchorDr : ZoneStat.CoreAnchorCdr,
+                                                    isDr ? LadderAnchorDr : LadderAnchorCdr);
+            // The fallback is FLAT - nothing climbs with tier off the switch, matching the flat armour base
+            // and the tier-blind fallback line bands (owner 2026-08-23). Only the ladder scales.
+            var scale = zcOn ? 1.0 + (tier - 11) / 14.0 : 1.0;
             var cap = anchor / 18.0 * scale;
             var step = anchor / 18.0 / 14.0;
             var lo = cap - (tier == 11 ? 0.5 : 1.5) * step;
@@ -143,8 +155,13 @@ namespace ACE.Server.Managers.ZoneControl
             return (min, max);
         }
 
-        /// <summary>The fixed per-tier armor base (ApplyT11GearStats): 1100 + 100/tier above 11.</summary>
-        public static int BaseArmorLevel(int tier) => 1100 + 100 * (tier - 11);
+        /// <summary>The LADDER core anchors - the worn-set totals a maxed T25 suit lands on (18 pieces).</summary>
+        public const double LadderAnchorDr = 1250.0, LadderAnchorCdr = 750.0;
+
+        /// <summary>The fixed per-tier armor base (ApplyT11GearStats): 1100 + 100/tier above 11 on the ladder,
+        /// or the flat T10 fallback when Zone Control is switched off.</summary>
+        public static int BaseArmorLevel(int tier) =>
+            ServerConfig.zonecontrol_enabled.Value ? 1100 + 100 * (tier - 11) : ZoneFallback.ArmorLevel;
 
         // ── the record ──────────────────────────────────────────────────────────
 
@@ -215,12 +232,22 @@ namespace ACE.Server.Managers.ZoneControl
             Write(wo, lines);
         }
 
-        /// <summary>Stamp the tier + the CURRENT ladder version (a fresh drop is resolved by definition).</summary>
+        /// <summary>
+        /// The stamp that identifies a CURRENT resolve: the tier's ladder version, times two, plus a bit
+        /// for the Zone Control switch. The mode HAS to be part of the identity - zonecontrol_enabled
+        /// changes what a resolve produces, so without it flipping the switch would move the appraisal
+        /// (which computes live) while the item's stamped props never changed (owner 2026-08-23).
+        /// </summary>
+        public static int ResolveStamp(int tier) =>
+            ZoneControlManager.GetLadderVersion(tier).Version * 2
+            + (ServerConfig.zonecontrol_enabled.Value ? 0 : 1);
+
+        /// <summary>Stamp the tier + the CURRENT resolve stamp (a fresh drop is resolved by definition).</summary>
         public static void StampIdentity(WorldObject wo, int tier)
         {
             if (wo == null) return;
             wo.SetProperty(PropertyInt.ZcTier, tier);
-            wo.SetProperty(PropertyInt.ZcResolvedVersion, ZoneControlManager.GetLadderVersion(tier).Version);
+            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(tier));
         }
 
         // ── resolution ──────────────────────────────────────────────────────────
@@ -270,7 +297,6 @@ namespace ACE.Server.Managers.ZoneControl
             var r = new Resolved { Tier = tier };
             var hasArmor = wo.ArmorLevel.HasValue && wo.ItemType == ItemType.Armor;
             var alBonus = 0;
-            var hasAlLine = false;
 
             foreach (var rec in Read(wo))
             {
@@ -284,21 +310,34 @@ namespace ACE.Server.Managers.ZoneControl
                 }
                 if (!ZoneCantrips.TryGet(rec.Key, out var def) || def.SetsProtection)
                     continue;
+                // Zone Control off: slot SPECIALS are disabled outright (owner 2026-08-23). Zero their
+                // props so the effect is inert, and leave them out of r.Lines so the appraisal stops
+                // advertising them. The RECORD is untouched - switching back on restores the special at
+                // its recorded grade on the next equip / login.
+                if (def.SlotSpecial && !ServerConfig.zonecontrol_enabled.Value)
+                {
+                    if (def.Ints != null)
+                        foreach (var (propId, _) in def.Ints)
+                            r.Ints[(PropertyInt)propId] = 0;
+                    continue;
+                }
                 var (min, max) = EffectiveBand(rec.Key, tier);
                 var value = ValueFor(min, max, rec.Grade);
                 r.Lines.Add(new ResolvedLine { Record = rec, Def = def, Min = min, Max = max, Value = value });
                 if (def.ArmorOnly && def.Ints == null)
                 {
                     alBonus += value;                       // key 25 Armor Level
-                    hasAlLine = true;
                 }
                 else if (def.Ints != null)
                     foreach (var (propId, _) in def.Ints)
                         r.Ints[(PropertyInt)propId] = value;
             }
 
-            // AL is resolved ONLY when the piece carries an Armor Level line (a piece without one keeps its tier base)
-            if (hasArmor && hasAlLine)
+            // EVERY recorded armour piece resolves its AL, line or no line: the tier base is no longer a
+            // constant (zonecontrol_enabled swaps the whole ladder for the T10 fallback, owner 2026-08-23),
+            // so a piece without an Armor Level line would otherwise keep a stamp from the other set forever.
+            // alBonus stays 0 without that line, so a lineless piece lands exactly on the tier base.
+            if (hasArmor)
                 r.ArmorLevel = BaseArmorLevel(tier) + alBonus;
             return r;
         }
@@ -339,15 +378,17 @@ namespace ACE.Server.Managers.ZoneControl
             }
             // wield gates follow the tier row live too (owner 2026-08-23: T16+ Item Augs + Triune on existing pieces)
             changed += ACE.Server.Factories.LootGenerationFactory.RefreshWieldGate(wo, r.Tier);
-            wo.SetProperty(PropertyInt.ZcResolvedVersion, ZoneControlManager.GetLadderVersion(r.Tier).Version);
+            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(r.Tier));
             return changed;
         }
 
         /// <summary>
-        /// EQUIP hook: when the piece's ZcResolvedVersion lags its tier's ladder version, re-resolve and
-        /// re-stamp (honouring that apply's AllowNerf), mark the biota dirty. Cheap no-op for every piece
+        /// EQUIP hook: when the piece's stamp does not match the current one (tier ladder version + the
+        /// Zone Control switch), re-resolve and re-stamp, mark the biota dirty. Cheap no-op for every piece
         /// without a record, and for a resolved one. Bounded by what a character can wear - never called
-        /// from appraisal (plan §3b).
+        /// from appraisal (plan §3b). NOT-EQUAL rather than less-than: a mode flip must re-stamp in BOTH
+        /// directions, and going to the fallback is a nerf by definition, so the nerf guard is bypassed
+        /// while the switch is off (owner 2026-08-23 chose fallback numbers on existing items).
         /// </summary>
         public static bool ApplyIfStale(WorldObject wo)
         {
@@ -357,11 +398,12 @@ namespace ACE.Server.Managers.ZoneControl
             if (tier <= 0) return false;
             var ladder = ZoneControlManager.GetLadderVersion(tier);
             var seen = wo.GetProperty(PropertyInt.ZcResolvedVersion) ?? 0;
-            if (seen >= ladder.Version)
+            if (seen == ResolveStamp(tier))
                 return false;
             var r = Compute(wo);
             if (r == null) return false;
-            var changed = Apply(wo, r, ladder.AllowNerf);
+            var allowNerf = ladder.AllowNerf || !ServerConfig.zonecontrol_enabled.Value;
+            var changed = Apply(wo, r, allowNerf);
             wo.ChangesDetected = true;
             if (changed > 0)
                 wo.SaveBiotaToDatabase();

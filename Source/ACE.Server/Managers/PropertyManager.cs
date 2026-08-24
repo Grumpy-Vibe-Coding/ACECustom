@@ -752,6 +752,13 @@ namespace ACE.Server.Managers
         public static ConfigProperty<long> zonescale_bonus_currency_wcid { get; private set; } = new(0, "Zone Scaler: weenie class id of the CUSTOM TOKEN item injected onto corpses of zone-scaled mobs whose profile defines a bonus_currency amount. 0 = disabled (no token injected). Stack size = the profile's evaluated bonus_currency at the mob's tier.");
 
 
+        // Zone Control master switch (owner 2026-08-23). ON = the T11-T25 ladder: gear resolves against the
+        // per-tier Default layer, falling through to the LADDER constants (armour 1100 + 100/tier, core anchors
+        // 1250 / 750, worn caps 2500 / 1500 / 2500). OFF = the FALLBACK set, which is T10 max-rolled gear
+        // (armour 732, anchors 92 / 73, caps 92 / 73 / 211) - see ZoneFallback. Read live: flipping it re-resolves
+        // every T11+ item on its next equip / login, both directions. Nothing authored in the zone store changes.
+        public static ConfigProperty<bool> zonecontrol_enabled { get; private set; } = new(true, "master switch for Zone Control gear authoring. ON = the T11-T25 ladder (Defaults + ladder constants). OFF = the T10 max-rolled FALLBACK set for every zone-mutated item: armor level 732, core anchors 92/73, worn gear caps 92/73/211. Re-resolves existing items on equip/login.");
+
         // v11+ monster damage-taken mitigation: multiplies ALL incoming damage (physical + magic) against variation>=min monsters by a
         // flat factor so endgame mobs are hard to kill via mitigation (not evasion). Rending-proof (applied after armor/resist). Read live.
         public static ConfigProperty<bool> v11_mob_dmg_taken_enabled { get; private set; } = new(true, "master switch for v11+ monster damage-taken mitigation. When on, incoming damage against variation>=v11_mob_dmg_taken_min_variation monsters is scaled by v11_mob_dmg_taken_mult (bosses further by the boss factor).");

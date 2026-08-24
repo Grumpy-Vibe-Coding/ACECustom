@@ -1015,7 +1015,10 @@ namespace ACE.Server.WorldObjects
                 // LOCAL, never a prop - a 50200+ marker would be summed into the worn cache.
                 WorldObject specialPiece = null;
                 ACE.Server.Managers.ZoneControl.ZoneCantrips.Def specialDef = null;
-                if (zoneLoot != null && effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
+                // Zone Control off: no slot special is rolled at all (owner 2026-08-23) - the fallback
+                // is T10 max-rolled gear, which has no such thing.
+                if (zoneLoot != null && ServerConfig.zonecontrol_enabled.Value
+                    && effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
                 {
                     var odds = zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialOdds, 750000.0);
                     if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true)

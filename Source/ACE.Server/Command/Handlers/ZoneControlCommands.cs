@@ -2431,11 +2431,13 @@ namespace ACE.Server.Command.Handlers
         }
 
         /// <summary>"|combatdefs=..." — live combat-rule bool states so the plugin's GM Tools toggles
-        /// show truth. Fixed order: missile_power_bar. APPEND-ONLY: the plugin indexes positionally.</summary>
+        /// show truth. Fixed order: missile_power_bar, zonecontrol_enabled. APPEND-ONLY: the plugin
+        /// indexes positionally.</summary>
         private static void AppendCombatDefs(StringBuilder sb)
         {
             sb.Append("|combatdefs=")
-              .Append(ServerConfig.missile_power_bar.Value ? '1' : '0');
+              .Append(ServerConfig.missile_power_bar.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.zonecontrol_enabled.Value ? '1' : '0');
         }
 
         /// <summary>"[[ZCSESS]]|sess=..|combatdefs=.." — the GM Tools state alone, for a bare
@@ -3256,7 +3258,10 @@ namespace ACE.Server.Command.Handlers
             if (r == null) { Msg("  record present but nothing resolved."); return; }
             var ladder = ZoneControlManager.GetLadderVersion(r.Tier);
             var seen = wo.GetProperty(PropertyInt.ZcResolvedVersion) ?? 0;
-            Msg($"  Tier {r.Tier}  resolved v{seen} / ladder v{ladder.Version}{(seen < ladder.Version ? "  STALE - re-resolves on next equip" : "  current")}");
+            var want = ZoneStatResolver.ResolveStamp(r.Tier);
+            Msg($"  Tier {r.Tier}  stamp {seen} / current {want} (ladder v{ladder.Version}, Zone Control "
+                + (ACE.Server.Managers.ServerConfig.zonecontrol_enabled.Value ? "on" : "OFF")
+                + $"){(seen != want ? "  STALE - re-resolves on next equip" : "  current")}");
             foreach (var line in r.Lines)
                 Msg($"  {line.Name} {line.Record.Grade}/{ZoneStatResolver.GradeMax} -> {line.Value} [{line.Min}-{line.Max}]");
             if (r.ArmorLevel.HasValue)
@@ -3448,7 +3453,7 @@ namespace ACE.Server.Command.Handlers
                     continue;
                 }
 
-                var version = ZoneControlManager.GetLadderVersion(tier).Version;
+                var version = ZoneStatResolver.ResolveStamp(tier);   // must match what StampIdentity just wrote
                 var recordText = ZoneStatResolver.Format(records);
                 Msg($"{(dry ? "[dry] " : "")}{wo.Name} (0x{wo.Guid.Full:X8}) T{tier}: {string.Join("; ", detail)}");
                 if (dry) { migrated++; continue; }
