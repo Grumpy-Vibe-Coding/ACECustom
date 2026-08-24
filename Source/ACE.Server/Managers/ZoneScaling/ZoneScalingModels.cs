@@ -275,9 +275,29 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string LootSlotBracelet = "loot_slot_bracelet";
         public const string LootSlotTrinket = "loot_slot_trinket";
         public const string LootSlotCloak = "loot_slot_cloak";
-        public const string QbStepSize = "qb_step_size";                   // killer QB per progression step (default 1000)
-        public const string QbQualityPerStep = "qb_quality_per_step";      // LootQualityMod added per QB step (setting this ENABLES QB scaling; suggested 0.05)
-        public const string QbMaxSteps = "qb_max_steps";                   // QB step cap (default 20)
+
+        // OPTIONAL per-slot RANGE (owner 2026-08-24): the base loot_slot_<slot> key above is the MIN
+        // and these are the MAX. When a max is defined AND above the min, the slot's count rolls
+        // uniform-inclusive per slot, per kill ("1-2 Weapons, 3-5 Chest"); each slot rolls
+        // INDEPENDENTLY. Max unset (the default) = an exact count, i.e. the pre-2026-08-24 behaviour.
+        // Reversed pairs are auto-swapped at read time, matching every other min/max pair here.
+        // Append-only: an older plugin ignores these, an older server never sends them.
+        public const string LootSlotWeaponsMax = "loot_slot_weapons_max";
+        public const string LootSlotHelmMax = "loot_slot_helm_max";
+        public const string LootSlotChestMax = "loot_slot_chest_max";
+        public const string LootSlotShoulderMax = "loot_slot_shoulder_max";
+        public const string LootSlotBracerMax = "loot_slot_bracer_max";
+        public const string LootSlotGloveMax = "loot_slot_glove_max";
+        public const string LootSlotGirthMax = "loot_slot_girth_max";
+        public const string LootSlotUpperLegMax = "loot_slot_upperleg_max";
+        public const string LootSlotLowerLegMax = "loot_slot_lowerleg_max";
+        public const string LootSlotBootMax = "loot_slot_boot_max";
+        public const string LootSlotShieldMax = "loot_slot_shield_max";
+        public const string LootSlotAmuletMax = "loot_slot_amulet_max";
+        public const string LootSlotRingMax = "loot_slot_ring_max";
+        public const string LootSlotBraceletMax = "loot_slot_bracelet_max";
+        public const string LootSlotTrinketMax = "loot_slot_trinket_max";
+        public const string LootSlotCloakMax = "loot_slot_cloak_max";
 
         public static readonly string[] All =
         {
@@ -311,7 +331,10 @@ namespace ACE.Server.Managers.ZoneScaling
             LootSlotHelm, LootSlotChest, LootSlotShoulder, LootSlotBracer, LootSlotGlove,
             LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,
             LootSlotShield, LootSlotAmulet, LootSlotRing, LootSlotBracelet, LootSlotTrinket, LootSlotCloak,
-            QbStepSize, QbQualityPerStep, QbMaxSteps,
+            LootSlotWeaponsMax,
+            LootSlotHelmMax, LootSlotChestMax, LootSlotShoulderMax, LootSlotBracerMax, LootSlotGloveMax,
+            LootSlotGirthMax, LootSlotUpperLegMax, LootSlotLowerLegMax, LootSlotBootMax,
+            LootSlotShieldMax, LootSlotAmuletMax, LootSlotRingMax, LootSlotBraceletMax, LootSlotTrinketMax, LootSlotCloakMax,
             // Armor v2 (2026-08-21). Order here is cosmetic ONLY: every wire payload that carries these
             // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin
             // matches by NAME - adding, reordering or REMOVING an entry mid-list is safe. (The genuinely

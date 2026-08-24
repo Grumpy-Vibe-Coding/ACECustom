@@ -964,10 +964,6 @@ namespace ACE.Server.WorldObjects
                     effectiveTreasure.Tier = zoneFloorTier;
                 }
 
-                // Zone Control QB scaling: the killer's Quest Bonus count lifts the profile's
-                // LootQualityMod (per-kill clone; enabled by the zone's qb_quality_per_step stat)
-                effectiveTreasure = BuildQBScaledTreasure(effectiveTreasure, zoneLoot, killer);
-
                 List<WorldObject> items = LootGenerationFactory.CreateRandomLootObjects(effectiveTreasure);
 
                 // Structured loot set: blank weapons + per-slot gear
@@ -983,8 +979,22 @@ namespace ACE.Server.WorldObjects
 
                 if (zoneLoot != null)
                 {
-                    int Slot(string stat, int tierDefault) =>
-                        (int)Math.Round(zoneLoot.Get(stat, tierDefault));
+                    // Per-slot count. The loot_slot_<slot> stat is the MIN; the optional
+                    // loot_slot_<slot>_max turns it into a RANGE rolled uniform-inclusive, per slot,
+                    // per kill (owner 2026-08-24: "1-2 Weapons, 3-5 Chest", independent per slot).
+                    // Max undefined - the default and the pre-2026-08-24 behaviour - is an exact count.
+                    // Reversed pairs auto-swap, matching every other min/max pair in the profile.
+                    int Slot(string stat, int tierDefault)
+                    {
+                        var lo = (int)Math.Round(zoneLoot.Get(stat, tierDefault));
+                        var maxStat = stat + "_max";
+                        if (!zoneLoot.Has(maxStat))
+                            return lo;
+                        var hi = (int)Math.Round(zoneLoot.Get(maxStat, lo));
+                        if (hi < lo)
+                            (lo, hi) = (hi, lo);
+                        return hi > lo ? ACE.Common.ThreadSafeRandom.Next(lo, hi) : lo;   // inclusive both ends
+                    }
 
                     slotCounts.Weapons = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotWeapons, slotCounts.Weapons);
                     slotCounts.Helm = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotHelm, slotCounts.Helm);
@@ -1253,46 +1263,6 @@ namespace ACE.Server.WorldObjects
                 MundaneItemTypeSelectionChances = src.MundaneItemTypeSelectionChances,
                 LastModified = src.LastModified,
             };
-        }
-
-        /// <summary>
-        /// Zone Control QB loot scaling: returns a CLONE of the treasure profile with LootQualityMod
-        /// raised by the killing player's Quest Bonus count (QuestCompletionCount). Enabled per-zone by
-        /// defining the qb_quality_per_step stat; qb_step_size (default 1000) and qb_max_steps (default
-        /// 20) tune the curve. Quality clamps at 1.0.
-        /// Returns <paramref name="src"/> unchanged for non-player kills or zones without the stat.
-        /// </summary>
-        private ACE.Database.Models.World.TreasureDeath BuildQBScaledTreasure(ACE.Database.Models.World.TreasureDeath src, ACE.Server.Managers.ZoneScaling.EvaluatedProfile profile, DamageHistoryInfo killer)
-        {
-            if (src == null || profile == null || killer == null)
-                return src;
-
-            if (!profile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.QbQualityPerStep))
-                return src;
-
-            var player = killer.TryGetPetOwnerOrAttacker() as Player;
-            if (player == null)
-                return src;
-
-            var qb = player.QuestCompletionCount ?? 0;
-            if (qb <= 0)
-                return src;
-
-            var stepSize = Math.Max(1.0, profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.QbStepSize, 1000.0));
-            var maxSteps = Math.Max(0, (int)Math.Round(profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.QbMaxSteps, 20.0)));
-            var steps = (int)Math.Min(qb / stepSize, maxSteps);
-            if (steps <= 0)
-                return src;
-
-            var perStep = profile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.QbQualityPerStep);
-            if (perStep <= 0)
-                return src;
-
-            var t = CloneTreasureDeath(src);
-
-            t.LootQualityMod = (float)Math.Clamp(t.LootQualityMod + steps * perStep, 0.0, 1.0);
-
-            return t;
         }
 
         /// <summary>

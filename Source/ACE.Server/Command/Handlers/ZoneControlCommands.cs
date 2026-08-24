@@ -2925,10 +2925,20 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
-            // Currency drop table: curr=wcid~amount~chance~direct~name,... (sparse; rebuilt each sync like
-            // cantrips=). Name is display-only for the plugin; sanitized of the wire's separator chars.
+            // Currency drop table: curr=wcid~amount~chance~direct~name~own,... (sparse; rebuilt each sync
+            // like cantrips=). Name is display-only for the plugin; sanitized of the wire's separator chars.
+            // OWN (field 6, added 2026-08-24) = 1 when this drop is authored in the CURRENTLY TARGETED
+            // bucket, 0 when it is inherited from a broader layer. vp is the MERGED view, so without this
+            // the plugin cannot tell an inherited row from one this monster owns - and `currency remove`
+            // only ever touches the targeted bucket, so deleting an inherited row is a silent no-op.
+            // Deliberately the same bucket the remove verb resolves, so the badge cannot disagree with it.
+            // Append-only field: an older plugin ignores it, an older server omits it and the plugin
+            // falls back to treating the row as owned (the pre-2026-08-24 behaviour).
             if (vp?.CurrencyDrops is { Count: > 0 })
             {
+                var ownScope = wcid.HasValue
+                    ? area?.Profile?.VariantForWcid(wcid.Value)
+                    : area?.Profile?.Minion;
                 sb.Append("|curr=");
                 bool firstCd = true;
                 foreach (var d in vp.CurrencyDrops)
@@ -2938,8 +2948,9 @@ namespace ACE.Server.Command.Handlers
                     firstCd = false;
                     var cdName = (ACE.Database.DatabaseManager.World.GetCachedWeenie(d.Wcid)?.GetName() ?? "")
                         .Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
+                    var own = ownScope?.CurrencyDrops?.Any(x => x != null && x.Wcid == d.Wcid) == true;
                     sb.Append(d.Wcid).Append('~').Append(d.Amount).Append('~').Append(d.Chance.ToString(CultureInfo.InvariantCulture))
-                      .Append('~').Append(d.Direct ? 1 : 0).Append('~').Append(cdName);
+                      .Append('~').Append(d.Direct ? 1 : 0).Append('~').Append(cdName).Append('~').Append(own ? 1 : 0);
                 }
             }
 
