@@ -154,20 +154,30 @@ namespace ACE.Server.Managers.ZoneControl
                 if (_initialized)
                     return;
 
+                // Load() is atomic (build-then-commit), so a failure here leaves whatever was already
+                // loaded untouched - on first init that is genuinely empty, on a /zonecontrol reload it
+                // is the previous good state. Either way the store on disk is never overwritten by a
+                // half-read, because Save() only ever writes what a successful Load built.
                 try { Load(); }
-                catch (Exception ex) { log.Error($"ZoneControlManager: failed to load store, starting empty. {ex}"); }
+                catch (Exception ex) { log.Error($"ZoneControlManager: failed to load store; keeping the previously loaded zones ({_areas.Count} zone(s)). {ex}"); }
 
                 _initialized = true;
             }
         }
 
+        /// <summary>
+        /// Read the store and swap it in ATOMICALLY (owner 2026-08-23). The live collections are not
+        /// touched until the read AND the parse have both succeeded, so a DB blip mid-reload leaves the
+        /// zones exactly as they were instead of emptying them.
+        ///
+        /// This matters more than it looks: every mutation calls <see cref="Save"/>, which serializes
+        /// whatever is in memory. Under the old clear-then-read order, a failed reload left memory empty
+        /// AND the caller swallowed the exception ("starting empty"), so the next zone edit would write
+        /// that empty store straight over the real one in the shard DB. Silent, and unrecoverable without
+        /// a backup. Build first, commit last - the throw escapes and the previous state survives.
+        /// </summary>
         private static void Load()
         {
-            _areas.Clear();
-            _evalCache.Clear();
-            _variationDefaults.Clear();
-            _ladderApplies.Clear();
-
             string json = null;
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
                 json = DatabaseManager.ShardConfig.GetString(StoreKey)?.Value;
@@ -175,6 +185,11 @@ namespace ACE.Server.Managers.ZoneControl
             var store = string.IsNullOrWhiteSpace(json)
                 ? new Store()
                 : (JsonConvert.DeserializeObject<Store>(json) ?? new Store());
+
+            // ── build into locals; nothing live is disturbed if any of this throws ──
+            var areas = new Dictionary<string, ControlledArea>(StringComparer.OrdinalIgnoreCase);
+            var variationDefaults = new Dictionary<int, VariationDefault>();
+            var ladderApplies = new Dictionary<int, LadderApply>();
 
             foreach (var a in store.Areas)
             {
@@ -186,7 +201,7 @@ namespace ACE.Server.Managers.ZoneControl
                 a.AppearanceDefault ??= new ZoneAppearance();
                 a.AppearanceByWcid ??= new Dictionary<uint, ZoneAppearance>();
                 MigrateAppearanceProps(a);
-                _areas[a.Name] = a;
+                areas[a.Name] = a;
             }
 
             // Per-variation Defaults. Absent on pre-2026-07-30 stores -> empty -> zones resolve exactly as before.
@@ -198,14 +213,23 @@ namespace ACE.Server.Managers.ZoneControl
                     kv.Value.Profile ??= new ZoneVariantProfile();
                     kv.Value.Effects ??= new ZoneEffects();
                     kv.Value.Appearance ??= new ZoneAppearance();
-                    _variationDefaults[kv.Key] = kv.Value;
+                    variationDefaults[kv.Key] = kv.Value;
                 }
             }
 
             if (store.LadderApplies != null)
                 foreach (var kv in store.LadderApplies)
                     if (kv.Value != null)
-                        _ladderApplies[kv.Key] = kv.Value;
+                        ladderApplies[kv.Key] = kv.Value;
+
+            // ── commit: from here on nothing can throw ──
+            _areas.Clear();
+            foreach (var kv in areas) _areas[kv.Key] = kv.Value;
+            _variationDefaults.Clear();
+            foreach (var kv in variationDefaults) _variationDefaults[kv.Key] = kv.Value;
+            _ladderApplies.Clear();
+            foreach (var kv in ladderApplies) _ladderApplies[kv.Key] = kv.Value;
+            _evalCache.Clear();
             _ladderSnapshot = new Dictionary<int, LadderApply>(_ladderApplies);
 
             RebuildIndexes();
