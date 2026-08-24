@@ -1688,7 +1688,8 @@ namespace ACE.Server.WorldObjects.Managers
             var healAmount = creature.UpdateVitalDelta(creature.Health, (int)Math.Round(tickAmountTotal));
             creature.DamageHistory.OnHeal((uint)healAmount);
 
-            if (creature is Player player)
+            // 0-point ticks (full HP) are pure spam - say nothing (owner 2026-08-23)
+            if (healAmount > 0 && creature is Player player)
                 player.SendMessage($"You receive {healAmount} points of periodic healing.", ServerConfig.aetheria_heal_color.Value ? ChatMessageType.Broadcast : ChatMessageType.Combat);
         }
 
