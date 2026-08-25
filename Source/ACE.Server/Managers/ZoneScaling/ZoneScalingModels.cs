@@ -306,8 +306,11 @@ namespace ACE.Server.Managers.ZoneScaling
         // now lives on the budget. Unset = legacy, i.e. the pre-2026-08-24 behaviour, unchanged.
         // The budget is a CEILING, not a quota: armor coverage credit (one coat covering three slots)
         // can land under it. Slot specials are deliberately OUTSIDE the budget.
-        public const string LootMaxDrops = "loot_max_drops";               // total items per kill; defining it enables budget mode
-        public const string LootMaxDropsMax = "loot_max_drops_max";        // optional ceiling: budget rolls uniform-inclusive
+        // Renamed from loot_max_drops / loot_max_drops_max 2026-08-24: the first key is the LOWER
+        // bound, so calling it "max" was backwards and the UI inherited the error. Renamed while only
+        // a single test value existed - re-author it once.
+        public const string LootDropsMin = "loot_drops_min";   // floor; DEFINING THIS is what enables budget mode
+        public const string LootDropsMax = "loot_drops_max";   // optional ceiling; budget rolls uniform-inclusive between them
         public const string LootWeightWeapon = "loot_weight_weapon";       // relative category weights, normalized at roll time
         public const string LootWeightArmor = "loot_weight_armor";         //   (shield rides armor)
         public const string LootWeightJewelry = "loot_weight_jewelry";
@@ -349,7 +352,7 @@ namespace ACE.Server.Managers.ZoneScaling
             LootSlotHelmMax, LootSlotChestMax, LootSlotShoulderMax, LootSlotBracerMax, LootSlotGloveMax,
             LootSlotGirthMax, LootSlotUpperLegMax, LootSlotLowerLegMax, LootSlotBootMax,
             LootSlotShieldMax, LootSlotAmuletMax, LootSlotRingMax, LootSlotBraceletMax, LootSlotTrinketMax, LootSlotCloakMax,
-            LootMaxDrops, LootMaxDropsMax,
+            LootDropsMin, LootDropsMax,
             LootWeightWeapon, LootWeightArmor, LootWeightJewelry, LootWeightCloak,
             // Armor v2 (2026-08-21). Order here is cosmetic ONLY: every wire payload that carries these
             // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin

@@ -44,6 +44,17 @@ namespace ACE.Server.Managers.ZoneControl
         ///    the raw imbue mod would be wrong by exactly one, and would wave through a 6x card being
         ///    "upgraded" to a 7x imbue while reporting the card as stronger. Compare stored-to-stored.
         ///
+        /// The SAME trap caught Rend Power (fixed 2026-08-24): property 9056 stores a vuln FRACTION
+        /// and the engine computes rendingMod = 1 + fraction (WorldObject_Weapon.cs:657), while the
+        /// imbue's own ceiling MaxRendingMod is 2.5 - a rendingMod, not a fraction. Comparing a stored
+        /// fraction against 2.50 was wrong by exactly one: a weapon storing 2.0 (rendingMod 3.0, far
+        /// stronger than the imbue) read as 2.0 >= 2.50 = false and was ALLOWED to take a weaker
+        /// imbue. The stored-value equivalent of the imbue's ceiling is 1.50.
+        ///
+        /// Armor Rending is NOT affected: both sides are a fraction of armour ignored, and the skill
+        /// formula bottoms out at armorRendingMod 0.4 = fraction 0.6 (DamageEvent.cs:468), so 0.60 is
+        /// already in stored units.
+        ///
         /// Pairing verified 2026-08-24 - the names are confusable and they are easy to swap:
         ///   Critical Strike (imbue)  &lt;-&gt; Biting Strike (card)   both CRIT CHANCE
         ///   Crippling Blow  (imbue)  &lt;-&gt; Crushing Blow (card)   both CRIT DAMAGE</summary>
@@ -68,21 +79,25 @@ namespace ACE.Server.Managers.ZoneControl
             [ImbuedEffectType.CriticalStrike] = new((int)PropertyFloat.CriticalFrequency, 0.50, "Critical Frequency"),
             [ImbuedEffectType.CripplingBlow] = new((int)PropertyFloat.CriticalMultiplier, 6.00, "Critical Multiplier"),
             [ImbuedEffectType.ArmorRending] = new(ZoneLootMutator.ArmorRendOverridePropId, 0.60, "Armor Rending"),
-            [ImbuedEffectType.SlashRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.PierceRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.BludgeonRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.AcidRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.ColdRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.ElectricRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.FireRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
-            [ImbuedEffectType.NetherRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.SlashRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.PierceRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.BludgeonRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.AcidRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.ColdRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.ElectricRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.FireRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
+            [ImbuedEffectType.NetherRending] = new(ZoneLootMutator.RendingModOverridePropId, 1.50, "Rend Power"),
         };
 
         /// <summary>Which imbue a vanilla recipe applies. The recipe data does NOT say: recipe 3863
-        /// has two mod rows and zero int/float/bool stat mods, because RecipeManager applies the
-        /// effect in CODE from the mod's DataId (RecipeManager.cs:490-500, :576-586, :648-666).
-        /// This mirrors the DataIds that switch cares about - only the ones that compete with
-        /// something we author; the rest need no entry.</summary>
+        /// has two mod rows and zero int/float/bool stat mods. The effect comes from the mod's DataId.
+        ///
+        /// AUTHORITATIVE SOURCE = the mutation scripts in Source/ACE.Server/Entity/Mutations/Recipes/,
+        /// named by DataId ("3800002A - Black Heart.txt"). The C# switch in RecipeManager.TryMutateNative
+        /// looks authoritative but is DEAD: useMutateNative is a const false (RecipeManager.cs:1562), so
+        /// TryMutate always takes the script path. This table was first derived from that dead switch and
+        /// consequently missed NetherRending, which has no case there but does have a script. If a DataId
+        /// is ever in doubt, read the .txt - not the switch.</summary>
         private static readonly Dictionary<uint, ImbuedEffectType> DataIdToImbue = new()
         {
             [0x38000023] = ImbuedEffectType.CriticalStrike,     // Black Opal
@@ -95,6 +110,7 @@ namespace ACE.Server.Managers.ZoneControl
             [0x3800003E] = ImbuedEffectType.FireRending,        // Red Garnet
             [0x3800003F] = ImbuedEffectType.PierceRending,      // Black Garnet
             [0x38000040] = ImbuedEffectType.SlashRending,       // Imperial Topaz
+            [0x3800002A] = ImbuedEffectType.NetherRending,      // Black Heart (recipe 300001)
         };
 
         /// <summary>Properties the T11+ loot pipeline authors, for the custom-recipe path. A recipe
@@ -103,6 +119,15 @@ namespace ACE.Server.Managers.ZoneControl
         {
             (int)PropertyInt.Cleaving,
             ZoneLootMutator.SplitArrowCountIntId,
+        };
+
+        /// <summary>Properties where ANY replacement is a loss, so there is no "is it bigger" question
+        /// to ask. SlayerCreatureType is the case: a slayer stone at 1.75 passes a &gt;= test against a
+        /// rolled 1.5x card and silently RETARGETS which creature type the weapon slays, which is not a
+        /// magnitude at all. Present and being replaced = refuse.</summary>
+        private static readonly HashSet<int> OwnedIdentity = new()
+        {
+            (int)PropertyInt.SlayerCreatureType,
         };
 
         private static readonly HashSet<int> OwnedFloats = new()
@@ -161,8 +186,10 @@ namespace ACE.Server.Managers.ZoneControl
             // ── custom recipes, which SetValue real properties ──
             if (WouldDowngrade(recipe, target, out var what, out var have, out var incoming, out var propId))
             {
-                reason = $"This Tier {tier} item already has a stronger {what} "
-                       + $"({Show(propId, have)}) than this would give it ({Show(propId, incoming)}).";
+                reason = OwnedIdentity.Contains(propId)
+                    ? $"This Tier {tier} item already has a {what} set, and this would replace it."
+                    : $"This Tier {tier} item already has a stronger {what} "
+                      + $"({Show(propId, have)}) than this would give it ({Show(propId, incoming)}).";
                 return true;
             }
 
@@ -215,7 +242,7 @@ namespace ACE.Server.Managers.ZoneControl
                 {
                     foreach (var m in mod.RecipeModsFloat)
                     {
-                        if (m == null || !OwnedFloats.Contains(m.Stat) || !IsSetValue(m.Enum))
+                        if (m == null || !OwnedFloats.Contains(m.Stat) || !IsReplacing(m.Enum))
                             continue;
                         var cur = target.GetProperty((PropertyFloat)m.Stat);
                         if (cur.HasValue && cur.Value >= m.Value)
@@ -230,7 +257,17 @@ namespace ACE.Server.Managers.ZoneControl
                 {
                     foreach (var m in mod.RecipeModsInt)
                     {
-                        if (m == null || !OwnedInts.Contains(m.Stat) || !IsSetValue(m.Enum))
+                        if (m == null || !IsReplacing(m.Enum))
+                            continue;
+
+                        // identity props: replacing at all is a loss, magnitude is meaningless
+                        if (OwnedIdentity.Contains(m.Stat) && target.GetProperty((PropertyInt)m.Stat).HasValue)
+                        {
+                            what = PropName(m.Stat); have = 0; incoming = 0; propId = m.Stat;
+                            return true;
+                        }
+
+                        if (!OwnedInts.Contains(m.Stat))
                             continue;
                         var cur = target.GetProperty((PropertyInt)m.Stat);
                         if (cur.HasValue && cur.Value >= m.Value)
@@ -245,9 +282,14 @@ namespace ACE.Server.Managers.ZoneControl
             return false;
         }
 
-        /// <summary>RecipeMod Enum 1 = SetValue - the only operation that can REPLACE, and so the only
-        /// one that can downgrade. Additive operations are left alone.</summary>
-        private static bool IsSetValue(int modEnum) => modEnum == 1;
+        /// <summary>Operations that REPLACE a value, and can therefore downgrade.
+        /// SetValue(1) is the obvious one. CopyFromSourceToTarget(3) also replaces - and writes the
+        /// source's value or 0 when absent, so it can wipe a property outright. Add(2), AddSpell(7)
+        /// and the bit ops cannot make an authored value worse, so they are left alone.
+        /// (ModificationOperation, ACE.Entity/Enum/ModificationOperation.cs.)</summary>
+        private static bool IsReplacing(int modEnum) =>
+            modEnum == (int)ACE.Entity.Enum.ModificationOperation.SetValue
+         || modEnum == (int)ACE.Entity.Enum.ModificationOperation.CopyFromSourceToTarget;
 
         private static string PropName(int propId)
         {
@@ -261,6 +303,7 @@ namespace ACE.Server.Managers.ZoneControl
             if (propId == ZoneLootMutator.SplitArrowCountIntId) return "Split Arrow count";
             if (propId == ZoneLootMutator.SplitArrowRangeFloatId) return "Split Arrow range";
             if (propId == ZoneLootMutator.SplitArrowDmgFloatId) return "Split Arrow damage";
+            if (propId == (int)PropertyInt.SlayerCreatureType) return "Slayer target";
             return "property " + propId;
         }
     }

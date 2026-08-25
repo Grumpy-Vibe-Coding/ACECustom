@@ -1019,15 +1019,20 @@ namespace ACE.Server.WorldObjects
                 // The loot_slot_* values then mean WEIGHT WITHIN CATEGORY rather than count, and the
                 // budget is a CEILING - armor coverage credit can land the corpse under it. Slot
                 // specials below are deliberately OUTSIDE the budget. Unset = legacy, unchanged.
-                if (zoneLoot != null && zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDrops))
+                if (zoneLoot != null && zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootDropsMin))
                 {
-                    var budgetLo = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDrops, 0.0));
+                    var budgetLo = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootDropsMin, 0.0));
                     var budgetHi = budgetLo;
-                    if (zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDropsMax))
-                        budgetHi = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootMaxDropsMax, budgetLo));
+                    if (zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootDropsMax))
+                        budgetHi = (int)Math.Round(zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootDropsMax, budgetLo));
                     if (budgetHi < budgetLo)
                         (budgetLo, budgetHi) = (budgetHi, budgetLo);
                     var budget = budgetHi > budgetLo ? ACE.Common.ThreadSafeRandom.Next(budgetLo, budgetHi) : budgetLo;
+
+                    // A corpse holds 120 items (Corpse.cs:60-61) and TryAddToInventory's result is
+                    // DISCARDED at the fill sites below - so anything past 120 is silently destroyed,
+                    // not dropped to the ground and not logged. Clamp here rather than trust authoring.
+                    budget = Math.Min(budget, ZoneCorpseItemCap);
 
                     slotCounts = LootGenerationFactory.RollBudgetedCounts(
                         slotCounts, budget,
@@ -1263,6 +1268,12 @@ namespace ACE.Server.WorldObjects
         /// Shallow field-copy of a TreasureDeath profile so per-kill scaling (zone / QB) can mutate a clone
         /// without touching the shared cached row. Keep the field list in sync with TreasureDeath's columns.
         /// </summary>
+        /// <summary>Hard ceiling on a budgeted drop set: a Corpse declares ItemCapacity 120
+        /// (Corpse.cs:61), and every corpse.TryAddToInventory call here ignores its return value, so
+        /// an item that will not fit is silently lost. Kept below the real cap so quest tokens,
+        /// currency and slot specials - all added OUTSIDE the budget - still have room.</summary>
+        private const int ZoneCorpseItemCap = 100;
+
         private static ACE.Database.Models.World.TreasureDeath CloneTreasureDeath(ACE.Database.Models.World.TreasureDeath src)
         {
             return new ACE.Database.Models.World.TreasureDeath
