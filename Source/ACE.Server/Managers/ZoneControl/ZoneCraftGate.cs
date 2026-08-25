@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 
 using ACE.Database.Models.World;
+using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Factories;
 using ACE.Server.WorldObjects;
@@ -10,62 +12,115 @@ namespace ACE.Server.Managers.ZoneControl
     /// <summary>
     /// Decides whether a crafting recipe may be applied to a Tier 11+ item.
     ///
-    /// WHY THIS EXISTS. T11+ gear drops FINISHED - ZoneLootMutator authors its specials from a
-    /// per-tier ladder. Player tinkering fights that in three different ways:
+    /// THE RULE (owner 2026-08-24): *"a weaker imbue cant go on, but not imbued could"*. So this is
+    /// NOT a blanket refusal. A recipe is refused only when it would REPLACE a value the item already
+    /// carries with something equal or worse. An item that rolled nothing for that property can still
+    /// receive the imbue - that is a real upgrade the player earned, and blocking it would be a nerf
+    /// with nothing behind it.
     ///
-    ///  1. COMPETITION. The vanilla imbues do not stack with our cards, they compete via Math.Max
-    ///     (WorldObject_Weapon.cs:362 / :440 / :470). skill.Base is clamped to 400 melee / 360
-    ///     missile+magic (GetBaseSkillImbued), so at endgame Critical Strike is a FLAT 0.50 crit
-    ///     chance and Crippling Blow a FLAT 6.0 crit multiplier for every capped player - constants,
-    ///     not a curve. Any Biting Strike below 0.50 or Crushing Blow below 7.0x is simply invisible.
-    ///  2. OVERWRITE. Several custom recipes SetValue rather than add - the crit gems pin
-    ///     CriticalMultiplier to 2.25 and CriticalFrequency to 0.33, slayer stones pin
-    ///     SlayerDamageBonus to 1.75, bowstring 527870117 pins IgnoreShield to 0.5. Those replace a
-    ///     rolled value in BOTH directions, so a jackpot drop can be tinkered DOWN to a constant.
-    ///  3. REPEATS. Some custom recipes have no target guard at all and can be applied over and over.
+    /// WHY IT IS NEEDED. Player crafting fights the T11+ ladder three ways:
+    ///  1. COMPETITION. Vanilla imbues do not stack with our cards, they compete via Math.Max
+    ///     (WorldObject_Weapon.cs:362 / :470). skill.Base is clamped to 400 melee / 360 missile+magic
+    ///     (GetBaseSkillImbued), so at cap Critical Strike is a FLAT 0.50 crit chance and Crippling
+    ///     Blow a FLAT 6.0 crit mod for every player - constants, not a curve.
+    ///  2. OVERWRITE. Custom 527870xxx recipes SetValue rather than add, so they replace a rolled
+    ///     value in BOTH directions - a jackpot drop can be tinkered DOWN to a constant.
+    ///  3. REPEATS. Several custom recipes have no target guard and can be applied repeatedly.
     ///
-    /// HOW IT DECIDES. Not by recipe id - the id lists are incomplete (there are ~10 slayer stone
-    /// variants alone) and any new row added to ace_world would slip past. Instead the gate asks the
-    /// data what a recipe would WRITE: if the recipe modifies a property this system authors, it is
-    /// blocked on T11+ gear. That covers recipes nobody has enumerated, including future ones.
-    ///
-    /// WHAT IS NOT BLOCKED. Plain tinkers (salvage steel/iron/granite/leather and friends) write
-    /// none of these properties, so they keep working - they are salvage sinks and blocking them
-    /// would cost players a system while buying the ladder nothing.
+    /// This is LAYER 2 of the design in Craft_Gate_Plan_2026-08-24.md. Layer 1 (an authorable
+    /// item-type x material matrix) and its plugin surface are not built yet; until they are, every
+    /// decision falls through to the downgrade rule below.
     /// </summary>
     public static class ZoneCraftGate
     {
-        /// <summary>Properties the T11+ loot pipeline authors. A recipe that writes any of these is
-        /// overwriting an authored roll, so it is refused on T11+ gear. Kept as raw ints because the
-        /// split-arrow / override props live outside the shipped enums.</summary>
+        /// <summary>What a competing imbue is worth, and which property it fights over.
+        ///
+        /// CAREFUL - the two comparisons do NOT share semantics:
+        ///  * CRIT CHANCE is compared raw. CriticalFrequency 0.70 vs Critical Strike 0.50.
+        ///  * CRIT DAMAGE is compared as a MOD, and the engine then adds one:
+        ///    CriticalDamageMod = 1.0f + GetWeaponCritDamageMod(...)  (DamageEvent.cs:418).
+        ///    Our Crushing Blow card stores (N - 1) for an N-times multiplier, so an 8x card stores
+        ///    7.0 and Crippling Blow's 6.0 is really 7.0x. Comparing a DISPLAYED multiplier against
+        ///    the raw imbue mod would be wrong by exactly one, and would wave through a 6x card being
+        ///    "upgraded" to a 7x imbue while reporting the card as stronger. Compare stored-to-stored.
+        ///
+        /// Pairing verified 2026-08-24 - the names are confusable and they are easy to swap:
+        ///   Critical Strike (imbue)  &lt;-&gt; Biting Strike (card)   both CRIT CHANCE
+        ///   Crippling Blow  (imbue)  &lt;-&gt; Crushing Blow (card)   both CRIT DAMAGE</summary>
+        private readonly struct Competing
+        {
+            public readonly int PropertyId;
+            public readonly double CappedValue;
+            public readonly string Label;
+
+            public Competing(int propertyId, double cappedValue, string label)
+            {
+                PropertyId = propertyId;
+                CappedValue = cappedValue;
+                Label = label;
+            }
+        }
+
+        /// <summary>Imbue effect -&gt; what it competes with. Effects absent here fight over nothing this
+        /// system authors (the three defense imbues, Spellbook), so they are always allowed.</summary>
+        private static readonly Dictionary<ImbuedEffectType, Competing> ImbueCompetes = new()
+        {
+            [ImbuedEffectType.CriticalStrike] = new((int)PropertyFloat.CriticalFrequency, 0.50, "Critical Frequency"),
+            [ImbuedEffectType.CripplingBlow] = new((int)PropertyFloat.CriticalMultiplier, 6.00, "Critical Multiplier"),
+            [ImbuedEffectType.ArmorRending] = new(ZoneLootMutator.ArmorRendOverridePropId, 0.60, "Armor Rending"),
+            [ImbuedEffectType.SlashRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.PierceRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.BludgeonRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.AcidRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.ColdRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.ElectricRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.FireRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+            [ImbuedEffectType.NetherRending] = new(ZoneLootMutator.RendingModOverridePropId, 2.50, "Rend Power"),
+        };
+
+        /// <summary>Which imbue a vanilla recipe applies. The recipe data does NOT say: recipe 3863
+        /// has two mod rows and zero int/float/bool stat mods, because RecipeManager applies the
+        /// effect in CODE from the mod's DataId (RecipeManager.cs:490-500, :576-586, :648-666).
+        /// This mirrors the DataIds that switch cares about - only the ones that compete with
+        /// something we author; the rest need no entry.</summary>
+        private static readonly Dictionary<uint, ImbuedEffectType> DataIdToImbue = new()
+        {
+            [0x38000023] = ImbuedEffectType.CriticalStrike,     // Black Opal
+            [0x38000024] = ImbuedEffectType.CripplingBlow,      // Fire Opal
+            [0x38000025] = ImbuedEffectType.ArmorRending,       // Sunstone
+            [0x3800003A] = ImbuedEffectType.AcidRending,        // Emerald
+            [0x3800003B] = ImbuedEffectType.BludgeonRending,    // White Sapphire
+            [0x3800003C] = ImbuedEffectType.ColdRending,        // Aquamarine
+            [0x3800003D] = ImbuedEffectType.ElectricRending,    // Jet
+            [0x3800003E] = ImbuedEffectType.FireRending,        // Red Garnet
+            [0x3800003F] = ImbuedEffectType.PierceRending,      // Black Garnet
+            [0x38000040] = ImbuedEffectType.SlashRending,       // Imperial Topaz
+        };
+
+        /// <summary>Properties the T11+ loot pipeline authors, for the custom-recipe path. A recipe
+        /// writing one of these is compared value-for-value against what the item already carries.</summary>
         private static readonly HashSet<int> OwnedInts = new()
         {
-            (int)PropertyInt.ImbuedEffect,                  // 179 - every vanilla imbue writes this
-            (int)PropertyInt.Cleaving,                      // 292 - Cleaving card
-            ZoneLootMutator.SplitArrowCountIntId,           // 9031
+            (int)PropertyInt.Cleaving,
+            ZoneLootMutator.SplitArrowCountIntId,
         };
 
         private static readonly HashSet<int> OwnedFloats = new()
         {
-            (int)PropertyFloat.CriticalFrequency,           // 147 - Biting Strike
-            (int)PropertyFloat.CriticalMultiplier,          // 136 - Crushing Blow
-            (int)PropertyFloat.SlayerDamageBonus,           // 138 - Slayer
-            (int)PropertyFloat.IgnoreShield,                // 151 - Shield Cleaving
-            ZoneLootMutator.RendingModOverridePropId,       // 9056 - Rend Power
-            ZoneLootMutator.ArmorRendOverridePropId,        // 9057 - Armor Rend
-            ZoneLootMutator.SplitArrowRangeFloatId,         // 9032
-            ZoneLootMutator.SplitArrowDmgFloatId,           // 9033
+            (int)PropertyFloat.CriticalFrequency,
+            (int)PropertyFloat.CriticalMultiplier,
+            (int)PropertyFloat.SlayerDamageBonus,
+            (int)PropertyFloat.IgnoreShield,
+            ZoneLootMutator.RendingModOverridePropId,
+            ZoneLootMutator.ArmorRendOverridePropId,
+            ZoneLootMutator.SplitArrowRangeFloatId,
+            ZoneLootMutator.SplitArrowDmgFloatId,
         };
 
-        private static readonly HashSet<int> OwnedBools = new()
-        {
-            ZoneLootMutator.SplitArrowsBoolId,              // 9030
-        };
-
-        /// <summary>The item's tier for gating purposes. ARMOUR and jewelry carry ZcTier, but WEAPONS
-        /// DO NOT: ApplyT11GearStats returns for weapons/casters before StampIdentity ever runs
+        /// <summary>The item's tier. ARMOUR and jewelry carry ZcTier, but WEAPONS DO NOT:
+        /// ApplyT11GearStats returns for weapons/casters before StampIdentity ever runs
         /// (LootGenerationFactory_ZoneSet.cs:492), so they carry WeaponAugScaleTier instead. Checking
-        /// only one of the two would silently gate armour and leave every weapon open.</summary>
+        /// only one would silently gate armour and leave every weapon open.</summary>
         public static int TierOf(WorldObject wo)
         {
             if (wo == null)
@@ -75,7 +130,9 @@ namespace ACE.Server.Managers.ZoneControl
             return zc > wep ? zc : wep;
         }
 
-        /// <summary>True when this recipe must not be applied to this target.</summary>
+        /// <summary>True when this recipe must not be applied to this target. <paramref name="reason"/>
+        /// is player-facing and always states WHAT it would have overwritten - an unexplained refusal
+        /// is indistinguishable from a bug.</summary>
         public static bool IsBlocked(Recipe recipe, WorldObject target, out string reason)
         {
             reason = null;
@@ -86,30 +143,66 @@ namespace ACE.Server.Managers.ZoneControl
             if (tier < LootGenerationFactory.ZoneLootSetMinTier)
                 return false;
 
-            // TWO tests, because they catch different things and neither alone is enough:
-            //
-            //  1. IsImbuing() - salvage_Type 2. The VANILLA imbues (Critical Strike, Crippling Blow,
-            //     Armor Rending, the eight elemental rends, the three defense imbues) apply their
-            //     effect in CODE, not through recipe mod rows: recipe 3863 has two mod rows and NOT
-            //     ONE int/float/bool stat between them. A purely data-driven check misses every one
-            //     of them - i.e. exactly the Critical Strike / Crippling Blow cases this gate exists
-            //     for. Verified against ace_world 2026-08-24.
-            //  2. WritesOwnedProperty - the custom 527870xxx recipes DO carry stat mods, and they
-            //     SetValue over our authored rolls. There are ~10 slayer stone variants alone and the
-            //     id lists in circulation are incomplete, so this asks the data rather than a list,
-            //     and it keeps working for recipes added to ace_world later.
-            if (!recipe.IsImbuing() && !WritesOwnedProperty(recipe))
-                return false;
+            // ── the vanilla imbues, whose effect comes from the mod DataId ──
+            if (recipe.IsImbuing() && TryGetImbue(recipe, out var effect)
+                && ImbueCompetes.TryGetValue(effect, out var competing))
+            {
+                var current = target.GetProperty((PropertyFloat)competing.PropertyId);
+                if (current.HasValue && current.Value >= competing.CappedValue)
+                {
+                    reason = $"This Tier {tier} item already has a stronger {competing.Label} "
+                           + $"({Show(competing.PropertyId, current.Value)}) than this would give it "
+                           + $"({Show(competing.PropertyId, competing.CappedValue)}).";
+                    return true;
+                }
+                return false;   // nothing there, or ours is weaker - let the player have it
+            }
 
-            reason = $"This is Tier {tier} equipment - it drops with its properties already set, and "
-                   + "this would overwrite them. Salvage tinkering still works.";
-            return true;
+            // ── custom recipes, which SetValue real properties ──
+            if (WouldDowngrade(recipe, target, out var what, out var have, out var incoming, out var propId))
+            {
+                reason = $"This Tier {tier} item already has a stronger {what} "
+                       + $"({Show(propId, have)}) than this would give it ({Show(propId, incoming)}).";
+                return true;
+            }
+
+            return false;
         }
 
-        /// <summary>Does this recipe write any property the T11+ pipeline authors? Reads the recipe's
-        /// own mod rows, so it needs no id list and catches recipes added later.</summary>
-        private static bool WritesOwnedProperty(Recipe recipe)
+        /// <summary>Crit damage is stored as (multiplier - 1) because the engine computes 1 + mod, so
+        /// show it the way the player reads it on the item.</summary>
+        private static string Show(int propId, double stored)
         {
+            if (propId == (int)PropertyFloat.CriticalMultiplier)
+                return $"{stored + 1.0:0.##}x";
+            if (propId == (int)PropertyFloat.CriticalFrequency)
+                return $"{stored * 100.0:0.#} pct";
+            return $"{stored:0.##}";
+        }
+
+        /// <summary>Which imbue this recipe applies, read from its mod DataIds.</summary>
+        private static bool TryGetImbue(Recipe recipe, out ImbuedEffectType effect)
+        {
+            effect = ImbuedEffectType.Undef;
+            if (recipe.RecipeMod == null)
+                return false;
+
+            foreach (var mod in recipe.RecipeMod)
+            {
+                if (mod == null || mod.DataId == 0)
+                    continue;
+                if (DataIdToImbue.TryGetValue((uint)mod.DataId, out effect))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>Would this recipe write an owned property with a value no better than the item's?
+        /// Only SetValue-style mods can downgrade; an additive mod cannot make an item worse.</summary>
+        private static bool WouldDowngrade(Recipe recipe, WorldObject target,
+            out string what, out double have, out double incoming, out int propId)
+        {
+            what = null; have = 0; incoming = 0; propId = 0;
             if (recipe.RecipeMod == null)
                 return false;
 
@@ -118,23 +211,57 @@ namespace ACE.Server.Managers.ZoneControl
                 if (mod == null)
                     continue;
 
-                if (mod.RecipeModsInt != null)
-                    foreach (var m in mod.RecipeModsInt)
-                        if (m != null && OwnedInts.Contains(m.Stat))
-                            return true;
-
                 if (mod.RecipeModsFloat != null)
+                {
                     foreach (var m in mod.RecipeModsFloat)
-                        if (m != null && OwnedFloats.Contains(m.Stat))
+                    {
+                        if (m == null || !OwnedFloats.Contains(m.Stat) || !IsSetValue(m.Enum))
+                            continue;
+                        var cur = target.GetProperty((PropertyFloat)m.Stat);
+                        if (cur.HasValue && cur.Value >= m.Value)
+                        {
+                            what = PropName(m.Stat); have = cur.Value; incoming = m.Value; propId = m.Stat;
                             return true;
+                        }
+                    }
+                }
 
-                if (mod.RecipeModsBool != null)
-                    foreach (var m in mod.RecipeModsBool)
-                        if (m != null && OwnedBools.Contains(m.Stat))
+                if (mod.RecipeModsInt != null)
+                {
+                    foreach (var m in mod.RecipeModsInt)
+                    {
+                        if (m == null || !OwnedInts.Contains(m.Stat) || !IsSetValue(m.Enum))
+                            continue;
+                        var cur = target.GetProperty((PropertyInt)m.Stat);
+                        if (cur.HasValue && cur.Value >= m.Value)
+                        {
+                            what = PropName(m.Stat); have = cur.Value; incoming = m.Value; propId = m.Stat;
                             return true;
+                        }
+                    }
+                }
             }
 
             return false;
+        }
+
+        /// <summary>RecipeMod Enum 1 = SetValue - the only operation that can REPLACE, and so the only
+        /// one that can downgrade. Additive operations are left alone.</summary>
+        private static bool IsSetValue(int modEnum) => modEnum == 1;
+
+        private static string PropName(int propId)
+        {
+            if (propId == (int)PropertyFloat.CriticalFrequency) return "Critical Frequency";
+            if (propId == (int)PropertyFloat.CriticalMultiplier) return "Critical Multiplier";
+            if (propId == (int)PropertyFloat.SlayerDamageBonus) return "Slayer bonus";
+            if (propId == (int)PropertyFloat.IgnoreShield) return "Shield Cleaving";
+            if (propId == ZoneLootMutator.RendingModOverridePropId) return "Rend Power";
+            if (propId == ZoneLootMutator.ArmorRendOverridePropId) return "Armor Rending";
+            if (propId == (int)PropertyInt.Cleaving) return "Cleaving";
+            if (propId == ZoneLootMutator.SplitArrowCountIntId) return "Split Arrow count";
+            if (propId == ZoneLootMutator.SplitArrowRangeFloatId) return "Split Arrow range";
+            if (propId == ZoneLootMutator.SplitArrowDmgFloatId) return "Split Arrow damage";
+            return "property " + propId;
         }
     }
 }
