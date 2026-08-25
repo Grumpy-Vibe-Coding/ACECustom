@@ -118,14 +118,23 @@ namespace ACE.Server.Managers.ZoneControl
             return ZoneCantrips.CatalogBandAt(def, tier);
         }
 
-        /// <summary>A core_anchor_* knob from the tier's Default layer, else the C# default.</summary>
-        private static double DefaultLayerStat(int tier, string stat, double fallback)
+        /// <summary>
+        /// A knob from the tier's DEFAULT layer, or null when the tier does not author it. Nullable so a
+        /// caller can tell "authored as 1100" from "not authored" - armor_base_level needs that distinction
+        /// (unset falls back to the historical formula, not to a constant).
+        /// One locked snapshot read (ZoneControlManager.GetVariationDefault); call it ONCE per operation.
+        /// </summary>
+        public static double? DefaultLayerValue(int tier, string stat)
         {
             var vd = ZoneControlManager.GetVariationDefault(tier);
             if (vd?.Profile?.Stats != null && vd.Profile.Stats.TryGetValue(stat, out var curve) && curve != null)
                 return curve.Evaluate(1);
-            return fallback;
+            return null;
         }
+
+        /// <summary>A core_anchor_* knob from the tier's Default layer, else the C# default.</summary>
+        private static double DefaultLayerStat(int tier, string stat, double fallback)
+            => DefaultLayerValue(tier, stat) ?? fallback;
 
         /// <summary>
         /// The core-four window at a tier - THE SAME formula as LootGenerationFactory.ApplyT11GearStats.RollCore
@@ -158,10 +167,85 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>The LADDER core anchors - the worn-set totals a maxed T25 suit lands on (18 pieces).</summary>
         public const double LadderAnchorDr = 1250.0, LadderAnchorCdr = 750.0;
 
-        /// <summary>The fixed per-tier armor base (ApplyT11GearStats): 1100 + 100/tier above 11 on the ladder,
-        /// or the flat T10 fallback when Zone Control is switched off.</summary>
-        public static int BaseArmorLevel(int tier) =>
-            ServerConfig.zonecontrol_enabled.Value ? 1100 + 100 * (tier - 11) : ZoneFallback.ArmorLevel;
+        /// <summary>The per-tier armor base when nothing is authored: 1100 + 100/tier above 11 on the ladder.</summary>
+        public static int LadderArmorLevel(int tier) => 1100 + 100 * (tier - 11);
+
+        /// <summary>
+        /// The per-tier armor base (ApplyT11GearStats + Compute). Three-step chain, owner 2026-08-24
+        /// (Armor_Base_Values_Plan_2026-08-24.md section 2.1):
+        ///   zonecontrol_enabled OFF          -> the flat T10 fallback, and NOTHING authored is consulted
+        ///                                       (same rule as EffectiveBand / CoreWindow, owner 2026-08-23)
+        ///   Default[tier] armor_base_level   -> that value
+        ///   otherwise                        -> 1100 + 100 x (tier - 11), the historical formula
+        /// Unset therefore reproduces the pre-2026-08-24 numbers EXACTLY - nothing moves until authored.
+        ///
+        /// READ STAGE - this one is RESOLVE, not DROP. It is read inside <see cref="Compute"/>, so
+        /// authoring armor_base_level RE-PRICES EVERY EXISTING PIECE of that tier on its next equip or
+        /// login (or immediately via Apply Ladder). That is the opposite of armor_prot_base /
+        /// armor_prot_equalize, which are stamped once at drop time and never revisited.
+        ///
+        /// PERFORMANCE: Compute calls this exactly ONCE per resolve (after the line loop, not inside it),
+        /// so the Default-layer lookup is one locked snapshot read per resolve - no per-line cost, and no
+        /// signature change was needed to get there. Callers that already hold the Default's value can use
+        /// the overload below to skip the lookup entirely.
+        /// </summary>
+        public static int BaseArmorLevel(int tier)
+        {
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return ZoneFallback.ArmorLevel;
+            var authored = DefaultLayerValue(tier, ZoneStat.ArmorBaseLevel);
+            return authored.HasValue ? (int)Math.Round(authored.Value) : LadderArmorLevel(tier);
+        }
+
+        /// <summary>
+        /// Same chain as <see cref="BaseArmorLevel(int)"/> but fed an already-resolved authored value, for a
+        /// caller that has one in hand (a drop-time evaluated profile, or a loop over many pieces at one
+        /// tier). null = not authored -> the ladder formula.
+        /// </summary>
+        public static int BaseArmorLevel(int tier, double? authored)
+        {
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return ZoneFallback.ArmorLevel;
+            return authored.HasValue ? (int)Math.Round(authored.Value) : LadderArmorLevel(tier);
+        }
+
+        // ── armor protection (DROP-time only) ───────────────────────────────────
+        // Both of these are stamped when the piece is CREATED and never looked at again, unlike
+        // BaseArmorLevel above. Changing either affects NEW DROPS ONLY; existing gear keeps whatever it
+        // was stamped with, no matter how many times it is re-equipped or the ladder is applied.
+
+        /// <summary>The C# defaults, so every read site agrees: 1.0 protection, equalize ON.</summary>
+        public const double DefaultArmorProtBase = 1.0;
+        public const bool DefaultArmorProtEqualize = true;
+
+        /// <summary>
+        /// The value an ABSENT ArmorModVs* element is filled with at drop time (armor_prot_base). Same 0-2
+        /// scale the engine uses: 1.0 = Average, 1.4 = Superior, 0.6 = Below Average. ArmorModVs* defaults
+        /// to 0.0 and MULTIPLIES the piece AL, so an unfilled element is literally zero protection - this
+        /// is a floor, not a bonus. Zone layer wins when it defines the key, else the tier Default, else 1.0.
+        /// </summary>
+        public static double ArmorProtBase(int tier, ZoneScaling.EvaluatedProfile p = null)
+        {
+            if (p != null && p.Has(ZoneStat.ArmorProtBase))
+                return p.Get(ZoneStat.ArmorProtBase, DefaultArmorProtBase);
+            return DefaultLayerValue(tier, ZoneStat.ArmorProtBase) ?? DefaultArmorProtBase;
+        }
+
+        /// <summary>
+        /// Whether a fresh piece's present elements are averaged to their mean (armor_prot_equalize,
+        /// default ON). OFF re-admits the spread: a Poor roll stays Poor and an Unparalleled roll stays
+        /// Unparalleled instead of both collapsing toward the middle. Zone layer wins when it defines the
+        /// key, else the tier Default, else ON. tier &lt;= 0 = "no tier known" -> the C# default.
+        /// </summary>
+        public static bool ArmorProtEqualize(int tier, ZoneScaling.EvaluatedProfile p = null)
+        {
+            if (p != null && p.Has(ZoneStat.ArmorProtEqualize))
+                return p.Get(ZoneStat.ArmorProtEqualize, 1.0) != 0.0;
+            if (tier <= 0)
+                return DefaultArmorProtEqualize;
+            var authored = DefaultLayerValue(tier, ZoneStat.ArmorProtEqualize);
+            return authored.HasValue ? authored.Value != 0.0 : DefaultArmorProtEqualize;
+        }
 
         // ── the record ──────────────────────────────────────────────────────────
 
@@ -337,6 +421,8 @@ namespace ACE.Server.Managers.ZoneControl
             // constant (zonecontrol_enabled swaps the whole ladder for the T10 fallback, owner 2026-08-23),
             // so a piece without an Armor Level line would otherwise keep a stamp from the other set forever.
             // alBonus stays 0 without that line, so a lineless piece lands exactly on the tier base.
+            // ONE BaseArmorLevel call per Compute, deliberately outside the line loop: since 2026-08-24 it
+            // reads the tier Default (armor_base_level), and that is a locked snapshot read.
             if (hasArmor)
                 r.ArmorLevel = BaseArmorLevel(tier) + alBonus;
             return r;

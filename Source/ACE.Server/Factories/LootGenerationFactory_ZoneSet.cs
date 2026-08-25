@@ -472,15 +472,24 @@ namespace ACE.Server.Factories
             switch (wo.ItemType)
             {
                 case ACE.Entity.Enum.ItemType.Armor:
+                    // RESOLVE-stage stat: armor_base_level on the tier Default, else 1100 + 100 x (tier-11).
+                    // This same call runs again inside ZoneStatResolver.Compute on every equip / login, so
+                    // re-authoring it re-prices EXISTING pieces - unlike the two protection knobs below.
                     wo.ArmorLevel = ACE.Server.Managers.ZoneControl.ZoneStatResolver.BaseArmorLevel(tier);
 
                     // Every element authored explicitly: ArmorModVs* defaults to 0.0 and
                     // MULTIPLIES the piece AL - an absent prop is literally zero protection
-                    // for that element. Fill absent with 1.0, then equalize as always.
+                    // for that element. Fill absent with armor_prot_base (default 1.0 = the
+                    // Average band), then equalize unless armor_prot_equalize is switched off.
+                    //
+                    // DROP-stage stats, BOTH of them: these are stamped onto the piece here and never read
+                    // again. Changing either moves NEW DROPS ONLY; nothing already in a backpack shifts.
+                    // (Armor_Base_Values_Plan_2026-08-24.md sections 2.2 / 2.3.)
+                    var protBase = ACE.Server.Managers.ZoneControl.ZoneStatResolver.ArmorProtBase(tier, p);
                     foreach (var prop in armorModVsProps)
                         if (!wo.GetProperty(prop).HasValue)
-                            wo.SetProperty(prop, 1.0);
-                    EqualizeT11ArmorResists(wo);
+                            wo.SetProperty(prop, protBase);
+                    EqualizeT11ArmorResists(wo, tier, p);
                     break;
 
                 case ACE.Entity.Enum.ItemType.Clothing:
@@ -522,9 +531,30 @@ namespace ACE.Server.Factories
             // overshooting it into the gear_cap_line clamp.
         }
 
-        public static void EqualizeT11ArmorResists(WorldObject wo)
+        /// <summary>
+        /// Gated on armor_prot_equalize since 2026-08-24 (default ON = the historical behaviour). OFF means
+        /// the elements keep whatever they rolled, so Poor and Unparalleled both survive instead of being
+        /// averaged toward the middle - that averaging, not any explicit exclusion, is why every T11+ piece
+        /// read as "Average" (plan section 1a).
+        ///
+        /// DROP-stage: this runs while a piece is being created and never afterwards, so flipping the stat
+        /// changes NEW DROPS ONLY. Existing gear keeps its stamped protections through every equip, login
+        /// and Apply Ladder. (Only armor_base_level is re-read at resolve time.)
+        ///
+        /// tier / p are OPTIONAL so the presentation-sweep call sites keep compiling unchanged: tier &lt;= 0
+        /// falls back to the piece's own stamped ZcTier, which by then is set, so the tier Default is still
+        /// honoured. A call with no profile cannot see a ZONE-level override - the tier Default layer is the
+        /// authoritative surface for this key.
+        /// </summary>
+        public static void EqualizeT11ArmorResists(WorldObject wo, int tier = 0,
+            ACE.Server.Managers.ZoneScaling.EvaluatedProfile p = null)
         {
             if (wo == null || (wo.ArmorLevel ?? 0) == 0)
+                return;
+
+            if (tier <= 0)
+                tier = ACE.Server.Managers.ZoneControl.ZoneStatResolver.TierOf(wo);
+            if (!ACE.Server.Managers.ZoneControl.ZoneStatResolver.ArmorProtEqualize(tier, p))
                 return;
 
             var present = new List<ACE.Entity.Enum.Properties.PropertyFloat>();

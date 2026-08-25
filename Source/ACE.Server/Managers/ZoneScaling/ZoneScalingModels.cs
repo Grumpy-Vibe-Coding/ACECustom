@@ -316,6 +316,21 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string LootWeightJewelry = "loot_weight_jewelry";
         public const string LootWeightCloak = "loot_weight_cloak";
 
+        // C5. ARMOR BASE VALUES (owner 2026-08-24, Armor_Base_Values_Plan_2026-08-24.md sections 2.1-2.3).
+        // The three numbers a T11+ armour piece was built on that had no authoring surface at all.
+        //
+        // READ STAGE MATTERS, and the three do NOT share one:
+        //   armor_base_level     -> RESOLVE. Read inside ZoneStatResolver.Compute, so authoring it
+        //                           RE-PRICES EXISTING GEAR on its next equip / login (or at once via
+        //                           Apply Ladder). Authored on the per-tier DEFAULT layer.
+        //   armor_prot_base      -> DROP. Stamped once when the piece is created; existing pieces
+        //                           never change. Zone layer wins, else the tier Default.
+        //   armor_prot_equalize  -> DROP. Same as above.
+        // If a change to one of the prot keys "does nothing", it is because the gear already dropped.
+        public const string ArmorBaseLevel = "armor_base_level";       // per-tier armour floor; UNSET = 1100 + 100 x (tier - 11), i.e. today's numbers exactly
+        public const string ArmorProtBase = "armor_prot_base";         // value written into every ArmorModVs* the weenie left absent (default 1.0 = the Average band)
+        public const string ArmorProtEqualize = "armor_prot_equalize"; // nonzero (default) = average the present elements and write the mean back; 0 = elements keep what they rolled, so Poor and Unparalleled both survive
+
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
@@ -367,6 +382,9 @@ namespace ACE.Server.Managers.ZoneScaling
             GearCapDr, GearCapCdr, GearCapLine,
             // Kill rewards (2026-08-23): authored per zone, by rank - APPEND-ONLY
             XpMinion, XpLeader, XpBoss, LumAward, XpDefault,
+            // Armor base values (2026-08-24) - APPEND-ONLY, added at the END. The wire matches by NAME
+            // (see the note above), so appending is safe for an older plugin / older server.
+            ArmorBaseLevel, ArmorProtBase, ArmorProtEqualize,
         };
     }
 

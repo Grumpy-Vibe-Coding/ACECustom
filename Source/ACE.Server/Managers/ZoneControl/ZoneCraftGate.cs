@@ -27,9 +27,16 @@ namespace ACE.Server.Managers.ZoneControl
     ///     value in BOTH directions - a jackpot drop can be tinkered DOWN to a constant.
     ///  3. REPEATS. Several custom recipes have no target guard and can be applied repeatedly.
     ///
-    /// This is LAYER 2 of the design in Craft_Gate_Plan_2026-08-24.md. Layer 1 (an authorable
-    /// item-type x material matrix) and its plugin surface are not built yet; until they are, every
-    /// decision falls through to the downgrade rule below.
+    /// This is LAYER 2 of the design in Craft_Gate_Plan_2026-08-24.md. LAYER 1 - the authorable
+    /// (item type x salvage material) matrix in <see cref="ZoneCraftGateStore"/> - now sits ABOVE it:
+    ///
+    ///   1. MATRIX     explicit Allow / Deny for (item type x material)  -> obey it, stop
+    ///   2. DOWNGRADE  the rule below                                    -> unchanged
+    ///   3. DEFAULT    allow
+    ///
+    /// The matrix is SPARSE and every cell starts Auto, so an install that has authored nothing behaves
+    /// EXACTLY as the layer-2-only gate did: no rule can match, and every decision falls straight
+    /// through to the downgrade rule.
     /// </summary>
     public static class ZoneCraftGate
     {
@@ -155,18 +162,41 @@ namespace ACE.Server.Managers.ZoneControl
             return zc > wep ? zc : wep;
         }
 
+        /// <summary>Back-compat overload for any caller that has no salvage object to hand. With no
+        /// source there is no material, so LAYER 1 cannot match and the decision is layer 2's alone.</summary>
+        public static bool IsBlocked(Recipe recipe, WorldObject target, out string reason)
+            => IsBlocked(recipe, null, target, out reason);
+
         /// <summary>True when this recipe must not be applied to this target. <paramref name="reason"/>
         /// is player-facing and always states WHAT it would have overwritten - an unexplained refusal
-        /// is indistinguishable from a bug.</summary>
-        public static bool IsBlocked(Recipe recipe, WorldObject target, out string reason)
+        /// is indistinguishable from a bug.
+        ///
+        /// <paramref name="source"/> is the SALVAGE being applied; its MaterialType is the matrix row.
+        /// It is optional only so the old two-argument call site keeps compiling.</summary>
+        public static bool IsBlocked(Recipe recipe, WorldObject source, WorldObject target, out string reason)
         {
             reason = null;
             if (recipe == null || target == null)
                 return false;
 
-            var tier = TierOf(target);
-            if (tier < LootGenerationFactory.ZoneLootSetMinTier)
+            // Master switch OFF bypasses the WHOLE gate - matrix and downgrade rule alike.
+            if (!ZoneCraftGateStore.Enabled)
                 return false;
+
+            var tier = TierOf(target);
+            if (tier < ZoneCraftGateStore.MinTier)
+                return false;
+
+            // ── LAYER 1: the authored matrix. Sparse, so an un-authored install never enters here. ──
+            var matrix = ResolveMatrix(source, target, out var cls, out var material);
+            if (matrix == CraftRuleMode.Allow)
+                return false;                       // explicit Allow skips the downgrade rule entirely
+            if (matrix == CraftRuleMode.Deny)
+            {
+                reason = $"{ZoneCraftGateStore.MaterialName(material)} may not be applied to a Tier {tier} "
+                       + $"{cls.ToString().ToLowerInvariant()}.";
+                return true;
+            }
 
             // ── the vanilla imbues, whose effect comes from the mod DataId ──
             if (recipe.IsImbuing() && TryGetImbue(recipe, out var effect)
@@ -195,6 +225,56 @@ namespace ACE.Server.Managers.ZoneControl
 
             return false;
         }
+
+        /// <summary>LAYER 1 lookup. Returns Auto - "the matrix has no opinion, ask layer 2" - whenever
+        /// anything needed to index it is missing: no salvage object, salvage with no MaterialType, or a
+        /// target the matrix has no column for. That is the whole reason an un-authored install is
+        /// byte-for-byte the old behaviour.</summary>
+        private static CraftRuleMode ResolveMatrix(WorldObject source, WorldObject target,
+            out CraftItemClass cls, out int material)
+        {
+            cls = CraftItemClass.Weapon;
+            material = 0;
+
+            var mat = source?.MaterialType;
+            if (!mat.HasValue || mat.Value == MaterialType.Unknown)
+                return CraftRuleMode.Auto;
+
+            var c = ZoneCraftGateStore.Classify(target);
+            if (!c.HasValue)
+                return CraftRuleMode.Auto;
+
+            cls = c.Value;
+            material = (int)mat.Value;
+            return ZoneCraftGateStore.GetMode(material, cls);
+        }
+
+        /// <summary>Which imbue a stock mutation DataId applies, for callers outside the gate (the admin
+        /// verbs and the wire payload name the imbue a material carries). Same map the decision uses -
+        /// there is deliberately only one copy.</summary>
+        public static bool TryGetImbueForDataId(uint dataId, out ImbuedEffectType effect)
+            => DataIdToImbue.TryGetValue(dataId, out effect);
+
+        /// <summary>What layer 2 would compare a given imbue against, for the `craft test` verb: the
+        /// property it competes over and the capped value the imbue is worth. False when the effect
+        /// fights over nothing this system authors (the three defense imbues, Spellbook).</summary>
+        public static bool TryDescribeImbue(ImbuedEffectType effect, out int propertyId, out string label,
+            out double cappedValue, out string shown)
+        {
+            propertyId = 0; label = null; cappedValue = 0; shown = null;
+            if (!ImbueCompetes.TryGetValue(effect, out var c))
+                return false;
+            propertyId = c.PropertyId;
+            label = c.Label;
+            cappedValue = c.CappedValue;
+            shown = Show(c.PropertyId, c.CappedValue);
+            return true;
+        }
+
+        /// <summary>Render a STORED property value the way the player reads it on the item (crit damage
+        /// gains its +1, crit chance becomes a percentage). Public so the admin `craft test` verb reports
+        /// the same numbers the refusal message would.</summary>
+        public static string ShowStored(int propertyId, double stored) => Show(propertyId, stored);
 
         /// <summary>Crit damage is stored as (multiplier - 1) because the engine computes 1 + mod, so
         /// show it the way the player reads it on the item.</summary>

@@ -81,7 +81,9 @@ namespace ACE.Server.Managers
             // Placed here deliberately: this is the ONLY entry point (the confirmation dialog
             // re-enters this same method, Confirmation.cs:76-101), and it sits BEFORE
             // CreateDestroyItems, so a blocked attempt costs the player no salvage.
-            if (ACE.Server.Managers.ZoneControl.ZoneCraftGate.IsBlocked(recipe, target, out var gateReason))
+            // `source` is passed so the gate can read the SALVAGE's MaterialType - that is the row of the
+            // authorable layer-1 matrix (ZoneCraftGateStore).
+            if (ACE.Server.Managers.ZoneControl.ZoneCraftGate.IsBlocked(recipe, source, target, out var gateReason))
             {
                 player.Session.Network.EnqueueSend(new GameMessageSystemChat(gateReason, ChatMessageType.Craft));
                 player.SendUseDoneEvent();

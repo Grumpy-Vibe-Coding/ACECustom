@@ -112,6 +112,7 @@ namespace ACE.Server.Command.Handlers
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
+            + "craft <material> <itemtype> auto|allow|deny | craft list|get|test|enabled|mintier | "
             + "effect <name> [dot on|off | dmg <amount> | type <name|percent> | interval <secs>] | reload")]
         public static void HandleZoneControl(Session session, params string[] parameters)
         {
@@ -159,6 +160,12 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol mobinfo <wcid>   (weenie base data: body parts, resists, wields)");
                 Msg("  /zonecontrol genlist [zone]   (placed generator wcids + counts for the plugin's Generator Settings table; no zone = where you stand)");
                 Msg("  /zonecontrol ladder status | apply [tier|all] | migrate [here|<player>] [--dry] | show   (live stat resolution: per-tier ladder versions, re-resolve on next equip, dev migration of pre-grade pieces, inspect the appraised item)");
+                Msg("  /zonecontrol craft <material> <itemtype> auto|allow|deny   (T11+ crafting gate matrix; material by NAME, e.g. BlackOpal; itemtype = "
+                    + string.Join("/", ZoneCraftGateStore.Columns) + ")");
+                Msg("      auto = fall through to the downgrade rule (a weaker imbue cannot go on, an un-imbued item can) - every cell starts here");
+                Msg("  /zonecontrol craft list | get | materials   (authored cells / the [[ZCCG]] wire payload / the salvage that carries an imbue recipe)");
+                Msg("  /zonecontrol craft test <material> <itemtype>   (states the decision AND why; appraise a T11+ item first to test against a real piece)");
+                Msg("  /zonecontrol craft enabled true|false | craft mintier <tier>   (master switch; the tier the gate starts applying at, default 11)");
                 Msg("  parts = " + string.Join(", ", Enum.GetNames(typeof(CombatBodyPart)).Where(n => n != "Undefined")));
                 Msg("  stats = " + string.Join(", ", ZoneStat.All));
                 return;
@@ -178,9 +185,10 @@ namespace ACE.Server.Command.Handlers
             // instead (the zone doesn't exist yet); sync's name sits at args[2].
             if (sub == "sync")
                 CollapseZoneNameTokens(args, 2);
-            else if (sub != "create" && sub != "default" && sub != "ladder")
+            else if (sub != "create" && sub != "default" && sub != "ladder" && sub != "craft")
                 // 'default' takes a VARIATION at args[1], not a zone name — collapsing would mangle it.
                 // 'ladder' takes a verb / tier / player name, never a zone.
+                // 'craft' takes a MATERIAL NAME at args[1] (possibly two words, "Black Opal") — never a zone.
                 CollapseZoneNameTokens(args, 1);
 
             try
@@ -2375,6 +2383,14 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "craft":
+                    {
+                        // T11+ crafting gate, LAYER 1 (2026-08-24): the authorable (item type x material)
+                        // matrix. list | get | enabled | mintier | test | <material> <itemtype> <mode>
+                        HandleCraft(session, args, Msg);
+                        return;
+                    }
+
                     default:
                         Msg($"Unknown subcommand '{sub}'. See /zonecontrol help.");
                         return;
@@ -3257,6 +3273,240 @@ namespace ACE.Server.Command.Handlers
                 Msg($"  {line.Name} {line.Record.Grade}/{ZoneStatResolver.GradeMax} -> {line.Value} [{line.Min}-{line.Max}]");
             if (r.ArmorLevel.HasValue)
                 Msg($"  Armor Level resolves to {r.ArmorLevel.Value} (base {ZoneStatResolver.BaseArmorLevel(r.Tier)}; stamped {wo.ArmorLevel ?? 0})");
+        }
+
+        // ── T11+ crafting gate, LAYER 1 ([[ZCCG]]) ──
+
+        private const string CraftUsage =
+            "Usage: craft <material> <itemtype> auto|allow|deny | craft list | craft get | craft materials | "
+          + "craft test <material> <itemtype> | craft enabled true|false | craft mintier <tier>";
+
+        /// <summary>true/false, and the on/off and 1/0 spellings a GM is as likely to type.</summary>
+        private static bool TryParseBoolWord(string s, out bool value)
+        {
+            value = false;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            switch (s.Trim().ToLowerInvariant())
+            {
+                case "true": case "on": case "1": case "yes": value = true; return true;
+                case "false": case "off": case "0": case "no": value = false; return true;
+                default: return false;
+            }
+        }
+
+        /// <summary>A material may be given by NAME ("BlackOpal", or "Black Opal" across two tokens) or by
+        /// numeric MaterialType id. Names are what the owner uses in conversation; ids are what the store
+        /// and the wire carry.</summary>
+        private static bool TryTakeMaterial(List<string> args, int idx, out int material, out int next)
+        {
+            material = 0; next = idx;
+            if (idx >= args.Count)
+                return false;
+            if (ZoneCraftGateStore.TryParseMaterial(args[idx], out material)) { next = idx + 1; return true; }
+            if (idx + 1 < args.Count && ZoneCraftGateStore.TryParseMaterial(args[idx] + args[idx + 1], out material))
+            { next = idx + 2; return true; }
+            return false;
+        }
+
+        /// <summary>`craft ...`: author + inspect the T11+ crafting gate's layer-1 matrix. Every cell
+        /// starts Auto, which means "no opinion, fall through to the downgrade rule", so an install that
+        /// has authored nothing behaves exactly as the layer-2-only gate did.</summary>
+        private static void HandleCraft(Session session, List<string> args, Action<string> Msg)
+        {
+            var verb = args.Count > 1 ? args[1].ToLowerInvariant() : "list";
+
+            switch (verb)
+            {
+                case "help":
+                    Msg(CraftUsage);
+                    Msg("  itemtype = " + string.Join(" / ", ZoneCraftGateStore.Columns));
+                    Msg("  auto = fall through to the downgrade rule | allow = always, skipping it | deny = never");
+                    return;
+
+                case "get":
+                    Msg(BuildCraftGatePayload());
+                    return;
+
+                case "reload":
+                    ZoneCraftGateStore.Reload();
+                    Msg("Crafting gate matrix reloaded from shard.");
+                    return;
+
+                case "list":
+                {
+                    Msg($"T11+ crafting gate: {(ZoneCraftGateStore.Enabled ? "ENABLED" : "DISABLED (whole gate bypassed)")}"
+                        + $", MinTier {ZoneCraftGateStore.MinTier}, {ZoneCraftGateStore.RuleCount} authored cell(s).");
+                    var rules = ZoneCraftGateStore.ListRules();
+                    if (rules.Count == 0)
+                    {
+                        Msg("  (every cell is Auto - decisions fall through to the downgrade rule)");
+                        return;
+                    }
+                    foreach (var r in rules)
+                        Msg($"  {ZoneCraftGateStore.MaterialName(r.Material),-16} {r.Class,-8} {r.Mode.ToString().ToUpperInvariant()}");
+                    return;
+                }
+
+                case "materials":
+                {
+                    var cat = ZoneCraftGateStore.ImbueMaterials();
+                    if (cat.Count == 0) { Msg("(no imbue materials found - world DB read failed; the matrix is unaffected)"); return; }
+                    Msg($"{cat.Count} salvage material(s) carry an imbue recipe:");
+                    foreach (var m in cat)
+                        Msg($"  {m.Material,3}  {m.Name,-16} {(m.Effect == ImbuedEffectType.Undef ? "" : m.Effect.ToString())}");
+                    return;
+                }
+
+                case "enabled":
+                {
+                    if (args.Count < 3) { Msg("Usage: craft enabled true|false"); return; }
+                    if (!TryParseBoolWord(args[2], out var on)) { Msg("Usage: craft enabled true|false"); return; }
+                    ZoneCraftGateStore.SetEnabled(on);
+                    Msg(on
+                        ? "Crafting gate ENABLED."
+                        : "Crafting gate DISABLED - the whole gate is bypassed, matrix and downgrade rule alike.");
+                    return;
+                }
+
+                case "mintier":
+                {
+                    if (args.Count < 3 || !int.TryParse(args[2], out var t) || t < 1 || t > 100)
+                    { Msg("Usage: craft mintier <tier>   (1-100; 11 is the default)"); return; }
+                    ZoneCraftGateStore.SetMinTier(t);
+                    Msg($"Crafting gate now applies at Tier {t} and above.");
+                    return;
+                }
+
+                case "test":
+                {
+                    if (!TryTakeMaterial(args, 2, out var tMat, out var tNext))
+                    { Msg("Usage: craft test <material> <itemtype>   (material by name, e.g. BlackOpal, or by MaterialType id)"); return; }
+                    if (tNext >= args.Count || !Enum.TryParse<CraftItemClass>(args[tNext], true, out var tCls))
+                    { Msg("Usage: craft test <material> <itemtype>   itemtype = " + string.Join(" / ", ZoneCraftGateStore.Columns)); return; }
+                    CraftTest(session, tMat, tCls, Msg);
+                    return;
+                }
+
+                default:
+                {
+                    // craft <material> <itemtype> auto|allow|deny
+                    if (!TryTakeMaterial(args, 1, out var mat, out var next))
+                    { Msg($"Unknown material '{args[1]}'. " + CraftUsage); return; }
+                    if (next >= args.Count || !Enum.TryParse<CraftItemClass>(args[next], true, out var cls))
+                    { Msg("itemtype = " + string.Join(" / ", ZoneCraftGateStore.Columns) + ". " + CraftUsage); return; }
+                    if (next + 1 >= args.Count || !Enum.TryParse<CraftRuleMode>(args[next + 1], true, out var mode))
+                    { Msg("mode = auto | allow | deny. " + CraftUsage); return; }
+
+                    var changed = ZoneCraftGateStore.SetMode(mat, cls, mode);
+                    var name = ZoneCraftGateStore.MaterialName(mat);
+                    if (!changed) { Msg($"{name} x {cls} was already {mode.ToString().ToUpperInvariant()}."); return; }
+                    Msg(mode switch
+                    {
+                        CraftRuleMode.Allow => $"{name} on a {cls}: ALLOW - always permitted, the downgrade rule is skipped.",
+                        CraftRuleMode.Deny => $"{name} on a {cls}: DENY - never permitted at Tier {ZoneCraftGateStore.MinTier}+.",
+                        _ => $"{name} on a {cls}: AUTO - the cell is cleared; decisions fall through to the downgrade rule.",
+                    });
+                    return;
+                }
+            }
+        }
+
+        /// <summary>`craft test`: state the decision AND why. Layer 1 answers on its own; when the cell is
+        /// Auto the answer belongs to layer 2, which depends on the TARGET's current values - so if a
+        /// Tier-MinTier+ item has been appraised, the real comparison is run against it and reported.</summary>
+        private static void CraftTest(Session session, int material, CraftItemClass cls, Action<string> Msg)
+        {
+            var name = ZoneCraftGateStore.MaterialName(material);
+            Msg($"{name} on a {cls}:");
+
+            if (!ZoneCraftGateStore.Enabled)
+            { Msg("  ALLOW - the crafting gate is disabled shard-wide (craft enabled true to turn it back on)."); return; }
+
+            var mode = ZoneCraftGateStore.GetMode(material, cls);
+            if (mode == CraftRuleMode.Allow)
+            { Msg("  ALLOW - layer 1: the matrix cell is set to Allow, so the downgrade rule is skipped."); return; }
+            if (mode == CraftRuleMode.Deny)
+            { Msg($"  DENY - layer 1: the matrix cell is set to Deny for Tier {ZoneCraftGateStore.MinTier}+ items."); return; }
+
+            Msg("  layer 1: the matrix cell is Auto - no opinion. Falling through to the downgrade rule.");
+
+            // What layer 2 would compare, for a STOCK imbue salvage.
+            var effect = ImbuedEffectType.Undef;
+            foreach (var m in ZoneCraftGateStore.ImbueMaterials())
+                if (m.Material == material) { effect = m.Effect; break; }
+
+            if (effect == ImbuedEffectType.Undef)
+            {
+                Msg("  layer 2: this material carries no stock imbue this gate models. The decision then rests on the");
+                Msg("    recipe's own SetValue rows - it is refused only if one would replace an authored property with");
+                Msg("    a value no better than the item's. Apply it to a real piece to see the exact verdict.");
+                return;
+            }
+
+            if (!ZoneCraftGate.TryDescribeImbue(effect, out var propId, out var label, out var capped, out var shown))
+            {
+                Msg($"  ALLOW - layer 2: {effect} competes with nothing this system authors.");
+                return;
+            }
+
+            Msg($"  layer 2: {effect} competes over {label}, and is worth {shown} at capped skill.");
+            Msg($"    Refused only when the item already has {label} of {shown} or better; an item carrying none gets it.");
+
+            var player = session?.Player;
+            ACE.Server.WorldObjects.WorldObject wo = null;
+            if (player != null && player.CurrentAppraisalTarget.HasValue)
+                wo = player.FindObject(player.CurrentAppraisalTarget.Value, ACE.Server.WorldObjects.Player.SearchLocations.Everywhere, out _, out _, out _);
+            if (wo == null)
+            { Msg("    (appraise a Tier " + ZoneCraftGateStore.MinTier + "+ item to test this against a real piece)"); return; }
+
+            var tier = ZoneCraftGate.TierOf(wo);
+            var woCls = ZoneCraftGateStore.Classify(wo);
+            Msg($"  against {wo.Name}: Tier {tier}, reads as {(woCls?.ToString() ?? "no matrix column")}.");
+            if (tier < ZoneCraftGateStore.MinTier)
+            { Msg($"    ALLOW - below Tier {ZoneCraftGateStore.MinTier}, the gate does not apply at all."); return; }
+
+            var cur = wo.GetProperty((PropertyFloat)propId);
+            if (!cur.HasValue)
+            { Msg($"    ALLOW - it carries no {label} at all, so this is a real upgrade."); return; }
+            Msg(cur.Value >= capped
+                ? $"    DENY - it already has {label} {ZoneCraftGate.ShowStored(propId, cur.Value)}, which is not worse than {shown}."
+                : $"    ALLOW - its {label} is {ZoneCraftGate.ShowStored(propId, cur.Value)}, weaker than {shown}.");
+        }
+
+        /// <summary>"[[ZCCG]]enabled=..|mintier=..|types=..|mats=..|rules=.." - the layer-1 matrix, for the
+        /// plugin's Crafting tab. Fields are matched by NAME and the tag is APPEND-ONLY: a plugin that does
+        /// not know a field ignores it, and an older server simply sends fewer.
+        ///
+        /// SPARSE by construction. `rules=` carries ONLY authored (non-Auto) cells - an untouched install
+        /// sends `rules=` empty, and the plugin renders every cell Auto. `types=` is the column order and
+        /// `mats=` the row catalog (the 33 salvage materials that carry an imbue recipe, each with the
+        /// imbue it applies where one is known), so the plugin can draw the matrix with no DB access.</summary>
+        private static string BuildCraftGatePayload()
+        {
+            var sb = new StringBuilder("[[ZCCG]]enabled=").Append(ZoneCraftGateStore.Enabled ? 1 : 0)
+                .Append("|mintier=").Append(ZoneCraftGateStore.MinTier)
+                .Append("|types=").Append(string.Join(",", ZoneCraftGateStore.Columns));
+
+            sb.Append("|mats=");
+            var firstMat = true;
+            foreach (var m in ZoneCraftGateStore.ImbueMaterials())
+            {
+                if (!firstMat) sb.Append(';');
+                firstMat = false;
+                sb.Append(m.Material).Append('~').Append(CleanWire(m.Name)).Append('~')
+                  .Append(m.Effect == ImbuedEffectType.Undef ? "" : m.Effect.ToString());
+            }
+
+            sb.Append("|rules=");
+            var firstRule = true;
+            foreach (var r in ZoneCraftGateStore.ListRules())
+            {
+                if (!firstRule) sb.Append(';');
+                firstRule = false;
+                sb.Append(r.Material).Append('~').Append(r.Class).Append('~').Append(r.Mode);
+            }
+
+            return sb.ToString();
         }
 
         private static readonly System.Text.RegularExpressions.Regex ZcTierLine =

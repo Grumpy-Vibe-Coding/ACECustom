@@ -1164,8 +1164,11 @@ namespace ACE.Server.WorldObjects
                         // Weapon aug-scaling identity: quality roll + tier (weapons/casters only)
                         LootGenerationFactory.ApplyWeaponAugScaleStamp(wo, effectiveTreasure.Tier);
 
-                        // one uniform resist value across all eight elements
-                        LootGenerationFactory.EqualizeT11ArmorResists(wo);
+                        // one uniform resist value across all eight elements. Pass the tier AND the
+                        // zone profile: without the profile the armor_prot_equalize switch resolves
+                        // from the tier Default only, so a ZONE-level override would be silently
+                        // ignored on this path while working everywhere else.
+                        LootGenerationFactory.EqualizeT11ArmorResists(wo, effectiveTreasure.Tier, zoneLoot);
 
                         // description cleanup LAST: drop inherited weenie flavor text, keep our
                         // lines in order, provenance ("Dropped by") to the very bottom
