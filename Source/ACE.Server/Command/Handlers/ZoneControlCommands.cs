@@ -614,7 +614,9 @@ namespace ACE.Server.Command.Handlers
                         var name = args[1];
                         var area = ZoneControlManager.GetArea(name);
                         if (area == null) { Msg($"No zone '{name}'."); return; }
-                        var stat = NormalizeStat(args[2]); if (stat == null) { Msg("Unknown stat."); return; }
+                        // same rule as the Default path: a key already in the store can always be
+                        // cleared, even if it is no longer a known stat (see `default clearstat`)
+                        var stat = NormalizeStat(args[2]) ?? args[2].Trim().ToLowerInvariant();
                         var removed = false;
                         ZoneControlManager.MutateArea(name, a =>
                         {
@@ -2281,8 +2283,13 @@ namespace ACE.Server.Command.Handlers
                         if (dop == "clearstat")
                         {
                             if (args.Count < 4) { Msg("Usage: default <var> clearstat <stat>"); return; }
-                            var dstat = NormalizeStat(args[3]);
-                            if (dstat == null) { Msg("Unknown stat."); return; }
+                            // CLEARING accepts any key PRESENT IN THE STORE, not only a currently-known
+                            // stat. Renaming a stat otherwise strands its old key forever: NormalizeStat
+                            // only matches ZoneStat.All, so `clearstat loot_max_drops` answered "Unknown
+                            // stat" while the dead key sat in the Default being read by nothing.
+                            // Found 2026-08-24 after loot_max_drops -> loot_drops_min. Setting still
+                            // validates - you may only clear rubbish, never author it.
+                            var dstat = NormalizeStat(args[3]) ?? args[3].Trim().ToLowerInvariant();
                             var dremoved = false;
                             ZoneControlManager.MutateVariationDefault(dvar, d => dremoved = d.Profile.Stats.Remove(dstat));
                             Msg(dremoved ? $"Default v{dvar} {dstat} cleared." : "That stat wasn't set on the Default.");
