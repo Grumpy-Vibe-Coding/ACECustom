@@ -1143,7 +1143,7 @@ namespace ACE.Server.WorldObjects
                         var (sMin, sMax) = zoneLoot.CantripBands.TryGetValue(specialDef.Key, out var sBand)
                             ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(specialDef, effectiveTreasure.Tier);
                         if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
-                        // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcLines
+                        // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcCantrips
                         var sGrade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.RollGrade(effectiveTreasure.Tier, false);
                         ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, specialDef, sGrade, (sMin, sMax));
                     }
@@ -1412,7 +1412,7 @@ namespace ACE.Server.WorldObjects
                 if (r.ArmorLevel.HasValue && wo.ArmorLevel != r.ArmorLevel.Value)
                     diffs.Add($"ArmorLevel item={(wo.ArmorLevel.HasValue ? wo.ArmorLevel.Value.ToString() : "null")} resolved={r.ArmorLevel.Value}");
                 if (diffs.Count > 0)
-                    log.Warn($"[ZONELOOT] LIVESTAT MISMATCH on {wo.Name} ({wo.WeenieClassId}, tier {r.Tier}, record \"{wo.GetProperty(PropertyString.ZcLines)}\"): {string.Join(", ", diffs)}");
+                    log.Warn($"[ZONELOOT] LIVESTAT MISMATCH on {wo.Name} ({wo.WeenieClassId}, tier {r.Tier}, record \"{wo.GetProperty(PropertyString.ZcCantrips)}\"): {string.Join(", ", diffs)}");
             }
             catch (Exception ex)
             {

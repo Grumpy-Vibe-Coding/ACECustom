@@ -81,7 +81,7 @@ namespace ACE.Server.Network.Structure
             BuildProperties(wo, examiner);
             BuildSpells(wo);
 
-            // Live Stat Resolution (owner 2026-08-22, plan 3b): a piece with a ZcLines record is
+            // Live Stat Resolution (owner 2026-08-22, plan 3b): a piece with a ZcCantrips record is
             // resolved from its grades against the LIVE ladder for the RESPONSE COPY only - wo is
             // never written, never marked dirty (equip is the only re-stamp site: ApplyIfStale).
             var zcResolved = ZoneStatResolver.Compute(wo);

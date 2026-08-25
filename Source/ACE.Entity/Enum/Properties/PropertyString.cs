@@ -115,6 +115,9 @@ namespace ACE.Entity.Enum.Properties
         /// piece - "key:grade;key:grade;..." with grade 0-1000 (where in the band it rolled), core four as
         /// c1..c4. The retail Gear* / AL / 502xx props are a CACHE resolved from this against the live ladder.
         /// See ZoneStatResolver.</summary>
-        ZcLines = 50100,
+        // Renamed from ZcLines 2026-08-24: the in-game appraisal calls this exact record "Cantrips:"
+        // (AppraiseInfo.CantripSectionHeader), so "lines" was internal vocabulary. The ID is what
+        // persists - 50100 is unchanged, so the 19 already-stamped items are untouched.
+        ZcCantrips = 50100,
     }
 }

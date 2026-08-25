@@ -1936,7 +1936,7 @@ namespace ACE.Server.Command.Handlers
                 rawGearHp += wo.GearMaxHealth ?? 0;
             }
             Msg($"Max Health {hp.MaxValue:N0} = (starting {hp.StartingValue:N0} + formula {formula:N0} + enl {p.Enlightenment * 2:N0} + ranks {hp.Ranks:N0} + gear {p.GetGearMaxHealth():N0}) x ench {p.EnchantmentManager.GetVitalMod_Multiplier(hp):0.###} x fortify (1 + ({fortify} + {pctHp}) / 100) x vitae {p.Vitae:0.###} + additives {p.EnchantmentManager.GetVitalMod_Additives(hp):N0}");
-            Msg($"Worn: {worn} items, {wornWithRecord} with a ZcLines record. Raw on items: Fortify max {rawFortifyMax}, Max Health Pct sum {rawPct}, GearMaxHealth sum {rawGearHp:N0}. Cache says: Fortify {fortify}, Pct {pctHp}, GearMaxHealth {p.GetGearMaxHealth():N0}.");
+            Msg($"Worn: {worn} items, {wornWithRecord} with a ZcCantrips record. Raw on items: Fortify max {rawFortifyMax}, Max Health Pct sum {rawPct}, GearMaxHealth sum {rawGearHp:N0}. Cache says: Fortify {fortify}, Pct {pctHp}, GearMaxHealth {p.GetGearMaxHealth():N0}.");
             if (rawFortifyMax != fortify || rawPct != pctHp)
                 Msg("MISMATCH: the cantrip cache does not match what is worn - equip/dequip hook missed (report this).");
 

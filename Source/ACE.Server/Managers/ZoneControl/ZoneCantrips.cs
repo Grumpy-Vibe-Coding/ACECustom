@@ -368,7 +368,7 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         /// <summary>
-        /// GRADED stamp (live stat resolution, 2026-08-22): records (key, grade) in the piece's ZcLines
+        /// GRADED stamp (live stat resolution, 2026-08-22): records (key, grade) in the piece's ZcCantrips
         /// record, SETS the line's props to the value the grade resolves to inside the EFFECTIVE band
         /// (what a later ladder apply will recompute against the live band), and writes the same drop line
         /// text as <see cref="Stamp"/>. SET, not additive - one line per key per piece, the record is the

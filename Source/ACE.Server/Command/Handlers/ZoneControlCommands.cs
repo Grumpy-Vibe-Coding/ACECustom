@@ -2514,7 +2514,7 @@ namespace ACE.Server.Command.Handlers
                 ACE.Server.Factories.LootGenerationFactory.ApplyWeaponAugScaleStamp(weapon, 11);
 
                 var rec = ZoneStatResolver.Read(armor).Count;
-                Msg($"bench: armor '{armor.Name}' record {rec} entries (\"{armor.GetProperty(PropertyString.ZcLines)}\"), weapon '{weapon.Name}' quality {weapon.GetProperty(PropertyInt.WeaponAugScaleQuality)}; n = {n:N0}");
+                Msg($"bench: armor '{armor.Name}' record {rec} entries (\"{armor.GetProperty(PropertyString.ZcCantrips)}\"), weapon '{weapon.Name}' quality {weapon.GetProperty(PropertyInt.WeaponAugScaleQuality)}; n = {n:N0}");
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 for (var i = 0; i < n; i++) ZoneStatResolver.Compute(armor);
@@ -3240,7 +3240,7 @@ namespace ACE.Server.Command.Handlers
             {
                 var hasLines = (wo.LongDesc ?? "").Contains("Zone Cantrip:", StringComparison.Ordinal);
                 Msg(hasLines
-                    ? "  no grade record (pre-grade piece: Zone Cantrip lines but no ZcLines) - 'ladder migrate' grades it"
+                    ? "  no grade record (pre-grade piece: Zone Cantrip lines but no ZcCantrips) - 'ladder migrate' grades it"
                     : "  no grade record (not a Zone Control piece)");
                 return;
             }
@@ -3456,7 +3456,7 @@ namespace ACE.Server.Command.Handlers
 
                 var oid = wo.Guid.Full;
                 sql.AppendLine($"-- {wo.Name.Replace('\n', ' ')} T{tier}")
-                   .AppendLine($"INSERT INTO biota_properties_string (object_Id, type, value) VALUES ({oid}, {(int)PropertyString.ZcLines}, {SqlStr(recordText)}) ON DUPLICATE KEY UPDATE value=VALUES(value);")
+                   .AppendLine($"INSERT INTO biota_properties_string (object_Id, type, value) VALUES ({oid}, {(int)PropertyString.ZcCantrips}, {SqlStr(recordText)}) ON DUPLICATE KEY UPDATE value=VALUES(value);")
                    .AppendLine($"INSERT INTO biota_properties_int (object_Id, type, value) VALUES ({oid}, {(int)PropertyInt.ZcTier}, {tier}) ON DUPLICATE KEY UPDATE value=VALUES(value);")
                    .AppendLine($"INSERT INTO biota_properties_int (object_Id, type, value) VALUES ({oid}, {(int)PropertyInt.ZcResolvedVersion}, {version}) ON DUPLICATE KEY UPDATE value=VALUES(value);");
             }
@@ -3470,9 +3470,9 @@ namespace ACE.Server.Command.Handlers
                     var isNew = !System.IO.File.Exists(path);
                     var block = new StringBuilder();
                     if (isNew)
-                        block.AppendLine("-- T11 Live Stat Resolution migration (pre-grade pieces -> ZcLines grade records)")
+                        block.AppendLine("-- T11 Live Stat Resolution migration (pre-grade pieces -> ZcCantrips grade records)")
                              .AppendLine("-- Written by /zonecontrol ladder migrate; rows mirror what SaveBiotaToDatabase already wrote live.")
-                             .AppendLine("-- biota_properties_string type 50100 = ZcLines; biota_properties_int 50109 = ZcTier, 50110 = ZcResolvedVersion.")
+                             .AppendLine("-- biota_properties_string type 50100 = ZcCantrips; biota_properties_int 50109 = ZcTier, 50110 = ZcResolvedVersion.")
                              .AppendLine();
                     block.AppendLine($"-- run {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC by {session?.Player?.Name ?? "console"} on player {target.Name} ({migrated} pieces)");
                     block.Append(sql).AppendLine();

@@ -1712,7 +1712,7 @@ namespace ACE.Server.Command.Handlers
                     forceMax: bis, p: null, coreFrac: bis ? null : 0.5);
 
                 // the explicit lines - graded (live stat resolution 2026-08-22): bis = grade 1000, avg = 500,
-                // stamped through the ZcLines record; each key at most once per piece
+                // stamped through the ZcCantrips record; each key at most once per piece
                 // TRUE BiS (owner 2026-08-23): the first PremadeLineMax(tier) keys THIS PIECE CAN CARRY, not the
                 // first N then skip - armor fills its 7th slot with Reinforced, jewelry with Life on Hit.
                 IEnumerable<int> keys = bis ? bisKeys.Where(k => PremadeKeyAllowed(k, wo, tier)).Take(bisCount) : avgDeal[i];

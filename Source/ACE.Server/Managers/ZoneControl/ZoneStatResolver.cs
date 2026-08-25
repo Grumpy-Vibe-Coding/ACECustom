@@ -17,7 +17,7 @@ namespace ACE.Server.Managers.ZoneControl
     /// grades against the LIVE ladder. Weapon scaling already works this way (quality 0-1000); this is the
     /// same model for armor / jewelry lines, the core four, Armor Level and the slot specials.
     ///
-    /// Record format, PropertyString.ZcLines: "28:490;19:1000;c1:900;c2:850;c3:900;c4:880;25:500;41:650"
+    /// Record format, PropertyString.ZcCantrips: "28:490;19:1000;c1:900;c2:850;c3:900;c4:880;25:500;41:650"
     ///   - positive key  = ZoneCantrips catalog key (lines AND specials), value = grade 0-1000
     ///   - c1..c4        = the core four (DamageResist / CritDamageResist / CritResist / NetherResist)
     ///   - Reinforced (49) is NOT recorded: an earned, frozen armor mod (owner ruling 2026-08-22 §8.3)
@@ -172,7 +172,7 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         public static bool HasRecord(WorldObject wo)
-            => wo != null && !string.IsNullOrEmpty(wo.GetProperty(PropertyString.ZcLines));
+            => wo != null && !string.IsNullOrEmpty(wo.GetProperty(PropertyString.ZcCantrips));
 
         public static int TierOf(WorldObject wo) => wo?.GetProperty(PropertyInt.ZcTier) ?? 0;
 
@@ -180,7 +180,7 @@ namespace ACE.Server.Managers.ZoneControl
         public static List<LineRecord> Read(WorldObject wo)
         {
             var list = new List<LineRecord>();
-            var raw = wo?.GetProperty(PropertyString.ZcLines);
+            var raw = wo?.GetProperty(PropertyString.ZcCantrips);
             if (string.IsNullOrEmpty(raw))
                 return list;
             foreach (var part in raw.Split(';', StringSplitOptions.RemoveEmptyEntries))
@@ -217,9 +217,9 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (wo == null) return;
             if (lines == null || lines.Count == 0)
-                wo.RemoveProperty(PropertyString.ZcLines);
+                wo.RemoveProperty(PropertyString.ZcCantrips);
             else
-                wo.SetProperty(PropertyString.ZcLines, Format(lines));
+                wo.SetProperty(PropertyString.ZcCantrips, Format(lines));
         }
 
         /// <summary>Append one grade to the record (a key already present is REPLACED - one line per key per piece).</summary>

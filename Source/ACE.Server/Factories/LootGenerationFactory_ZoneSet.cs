@@ -453,7 +453,7 @@ namespace ACE.Server.Factories
             // formula (ZoneStatResolver.CoreWindow, fed the ZONE's evaluated anchor so the drop is
             // identical to before), grade = uniform 0-1000 inside it (the core is uniform today and
             // stays so - RollGrade's tier thirds are for the cantrip lines only), value = ValueFor.
-            // The grade is recorded in ZcLines; the Gear* prop is its cache. A piece is authored from
+            // The grade is recorded in ZcCantrips; the Gear* prop is its cache. A piece is authored from
             // scratch here, so any pre-existing record is cleared first.
             ACE.Server.Managers.ZoneControl.ZoneStatResolver.Write(wo, null);
             int RollCore(int coreKey, double anchor)
@@ -500,7 +500,7 @@ namespace ACE.Server.Factories
             // TryMutateGearRatingT10's coin-flip rolls would otherwise leak onto T11 drops.
             // 2026-08-23: the same mutator also coin-flips Healing Boost (jewelry) and Crit
             // Damage (armor) - a T11 bracelet shipped with Healing Boost 100 (the T10 rating) and
-            // no key-31 line. Strip every line-produced Gear* it can stamp; the ZcLines record is
+            // no key-31 line. Strip every line-produced Gear* it can stamp; the ZcCantrips record is
             // the only source of truth on T11+.
             wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearDamage);
             wo.RemoveProperty(ACE.Entity.Enum.Properties.PropertyInt.GearMaxHealth);
