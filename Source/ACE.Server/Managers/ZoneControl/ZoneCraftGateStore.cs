@@ -52,10 +52,11 @@ namespace ACE.Server.Managers.ZoneControl
     /// <summary>
     /// LAYER 1 of the T11+ crafting gate (Craft_Gate_Plan_2026-08-24.md): the authorable
     /// (item type x salvage material) matrix that sits ABOVE the downgrade rule in
-    /// <see cref="ZoneCraftGate"/>.
+    /// <see cref="ZoneCraftGate"/>. It also holds LAYER 0, the blocked-component list.
     ///
-    ///   1. MATRIX     explicit Allow / Deny  -> obey it, stop
-    ///   2. DOWNGRADE  layer 2, unchanged     -> "a weaker imbue cant go on, but not imbued could"
+    ///   0. COMPONENTS explicit source-WCID block -> refuse, stop
+    ///   1. MATRIX     explicit Allow / Deny      -> obey it, stop
+    ///   2. DOWNGRADE  layer 2, unchanged         -> "a weaker imbue cant go on, but not imbued could"
     ///   3. DEFAULT    allow
     ///
     /// The matrix is SPARSE: only non-Auto cells are stored, so an untouched install persists `{}` and
@@ -84,6 +85,25 @@ namespace ACE.Server.Managers.ZoneControl
             CraftItemClass.Cloak,
         };
 
+        /// <summary>The crafting components blocked at MinTier+ out of the box (owner 2026-08-25):
+        ///
+        ///   719220045  Fine Bandit Blade Hilt   Add +0.175 CriticalMultiplier, Add +0.25 CriticalFrequency
+        ///   719220085  Finely Oiled Bowstring   Add +1.15  CriticalMultiplier, Add +0.25 CriticalFrequency
+        ///
+        /// WHY THESE NEED A LAYER OF THEIR OWN. Both write with ModificationOperation.Add, and layer 2 is
+        /// a DOWNGRADE rule - it can never refuse an Add, because an Add always increases. Layer 1 is
+        /// keyed by the salvage's MaterialType and NEITHER driver declares one (verified 2026-08-25: the
+        /// only ints on both weenies are ItemType 128 and 25), so the matrix cannot index them either.
+        /// Without layer 0 nothing in the gate reaches them and the bonuses stack, unbounded, on gear the
+        /// T11+ loot pipeline already finished.
+        ///
+        /// Stored and matched by SOURCE WCID, never by recipe id. The hilt drives EIGHT recipes
+        /// (527870063-67, 527870095-97) and the bowstring THREE (527870116-118) - only 527870063,
+        /// 527870096 and 527870118 write crit, but listing recipe ids would mean an eleven-row table that
+        /// a ninth hilt recipe walks straight past. One WCID closes every current and future recipe the
+        /// component feeds.</summary>
+        public static readonly uint[] DefaultBlockedComponents = { 719220045u, 719220085u };
+
         private class Store
         {
             /// <summary>Master switch. False bypasses the WHOLE gate (layer 2 included), so the gate can
@@ -98,6 +118,19 @@ namespace ACE.Server.Managers.ZoneControl
 
             /// <summary>Non-Auto cells only. Null (not []) when empty, so an untouched store is `{}`.</summary>
             public List<CraftRule> Rules { get; set; }
+
+            /// <summary>LAYER 0's toggle. Defaults ON: the owner asked for these components to be
+            /// blocked, so the requested behaviour has to be what a fresh store does - a default of OFF
+            /// would mean the block only exists once somebody remembers to type a verb. Flipping it off
+            /// is one command and needs no rebuild, which is the whole point of it being a toggle.</summary>
+            [DefaultValue(true)]
+            public bool BlockComponents { get; set; } = true;
+
+            /// <summary>The blocked source WCIDs. NULL means "never authored - use
+            /// <see cref="DefaultBlockedComponents"/>"; a non-null list (INCLUDING an empty one) is the
+            /// owner's own list and is used verbatim. That distinction is why this is not a hardcode:
+            /// clearing the list to [] really does block nothing, and it survives a restart.</summary>
+            public List<uint> Components { get; set; }
         }
 
         /// <summary>Serializer settings that make the sparse store actually sparse: a store at every
@@ -119,6 +152,13 @@ namespace ACE.Server.Managers.ZoneControl
             = new Dictionary<(int, CraftItemClass), CraftRuleMode>();
         private static volatile bool _enabled = true;
         private static volatile int _minTier = LootGenerationFactory.ZoneLootSetMinTier;
+
+        // Layer 0. _components is always the EFFECTIVE set (the built-in default until the owner edits
+        // it); _componentsAuthored only decides whether Save writes the list or writes null, so a store
+        // that has never been touched stays `{}` and keeps tracking the default if it ever changes.
+        private static volatile bool _blockComponents = true;
+        private static volatile HashSet<uint> _components = new HashSet<uint>(DefaultBlockedComponents);
+        private static volatile bool _componentsAuthored;
 
         #region init / persistence
 
@@ -179,10 +219,20 @@ namespace ACE.Server.Managers.ZoneControl
             }
             var minTier = store.MinTier > 0 ? store.MinTier : LootGenerationFactory.ZoneLootSetMinTier;
 
+            // Null = never authored, so track the built-in default. An authored EMPTY list is honoured as
+            // an empty list - "block nothing" has to be expressible, or the toggle is the only off switch.
+            var componentsAuthored = store.Components != null;
+            var components = new HashSet<uint>();
+            foreach (var c in store.Components ?? new List<uint>(DefaultBlockedComponents))
+                if (c != 0) components.Add(c);
+
             // ── commit: from here on nothing can throw ──
             _rules = rules;
             _enabled = store.Enabled;
             _minTier = minTier;
+            _blockComponents = store.BlockComponents;
+            _components = components;
+            _componentsAuthored = componentsAuthored;
         }
 
         private static void Save()
@@ -197,7 +247,16 @@ namespace ACE.Server.Managers.ZoneControl
                             Mode = kv.Value.ToString(),
                         }).ToList();
 
-            var store = new Store { Enabled = _enabled, MinTier = _minTier, Rules = list };
+            var store = new Store
+            {
+                Enabled = _enabled,
+                MinTier = _minTier,
+                Rules = list,
+                BlockComponents = _blockComponents,
+                // null when untouched, so an install that never edited the list keeps following the
+                // default pair rather than freezing today's copy of it into the shard.
+                Components = _componentsAuthored ? _components.OrderBy(w => w).ToList() : null,
+            };
             var jsonOut = JsonConvert.SerializeObject(store, SparseJson);
 
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
@@ -239,6 +298,32 @@ namespace ACE.Server.Managers.ZoneControl
 
         public static int RuleCount { get { EnsureInitialized(); return _rules.Count; } }
 
+        /// <summary>LAYER 0's toggle. False leaves the blocked list intact but stops consulting it, so the
+        /// owner can turn the block off for an evening without losing what was authored.</summary>
+        public static bool BlockComponents
+        {
+            get { EnsureInitialized(); return _blockComponents; }
+        }
+
+        /// <summary>Is this SALVAGE weenie on the blocked list? Membership only - the caller applies the
+        /// toggle, so `craft components` can still show the list while the block is off.</summary>
+        public static bool IsBlockedComponent(uint wcid)
+        {
+            EnsureInitialized();
+            return _components.Contains(wcid);
+        }
+
+        /// <summary>The blocked source WCIDs, ascending.</summary>
+        public static List<uint> BlockedComponents()
+        {
+            EnsureInitialized();
+            return _components.OrderBy(w => w).ToList();
+        }
+
+        /// <summary>True while the list is still the built-in default (nothing added or removed). Only
+        /// used to say so in the verb output and on the wire - the decision never branches on it.</summary>
+        public static bool ComponentsAreDefault { get { EnsureInitialized(); return !_componentsAuthored; } }
+
         #endregion
 
         #region write
@@ -278,6 +363,58 @@ namespace ACE.Server.Managers.ZoneControl
         {
             EnsureInitialized();
             lock (_lock) { _minTier = tier; Save(); }
+        }
+
+        public static void SetBlockComponents(bool on)
+        {
+            EnsureInitialized();
+            lock (_lock) { _blockComponents = on; Save(); }
+        }
+
+        /// <summary>Add one source WCID to the blocked list. Any edit marks the list AUTHORED, so it stops
+        /// tracking the built-in default from that moment on - `components reset` is the way back.
+        /// Returns false when nothing changed, so the caller can say so instead of writing the shard.</summary>
+        public static bool AddComponent(uint wcid)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                if (_components.Contains(wcid))
+                    return false;
+                var next = new HashSet<uint>(_components) { wcid };
+                _components = next;
+                _componentsAuthored = true;
+                Save();
+                return true;
+            }
+        }
+
+        public static bool RemoveComponent(uint wcid)
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                if (!_components.Contains(wcid))
+                    return false;
+                var next = new HashSet<uint>(_components);
+                next.Remove(wcid);
+                _components = next;
+                _componentsAuthored = true;
+                Save();
+                return true;
+            }
+        }
+
+        /// <summary>Forget the authored list and follow <see cref="DefaultBlockedComponents"/> again.</summary>
+        public static void ResetComponents()
+        {
+            EnsureInitialized();
+            lock (_lock)
+            {
+                _components = new HashSet<uint>(DefaultBlockedComponents);
+                _componentsAuthored = false;
+                Save();
+            }
         }
 
         #endregion

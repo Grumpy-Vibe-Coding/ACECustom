@@ -112,7 +112,7 @@ namespace ACE.Server.Command.Handlers
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
-            + "craft <material> <itemtype> auto|allow|deny | craft list|get|test|enabled|mintier | "
+            + "craft <material> <itemtype> auto|allow|deny | craft list|get|test|enabled|mintier|components | "
             + "effect <name> [dot on|off | dmg <amount> | type <name|percent> | interval <secs>] | reload")]
         public static void HandleZoneControl(Session session, params string[] parameters)
         {
@@ -168,6 +168,8 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol craft list | get | materials   (authored cells / the [[ZCCG]] wire payload / the salvage that carries an imbue recipe)");
                 Msg("  /zonecontrol craft test <material> <itemtype>   (states the decision AND why; appraise a T11+ item first to test against a real piece)");
                 Msg("  /zonecontrol craft enabled true|false | craft mintier <tier>   (master switch; the tier the gate starts applying at, default 11)");
+                Msg("  /zonecontrol craft components [true|false | add <wcid> | remove <wcid> | reset]   (layer 0: salvage barred from T"
+                    + ZoneCraftGateStore.MinTier + "+ items outright, e.g. the Fine Bandit Blade Hilt)");
                 Msg("  parts = " + string.Join(", ", Enum.GetNames(typeof(CombatBodyPart)).Where(n => n != "Undefined")));
                 Msg("  stats = " + string.Join(", ", ZoneStat.All));
                 return;
@@ -3459,7 +3461,8 @@ namespace ACE.Server.Command.Handlers
 
         private const string CraftUsage =
             "Usage: craft <material> <itemtype> auto|allow|deny | craft list | craft get | craft materials | "
-          + "craft test <material> <itemtype> | craft enabled true|false | craft mintier <tier>";
+          + "craft test <material> <itemtype> | craft enabled true|false | craft mintier <tier> | "
+          + "craft components [true|false | add <wcid> | remove <wcid> | reset]";
 
         /// <summary>true/false, and the on/off and 1/0 spellings a GM is as likely to type.</summary>
         private static bool TryParseBoolWord(string s, out bool value)
@@ -3501,6 +3504,8 @@ namespace ACE.Server.Command.Handlers
                     Msg(CraftUsage);
                     Msg("  itemtype = " + string.Join(" / ", ZoneCraftGateStore.Columns));
                     Msg("  auto = fall through to the downgrade rule | allow = always, skipping it | deny = never");
+                    Msg("  " + CraftComponentsUsage + "   (layer 0: salvage WCIDs barred from Tier "
+                        + ZoneCraftGateStore.MinTier + "+ items outright)");
                     return;
 
                 case "get":
@@ -3516,6 +3521,8 @@ namespace ACE.Server.Command.Handlers
                 {
                     Msg($"T11+ crafting gate: {(ZoneCraftGateStore.Enabled ? "ENABLED" : "DISABLED (whole gate bypassed)")}"
                         + $", MinTier {ZoneCraftGateStore.MinTier}, {ZoneCraftGateStore.RuleCount} authored cell(s).");
+                    Msg($"  layer 0: blocked components {(ZoneCraftGateStore.BlockComponents ? "ENFORCED" : "not enforced")}"
+                        + $", {ZoneCraftGateStore.BlockedComponents().Count} entr(ies)  (craft components)");
                     var rules = ZoneCraftGateStore.ListRules();
                     if (rules.Count == 0)
                     {
@@ -3557,6 +3564,11 @@ namespace ACE.Server.Command.Handlers
                     return;
                 }
 
+                case "components":
+                case "component":
+                    HandleCraftComponents(args, Msg);
+                    return;
+
                 case "test":
                 {
                     if (!TryTakeMaterial(args, 2, out var tMat, out var tNext))
@@ -3588,6 +3600,88 @@ namespace ACE.Server.Command.Handlers
                     });
                     return;
                 }
+            }
+        }
+
+        private const string CraftComponentsUsage =
+            "Usage: craft components   |   craft components true|false   |   craft components add <wcid>   |   "
+          + "craft components remove <wcid>   |   craft components reset";
+
+        /// <summary>`craft components ...`: LAYER 0, the flat list of SALVAGE WCIDs that may never be
+        /// applied to a MinTier+ item, plus the toggle that turns the layer off without clearing it.
+        ///
+        /// The list is authorable precisely so this is not a hardcode: `add` closes a newly-found offender
+        /// without a rebuild, and `reset` goes back to tracking the built-in pair. Any edit takes ownership
+        /// of the list - from then on it no longer follows the default, which is what `reset` undoes.</summary>
+        private static void HandleCraftComponents(List<string> args, Action<string> Msg)
+        {
+            var op = args.Count > 2 ? args[2].ToLowerInvariant() : "list";
+
+            // `craft components true|false` - the toggle, spelled the same way `craft enabled` is.
+            if (TryParseBoolWord(op, out var on))
+            {
+                ZoneCraftGateStore.SetBlockComponents(on);
+                Msg(on
+                    ? $"Blocked crafting components ENFORCED at Tier {ZoneCraftGateStore.MinTier}+ "
+                      + $"({ZoneCraftGateStore.BlockedComponents().Count} on the list)."
+                    : "Blocked crafting components NOT enforced - the list is kept, just not consulted.");
+                return;
+            }
+
+            switch (op)
+            {
+                case "list":
+                {
+                    var list = ZoneCraftGateStore.BlockedComponents();
+                    Msg($"Blocked crafting components: {(ZoneCraftGateStore.BlockComponents ? "ENFORCED" : "NOT ENFORCED (list kept)")}"
+                        + $" at Tier {ZoneCraftGateStore.MinTier}+, {list.Count} entr(ies)"
+                        + (ZoneCraftGateStore.ComponentsAreDefault ? ", still the built-in default." : ", authored."));
+                    if (list.Count == 0)
+                    {
+                        Msg("  (nothing is blocked)");
+                        return;
+                    }
+                    foreach (var w in list)
+                        Msg($"  {w}  {ACE.Database.DatabaseManager.World.GetCachedWeenie(w)?.GetName() ?? "(no such weenie)"}");
+                    return;
+                }
+
+                case "reset":
+                    ZoneCraftGateStore.ResetComponents();
+                    Msg($"Blocked component list reset to the built-in default ({ZoneCraftGateStore.BlockedComponents().Count} entr(ies)).");
+                    return;
+
+                case "add":
+                case "remove":
+                {
+                    if (args.Count < 4 || !uint.TryParse(args[3], out var wcid) || wcid == 0)
+                    { Msg(CraftComponentsUsage); return; }
+
+                    // A missing weenie is a WARNING, not a refusal: the list is matched by number and a
+                    // wcid that does not exist yet simply never matches. Refusing would make it impossible
+                    // to pre-block something before its weenie lands.
+                    var name = ACE.Database.DatabaseManager.World.GetCachedWeenie(wcid)?.GetName();
+                    if (name == null)
+                        Msg($"Warning: no weenie {wcid} in the world db - blocking it anyway; it will simply never match.");
+
+                    if (op == "add")
+                    {
+                        Msg(ZoneCraftGateStore.AddComponent(wcid)
+                            ? $"{wcid} {name ?? ""} may no longer be applied to a Tier {ZoneCraftGateStore.MinTier}+ item."
+                            : $"{wcid} {name ?? ""} was already blocked.");
+                    }
+                    else
+                    {
+                        Msg(ZoneCraftGateStore.RemoveComponent(wcid)
+                            ? $"{wcid} {name ?? ""} may be applied again."
+                            : $"{wcid} {name ?? ""} was not on the blocked list.");
+                    }
+                    return;
+                }
+
+                default:
+                    Msg(CraftComponentsUsage);
+                    return;
             }
         }
 
@@ -3684,6 +3778,23 @@ namespace ACE.Server.Command.Handlers
                 if (!firstRule) sb.Append(';');
                 firstRule = false;
                 sb.Append(r.Material).Append('~').Append(r.Class).Append('~').Append(r.Mode);
+            }
+
+            // ── APPENDED 2026-08-25: layer 0, the blocked-component list ──
+            // `blockcomponents` is the toggle, 0/1, exactly like `enabled`.
+            // `components` is wcid~name pairs, ';' between records and '~' inside one - the same shape as
+            // `mats=` and `rules=`. The name is a display convenience read from the world weenie cache and
+            // may be EMPTY (a wcid can be pre-blocked before its weenie exists), so the plugin must fall
+            // back to showing the number rather than dropping the row.
+            sb.Append("|blockcomponents=").Append(ZoneCraftGateStore.BlockComponents ? 1 : 0)
+              .Append("|components=");
+            var firstComp = true;
+            foreach (var w in ZoneCraftGateStore.BlockedComponents())
+            {
+                if (!firstComp) sb.Append(';');
+                firstComp = false;
+                sb.Append(w).Append('~')
+                  .Append(CleanWire(ACE.Database.DatabaseManager.World.GetCachedWeenie(w)?.GetName() ?? ""));
             }
 
             return sb.ToString();

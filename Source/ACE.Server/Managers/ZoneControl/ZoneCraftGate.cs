@@ -30,6 +30,7 @@ namespace ACE.Server.Managers.ZoneControl
     /// This is LAYER 2 of the design in Craft_Gate_Plan_2026-08-24.md. LAYER 1 - the authorable
     /// (item type x salvage material) matrix in <see cref="ZoneCraftGateStore"/> - now sits ABOVE it:
     ///
+    ///   0. COMPONENTS a blocked SOURCE WCID                             -> refuse, stop
     ///   1. MATRIX     explicit Allow / Deny for (item type x material)  -> obey it, stop
     ///   2. DOWNGRADE  the rule below                                    -> unchanged
     ///   3. DEFAULT    allow
@@ -37,6 +38,13 @@ namespace ACE.Server.Managers.ZoneControl
     /// The matrix is SPARSE and every cell starts Auto, so an install that has authored nothing behaves
     /// EXACTLY as the layer-2-only gate did: no rule can match, and every decision falls straight
     /// through to the downgrade rule.
+    ///
+    /// LAYER 0 was added 2026-08-25 for a fourth failure mode the other two cannot see: a component whose
+    /// recipes ADD to a property instead of setting it. Layer 2 compares incoming against current and can
+    /// only ever refuse a value that is no better, so it is structurally incapable of refusing an Add;
+    /// layer 1 is indexed by the salvage's MaterialType, which these components do not declare. Layer 0
+    /// is therefore a flat list of source WCIDs plus one toggle - see
+    /// <see cref="ZoneCraftGateStore.DefaultBlockedComponents"/>.
     /// </summary>
     public static class ZoneCraftGate
     {
@@ -149,10 +157,15 @@ namespace ACE.Server.Managers.ZoneControl
             ZoneLootMutator.SplitArrowDmgFloatId,
         };
 
-        /// <summary>The item's tier. ARMOUR and jewelry carry ZcTier, but WEAPONS DO NOT:
-        /// ApplyT11GearStats returns for weapons/casters before StampIdentity ever runs
-        /// (LootGenerationFactory_ZoneSet.cs:492), so they carry WeaponAugScaleTier instead. Checking
-        /// only one would silently gate armour and leave every weapon open.</summary>
+        /// <summary>The item's tier, as max(ZcTier, WeaponAugScaleTier).
+        ///
+        /// BOTH are checked because either one alone has been the whole gate's off switch. Weapons used to
+        /// carry ONLY WeaponAugScaleTier - ApplyT11GearStats returned for them before any tier stamp ran -
+        /// and on 2026-08-25 exactly two items on the shard carried that property, so this read 0 and the
+        /// gate was silently off for every weapon. ApplyT11GearStats now stamps ZcTier on weapons too
+        /// (LootGenerationFactory_ZoneSet.cs, default case), which is what makes the tier test below
+        /// actually fire on a weapon. Keep taking the max of both: they are two independent signals for
+        /// one fact, and a weapon that misses one still gets a tier from the other.</summary>
         public static int TierOf(WorldObject wo)
         {
             if (wo == null)
@@ -186,6 +199,27 @@ namespace ACE.Server.Managers.ZoneControl
             var tier = TierOf(target);
             if (tier < ZoneCraftGateStore.MinTier)
                 return false;
+
+            // ── LAYER 0: blocked crafting components, matched by SOURCE WCID (owner 2026-08-25) ──
+            //
+            // Sits above the matrix because it names ONE specific item, where a matrix cell names a whole
+            // (material x class) square - the more specific statement wins, so an Allow cell cannot rescue
+            // a blocked component. (Moot for the two default entries, which carry no MaterialType and so
+            // can never match a cell at all, but the ordering has to mean something for anything added
+            // later that DOES have one.)
+            //
+            // NOT restricted to CraftItemClass.Weapon even though the owner's ask said "T11+ weapon". The
+            // blocked components' cook_book rows only ever target weapons, so narrowing it buys nothing,
+            // and it would add a hole: any weapon Classify failed to bucket would sail through. Blocking
+            // on tier alone has no such gap.
+            if (ZoneCraftGateStore.BlockComponents && source != null
+                && ZoneCraftGateStore.IsBlockedComponent(source.WeenieClassId))
+            {
+                reason = $"The {source.Name} cannot be applied to a Tier {tier} item - its bonuses are "
+                       + "added on top of what the item already rolled, and Tier "
+                       + $"{ZoneCraftGateStore.MinTier}+ gear drops finished.";
+                return true;
+            }
 
             // ── LAYER 1: the authored matrix. Sparse, so an un-authored install never enters here. ──
             var matrix = ResolveMatrix(source, target, out var cls, out var material);
