@@ -670,11 +670,16 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>
         /// The WEAPON half of <see cref="StampIdentity"/>: the resolve stamp WITHOUT ZcTier.
         ///
-        /// A weapon must not carry ZcTier. ZoneCraftGate.TierOf, the crafting gate and
-        /// <see cref="TierOf"/> above all treat "has ZcTier" as "this is an armour-shaped piece"; the
-        /// weapon's row is PropertyInt.WeaponAugScaleTier, stamped a few lines later in the same
-        /// Creature_Death sweep by ApplyWeaponAugScaleStamp. So the producer stamps only the version
-        /// here and lets TierOf find the tier the weapon way.
+        /// CORRECTED 2026-08-25. This used to say "a weapon must not carry ZcTier", on the grounds
+        /// that TierOf and the crafting gate treat "has ZcTier" as "this is an armour-shaped piece".
+        /// They do not, and never did: both TierOf implementations take a plain max of ZcTier and
+        /// WeaponAugScaleTier and never branch on which is present, and the only code that decides
+        /// "is this armour" is <see cref="Compute"/>, which keys on ItemType + ArmorLevel. The rule
+        /// was a convention that had documented itself as a constraint.
+        /// Weapons now DO carry ZcTier (owner 2026-08-25, stamped in ApplyT11GearStats' default case)
+        /// so the crafting gate cannot be switched off by a single missing stamp.
+        /// This method still writes only the VERSION, because the version must be stamped after the
+        /// weapon's grades are recorded - which is here, not at gear-stat time.
         ///
         /// Call this AFTER the last grade has been recorded - HasWeaponKey reads the finished record.
         /// </summary>

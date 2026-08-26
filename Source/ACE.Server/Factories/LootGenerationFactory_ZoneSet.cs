@@ -497,7 +497,36 @@ namespace ACE.Server.Factories
                     break;
 
                 default:
-                    // weapons / casters / ammo: the weapon-scaling system owns those
+                    // weapons / casters / ammo: the weapon-scaling system owns their STATS - but the
+                    // TIER is stamped here anyway as of 2026-08-25 (owner: "stamp ZcTier on weapons too").
+                    //
+                    // WHY. ZoneCraftGate.TierOf is max(ZcTier, WeaponAugScaleTier), and the entire T11+
+                    // crafting gate returns immediately when that reads 0. Weapons carried ONLY
+                    // WeaponAugScaleTier, so if that one stamp fails to land the gate is silently OFF for
+                    // every weapon on the shard - which is how an unguarded SetValue recipe (the Bag of
+                    // Abyssal-Touched Gems, recipe 527870098) can overwrite a rolled Biting Strike down to
+                    // 0.33 with nothing refusing it. On 2026-08-25 exactly 2 items on the shard carried
+                    // WeaponAugScaleTier and both were hand-made, so that was the live state, not a theory.
+                    //
+                    // The old rule "a weapon must not carry ZcTier" was a CONVENTION that documented
+                    // itself as a constraint. It is not one: both TierOf implementations take a plain max
+                    // and never branch on WHICH property is present, and the only code that decides "is
+                    // this armour" is ZoneStatResolver.Compute, which keys on ItemType + ArmorLevel and
+                    // not on ZcTier. So a weapon carrying ZcTier resolves its tier identically and cannot
+                    // accidentally acquire an ArmorLevel.
+                    //
+                    // Tested on ItemType, deliberately NOT on the runtime `wo is MeleeWeapon ||
+                    // MissileLauncher || Caster` that ApplyWeaponAugScaleStamp uses. Two INDEPENDENT
+                    // signals for the same fact: if a weapon somehow fails one test it still gets a tier
+                    // from the other. Belt and braces on purpose - the gate being live matters more than
+                    // tidiness about which property carries the row.
+                    //
+                    // Only the tier. No StampIdentity, no ZcResolvedVersion: the resolve stamp has to be
+                    // written AFTER the weapon's grades are recorded, and that happens later, in
+                    // ZoneLootMutator (StampWeaponResolve). Stamping a version here would mark the weapon
+                    // resolved before its record existed.
+                    if ((wo.ItemType & ACE.Entity.Enum.ItemType.WeaponOrCaster) != 0)
+                        wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.ZcTier, tier);
                     return;
             }
 
