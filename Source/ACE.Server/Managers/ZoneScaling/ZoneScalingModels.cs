@@ -248,7 +248,10 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponShieldCleaveChance = "weapon_shield_cleave_chance"; // Shield Cleaving
         public const string WeaponShieldCleaveMin = "weapon_shield_cleave_min"; //   fraction of shield ignored 0..1 (default 0.5)
         public const string WeaponShieldCleaveMax = "weapon_shield_cleave_max";
-        public const string WeaponPhantomChance = "weapon_phantom_chance"; // Phantom (hollow): hits ignore BOTH magic armor (impen/banes) and magic resist (prots)
+        // REMOVED 2026-08-25 (owner): weapon_phantom_chance, the Phantom (hollow) card's chance stat.
+        // The card is gone from ZoneLootMutator; the retail IgnoreMagicArmor / IgnoreMagicResist
+        // properties it used to stamp are untouched. Zones that authored the key keep a dead store row
+        // until it is cleared with `/zonecontrol default <var> clearstat weapon_phantom_chance`.
         // Rend Power (2026-08-25): this card used to be the ONE special with no chance stat of its own -
         // its gate was a PRESENCE test on the min/max pair below, which meant "authored = 100 pct". That
         // made its T11 -> T25 ladder unreachable, because the presence test and WeaponDropBand's
@@ -363,7 +366,7 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponCrushChance, WeaponCrushMin, WeaponCrushMax,
             WeaponArmorRendChance, WeaponArmorRendMin, WeaponArmorRendMax,
             WeaponShieldCleaveChance, WeaponShieldCleaveMin, WeaponShieldCleaveMax,
-            WeaponPhantomChance, WeaponRendPowerChance, WeaponRendPowerMin, WeaponRendPowerMax,
+            WeaponRendPowerChance, WeaponRendPowerMin, WeaponRendPowerMax,
             LootSlotWeapons,
             LootSlotHelm, LootSlotChest, LootSlotShoulder, LootSlotBracer, LootSlotGlove,
             LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,

@@ -1310,9 +1310,10 @@ namespace ACE.Server.Network.Structure
             if (weapon.IgnoreShield.HasValue && weapon.IgnoreShield.Value > 0)
                 effectDescriptions.Add($"- Shield Cleaving: {Math.Clamp(weapon.IgnoreShield.Value, 0.0, 1.0):P0} Shield Ignored");
 
-            // Phantom (hollow): the weapon bypasses the target's protective magic — Impen/Banes on armor
-            // and Life prots. Our loot card always sets both; some retail items set only one, but it's the
-            // same category, so one short line covers every case.
+            // Phantom (hollow): the weapon bypasses the target's protective magic - Impen/Banes on armor
+            // and Life prots. RETAIL ONLY as of 2026-08-25: our loot card was deleted, so every weapon
+            // reaching this line is a retail hollow weapon (~830 of them) or one a GM made by hand. Some
+            // set only one of the two properties, but it is the same category, so one line covers both.
             if (weapon.IgnoreMagicArmor || weapon.IgnoreMagicResist)
                 effectDescriptions.Add("- Phantom: Ignores Magic Protections");
 

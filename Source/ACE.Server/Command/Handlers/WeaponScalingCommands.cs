@@ -619,11 +619,7 @@ namespace ACE.Server.Command.Handlers
             public double? Crush;
             public double? ArmorRend;
             public double? ShieldCleave;
-            public bool Phantom;
             public double? Slayer; public CreatureType SlayerType = CreatureType.Drudge;
-            public bool Paragon;
-            public bool Hilt;
-            public bool Bowstring;
         }
 
         private const ImbuedEffectType ForgeAllRends =
@@ -655,16 +651,12 @@ namespace ACE.Server.Command.Handlers
                     case "crush": cards.Crush = Math.Clamp(Num(2), 2.0, 10.0); break;
                     case "armorrend": cards.ArmorRend = Math.Clamp(Num(0.5), 0.0, 1.0); break;
                     case "shieldcleave": cards.ShieldCleave = Math.Clamp(Num(0.5), 0.0, 1.0); break;
-                    case "phantom": cards.Phantom = true; break;
                     case "slayer": cards.Slayer = Math.Clamp(Num(1.5), 1.5, 10.0); break;
                     case "slayertype":
                         if (val == null || !Enum.TryParse<CreatureType>(val, true, out var ct) || ct == CreatureType.Invalid)
                             return $"cards: unknown slayertype '{val}' (use a CreatureType name, e.g. drudge, olthoi, virindi)";
                         cards.SlayerType = ct;
                         break;
-                    case "paragon": cards.Paragon = true; break;
-                    case "hilt": cards.Hilt = true; break;
-                    case "bowstring": cards.Bowstring = true; break;
                     default: return $"cards: unknown key '{key}'";
                 }
             }
@@ -779,12 +771,7 @@ namespace ACE.Server.Command.Handlers
 
             if (c.ShieldCleave.HasValue) { wo.IgnoreShield = c.ShieldCleave.Value; applied.Add($"shieldcleave {c.ShieldCleave.Value:0.##}"); }
 
-            if (c.Phantom)
-            {
-                wo.IgnoreMagicArmor = true;
-                wo.IgnoreMagicResist = true;
-                applied.Add("phantom");
-            }
+            // phantom REMOVED 2026-08-25 with its loot card (owner: "Not gonna be an option").
 
             if (c.Slayer.HasValue)
             {
@@ -793,49 +780,15 @@ namespace ACE.Server.Command.Handlers
                 applied.Add($"slayer {c.SlayerType} {c.Slayer.Value:0.##}x");
             }
 
-            if (c.Paragon)
-            {
-                wo.ItemMaxLevel = (wo.ItemMaxLevel ?? 0) + 1;
-                wo.ItemBaseXp = 2000000000;
-                wo.ItemTotalXp = wo.ItemTotalXp ?? 0;
-                applied.Add("paragon");
-            }
-
-            // crafts LAST - numbers mirror the live recipes exactly (ZoneLootMutator hilt/bowstring blocks)
-            if (c.Hilt)
-            {
-                if (isMelee)
-                {
-                    wo.SetProperty(PropertyBool.Ivoryable, true);
-                    wo.SetProperty(PropertyInt.WieldRequirements2, 8);   // WieldRequirement.Training
-                    wo.SetProperty(PropertyInt.WieldSkillType2, 46);
-                    wo.SetProperty(PropertyInt.WieldDifficulty2, 3);     // specialized
-                    wo.Value = 0;
-                    wo.SetProperty(PropertyFloat.ManaStoneDestroyChance, 0.01);   // hilt completion marker
-                    wo.SetProperty(PropertyFloat.DamageMod, (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 1.075);
-                    wo.SetProperty(PropertyFloat.CriticalFrequency, (wo.GetProperty(PropertyFloat.CriticalFrequency) ?? 0.1) + 0.25);
-                    wo.SetProperty(PropertyFloat.CriticalMultiplier, (wo.GetProperty(PropertyFloat.CriticalMultiplier) ?? 1.0) + 0.175);
-                    applied.Add("hilt");
-                }
-                else skipped.Add("hilt (melee only)");
-            }
-
-            if (c.Bowstring)
-            {
-                if (isMissile)
-                {
-                    wo.SetProperty(PropertyInt.WieldRequirements2, 8);
-                    wo.SetProperty(PropertyInt.WieldSkillType2, 47);     // Missile Weapons
-                    wo.SetProperty(PropertyInt.WieldDifficulty2, 3);
-                    wo.SetProperty((PropertyBool)ZoneLootMutator.SplitArrowsBoolId, true);
-                    wo.SetProperty((PropertyInt)ZoneLootMutator.SplitArrowCountIntId,
-                        (wo.GetProperty((PropertyInt)ZoneLootMutator.SplitArrowCountIntId) ?? 0) + 1);   // stacks with split
-                    wo.SetProperty((PropertyFloat)ZoneLootMutator.SplitArrowRangeFloatId, 12.0);         // recipe SETS 12 - string goes on last
-                    wo.SetProperty(PropertyFloat.DamageMod, (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 0.05);
-                    applied.Add("bowstring");
-                }
-                else skipped.Add("bowstring (bows only)");
-            }
+            // paragon / hilt / bowstring REMOVED 2026-08-25 with their loot cards (owner).
+            // This verb mints a TEST weapon, so an option mirroring a card that no longer exists
+            // is a knob producing something the loot system never can - the dead-knob case.
+            //
+            // NOTHING RETAIL WAS TOUCHED. The Paragon Weapons recipe, the hilt recipe and the
+            // bowstring recipe all still work and a player can still apply any of them by hand.
+            // What refuses them on T11+ gear now is the craft gate's layer-0 component block,
+            // which is a GATE rather than an edit - the only thing we are allowed to do to
+            // retail content (see the owner's rule, 2026-08-25).
 
             var note = "";
             if (applied.Count > 0) note += " | cards: " + string.Join(", ", applied);
@@ -1006,7 +959,7 @@ namespace ACE.Server.Command.Handlers
             "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand\n" +
             "cards: proc[=spellId] procrate=0-1 (Cast on Strike; no id = max-level bolt matching the element) rend (matching rend imbue)\n" +
             "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
-            "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 phantom slayer=1.5-10 slayertype=<name> paragon hilt bowstring\n" +
+            "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 slayer=1.5-10 slayertype=<name>\n" +
             "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)\n" +
             "force = mint even if you already hold that exact weapon at that tier (default is to skip it, so repeat presses cannot stack sets)")]
         public static void HandleWsForge(Session session, params string[] parameters)

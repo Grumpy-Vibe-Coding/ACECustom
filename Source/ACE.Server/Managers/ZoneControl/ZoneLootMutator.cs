@@ -350,13 +350,11 @@ namespace ACE.Server.Managers.ZoneControl
             if (isWeapon && Won(p, ZoneStat.WeaponShieldCleaveChance))
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecShieldCleave, lootTier, forceMax);
 
-            // Phantom: a full "hollow" weapon — hits ignore BOTH the target's magic armor (impen/banes)
-            // and magic resistance (Life prots). Always full hollow; no partial mode.
-            if (isWeapon && Won(p, ZoneStat.WeaponPhantomChance))
-            {
-                wo.IgnoreMagicArmor = true;
-                wo.IgnoreMagicResist = true;
-            }
+            // REMOVED 2026-08-25 (owner): the Phantom ("hollow") loot card. It stamped PropertyBool
+            // IgnoreMagicArmor + IgnoreMagicResist at drop time, behind weapon_phantom_chance.
+            // Only the CARD is gone. Both properties are RETAIL and are untouched, along with every
+            // engine read site (DamageEvent, Creature_Combat, Creature_BodyPart, Monster_Melee) and the
+            // appraisal line - the ~830 existing hollow weapons still work and still read as hollow.
 
             // slayer attuned against the killed monster's own kind
             if (isWeapon && wo.SlayerCreatureType == null && killed?.CreatureType != null &&
@@ -517,7 +515,7 @@ namespace ACE.Server.Managers.ZoneControl
         ///
         /// 🔴 THE EXPLICIT OFF SWITCH LIVES HERE, NOT AT THE CALL SITES (2026-08-25, weapon/armour parity).
         /// Every chance-gated weapon card - all fourteen, including the seven with no band of their own
-        /// (Phantom, Paragon, Cast on Strike, Cleave, Split Arrows, Bandit Hilt, Bowstring) - already
+        /// (Paragon, Cast on Strike, Cleave, Split Arrows, Bandit Hilt, Bowstring) - already
         /// passes through this one method, so one test covers the lot. Repeating it per call site would
         /// be seventeen chances to miss one, and the one missed would fail silently: the card would keep
         /// rolling while the plugin's checkbox said it was off, which is the exact class of bug this
