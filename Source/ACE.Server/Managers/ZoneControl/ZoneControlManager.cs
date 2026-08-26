@@ -589,16 +589,33 @@ namespace ACE.Server.Managers.ZoneControl
         public static int GetEffectiveVariation(WorldObject wo) => VariationManager.GetEffectiveEndgameVariation(wo);
 
         /// <summary>
+        /// The single gate on "may Zone Control touch this creature at all". Every creature-facing resolver
+        /// below calls it, so the answer cannot drift between them.
+        ///
+        /// Players are out because zones scale MONSTERS. Pets are out by owner ruling 2026-08-25: "we can not
+        /// have ZoneControl over riding pets in anyway." A <see cref="CombatPet"/> is a non-Player Creature, so
+        /// it used to resolve like any monster - and because an authored profile REPLACES the weenie-base value
+        /// (Creature_Rating.GetDamageRating / GetDamageResistRating), a zone that authored damage_rating or
+        /// damage_resist_rating silently discarded everything the pet's bond level had earned it. Testing
+        /// <c>is Pet</c> catches CombatPet too (CombatPet : Pet : Creature) and covers pet weenies that do not
+        /// exist yet - none of the 72 combat-pet weenies carried ExemptFromZoneScaling, so the data-side flag
+        /// would have to be maintained forever. Bond bonuses, potency and the pet mitigation curves are the
+        /// pet system's own ladder and are not Zone Control's to re-price.
+        /// </summary>
+        private static bool IsZoneScalingExempt(Creature creature)
+            => creature == null
+            || creature is Player
+            || creature is Pet
+            || creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true;
+
+        /// <summary>
         /// Resolves the winning zone for a creature and evaluates its stat profile. Returns null when the
-        /// creature should NOT be zone-controlled: it's a player, it's exempt, no enabled zone covers its
-        /// landblock, or no covering zone's Variation matches the creature's current variation.
+        /// creature should NOT be zone-controlled: it's a player, it's a pet, it's exempt, no enabled zone
+        /// covers its landblock, or no covering zone's Variation matches the creature's current variation.
         /// </summary>
         public static EvaluatedProfile ResolveForCreature(Creature creature)
         {
-            if (creature == null || creature is Player)
-                return null;
-
-            if (creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true)
+            if (IsZoneScalingExempt(creature))
                 return null;
 
             // Fully lock-free: read the immutable published snapshot (no _lock, no EnsureInitialized on the hot path).
@@ -636,10 +653,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// </summary>
         public static EvaluatedProfile ResolveZoneDefaultForCreature(Creature creature)
         {
-            if (creature == null || creature is Player)
-                return null;
-
-            if (creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true)
+            if (IsZoneScalingExempt(creature))
                 return null;
 
             var snap = _snapshot;
@@ -698,10 +712,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// a per-WCID appearance never creates a stat bucket, so it can't detach the mob from zone stat scaling.</summary>
         public static ZoneAppearance ResolveAppearanceForCreature(Creature creature)
         {
-            if (creature == null || creature is Player)
-                return null;
-
-            if (creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true)
+            if (IsZoneScalingExempt(creature))
                 return null;
 
             var snap = _snapshot;
