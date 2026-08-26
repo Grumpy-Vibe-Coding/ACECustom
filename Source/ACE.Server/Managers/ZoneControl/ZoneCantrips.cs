@@ -384,7 +384,15 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand WeaponBite = new WeaponBand
         {
             Name = "Biting Strike", MinStat = ZoneScaling.ZoneStat.WeaponBiteMin, MaxStat = ZoneScaling.ZoneStat.WeaponBiteMax,
-            Min = 0.58, Max = 0.65, Min25 = 0.78, Max25 = 0.88, Lo = 0.0, Hi = 1.0,
+            // T11 floor RE-ANCHORED 2026-08-25 (owner): exactly 0.33, which is what every
+            // general crit-chance craft SetValues - Bag of Abyssal-Touched Gems (527870098/100/113),
+            // Salvaged Yellow Garnet (527870006/010), Admin Only Yellow Garnet. So a T11 drop at its
+            // floor exactly TIES the best craftable weapon, and every roll above it beats one.
+            // The old 0.58 was chosen to clear the Critical Strike imbue's flat 0.50 - that imbue is
+            // suppressed for players now, so it is no longer the thing to beat.
+            // Max and both T25 anchors are PROVISIONAL - owner is setting the T11 range next, and
+            // the T25 pair below is still the old imbue-era number. Do not read them as designed.
+            Min = 0.33, Max = 0.33, Min25 = 0.78, Max25 = 0.88, Lo = 0.0, Hi = 1.0,
         };
 
         // Armor Rend -> prop 9057, the fraction of the target's armour ignored. Plugin box is
@@ -436,7 +444,18 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand WeaponCrush = new WeaponBand
         {
             Name = "Crushing Blow", MinStat = ZoneScaling.ZoneStat.WeaponCrushMin, MaxStat = ZoneScaling.ZoneStat.WeaponCrushMax,
-            Min = 7.50, Max = 8.50, Min25 = 9.50, Max25 = 10.00, Lo = 2.0, Hi = 10.0,
+            // T11 floor RE-ANCHORED 2026-08-25 (owner): exactly the best general craft. These numbers
+            // are in DISPLAY space (EngineValue subtracts the 1.0 at the single write site), and the
+            // craft SetValues the STORED property, so the two spaces have to be lined up carefully:
+            //   Bag of Abyssal-Touched Gems / Salvaged Turquoise store 2.25 -> 3.25x in combat
+            //   Salvaged Turquoise (527870007)          stores 2.45 -> 3.45x in combat
+            // 3.25 display here == the bag exactly. NOTE 3.45 is the true general ceiling, so a
+            // floor-rolled T11 card ties the bag but is still beaten by that one turquoise recipe.
+            // (Crimson Night Gem Setting reaches 3.0 stored / 4.0x, but it is retail quest content
+            // that applies ONLY to a Silifi of Crimson Stars - not a general competitor.)
+            // The old 7.50 cleared the Crippling Blow imbue's 7.0x; that imbue is suppressed for
+            // players now. Max and the T25 pair are PROVISIONAL, same as Biting Strike above.
+            Min = 3.25, Max = 3.25, Min25 = 9.50, Max25 = 10.00, Lo = 2.0, Hi = 10.0,
         };
 
         /// <summary>Every weapon band, for help text / catalog printouts. Order is display order.</summary>
