@@ -346,6 +346,42 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyFloat.CriticalFrequency); else SetProperty(PropertyFloat.CriticalFrequency, value.Value); }
         }
 
+        /// <summary>
+        /// OWNER RULING 2026-08-25: Biting Strike and Crushing Blow - the Zone Control weapon cards -
+        /// are the ONLY sources of crit chance and crit damage on a PLAYER's weapon. The two vanilla
+        /// imbues that do the same job are suppressed for players:
+        ///   Critical Strike  - a FLAT 0.50 crit chance at capped skill (MaxCriticalStrikeMod)
+        ///   Crippling Blow   - 6.0 stored, which the engine turns into 7.0x in combat
+        /// Both meet our card through Math.Max, so an unsuppressed imbue is a free floor the card has
+        /// to clear before it means anything. Suppressing them makes the band the whole story.
+        ///
+        /// PLAYERS ONLY, deliberately (owner's word). A monster's own imbues are part of ITS balance
+        /// and keep working exactly as before - suppressing shard-wide would quietly re-tune every mob
+        /// carrying one, which nobody asked for.
+        ///
+        /// WHY A READ-SITE GUARD rather than blocking the crafts. Two reasons the craft gate cannot
+        /// cover, both measured 2026-08-25:
+        ///   - 125 weenies carry these imbues BAKED IN (55 of them casters). No crafting gate ever
+        ///     sees those; they arrive already imbued.
+        ///   - The gate's layer-2 rule is "a weaker imbue cannot go on, but NOT-imbued could", so a
+        ///     weapon with no card would accept Critical Strike for ever, by design.
+        /// Craft-gate denies are still worth having as a second line - they give the player a refusal
+        /// reason, which a silent read-site guard cannot - but only this expresses NEVER.
+        ///
+        /// NOTE this does not touch the OTHER crit contributors: the weapon aug-scaling crit term, the
+        /// luminance-aug crit term, gear crit rating, or player_crit_damage_cap. On melee the cap (3.0)
+        /// is what actually binds - it binds at CDR 50 with zero crit sources - so this ruling changes
+        /// nothing about melee crit DAMAGE. It bites on crit CHANCE, and on casters, whose crit damage
+        /// has no cap read site at all.
+        ///
+        /// Flip this const to restore retail behaviour; it is the single switch.
+        /// </summary>
+        public const bool CritImbuesSuppressedForPlayers = true;
+
+        /// <summary>True when Critical Strike / Crippling Blow must be ignored for this wielder.</summary>
+        public static bool CritImbuesSuppressed(Creature wielder)
+            => CritImbuesSuppressedForPlayers && wielder is Player;
+
         private const float defaultPhysicalCritFrequency = 0.1f;    // 10% base chance
 
         /// <summary>
@@ -355,7 +391,8 @@ namespace ACE.Server.WorldObjects
         {
             var critRate = (float)(weapon?.CriticalFrequency ?? defaultPhysicalCritFrequency);
 
-            if (weapon != null && weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike))
+            if (weapon != null && weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike)
+                && !CritImbuesSuppressed(wielder))   // owner 2026-08-25: Biting Strike is the only crit-chance source on a player weapon
             {
                 var criticalStrikeBonus = GetCriticalStrikeMod(skill);
 
@@ -431,7 +468,8 @@ namespace ACE.Server.WorldObjects
 
             var critRate = (float)(weapon.GetProperty(PropertyFloat.CriticalFrequency) ?? defaultMagicCritFrequency);
 
-            if (weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike))
+            if (weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike)
+                && !CritImbuesSuppressed(wielder))   // same ruling on the magic path
             {
                 var isPvP = wielder is Player && target is Player;
 
@@ -463,7 +501,8 @@ namespace ACE.Server.WorldObjects
         {
             var critDamageMod = (float)(weapon?.GetProperty(PropertyFloat.CriticalMultiplier) ?? defaultCritDamageMultiplier);
 
-            if (weapon != null && weapon.HasImbuedEffect(ImbuedEffectType.CripplingBlow))
+            if (weapon != null && weapon.HasImbuedEffect(ImbuedEffectType.CripplingBlow)
+                && !CritImbuesSuppressed(wielder))   // owner 2026-08-25: Crushing Blow is the only crit-damage source on a player weapon
             {
                 var cripplingBlowMod = GetCripplingBlowMod(skill);
 

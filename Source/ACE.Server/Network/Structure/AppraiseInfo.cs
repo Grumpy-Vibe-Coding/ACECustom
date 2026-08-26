@@ -1241,8 +1241,12 @@ namespace ACE.Server.Network.Structure
                 effectDescriptions.Add($"- Crushing Blow: {val:0.##}x Crit Dmg");
             }
 
-            // Crippling Blow
-            if (weapon.HasImbuedEffect(ImbuedEffectType.CripplingBlow))
+            // Crippling Blow - hidden for players since 2026-08-25: WorldObject.CritImbuesSuppressed
+            // makes it inert on a player's weapon, and an item panel that advertises an effect doing
+            // exactly zero is worse for trust than an absent line. This panel is only ever built for
+            // a player examining something, so the const alone is the right test here.
+            if (weapon.HasImbuedEffect(ImbuedEffectType.CripplingBlow)
+                && !WorldObject.CritImbuesSuppressedForPlayers)
             {
                 var mod = WorldObject.GetCripplingBlowMod(skill);
                 effectDescriptions.Add($"- {ImbuedEffectType.CripplingBlow.DisplayName()}: {mod:0.##}x Crit Dmg");
@@ -1262,8 +1266,9 @@ namespace ACE.Server.Network.Structure
                 effectDescriptions.Add($"- {ImbuedEffectType.ArmorRending.DisplayName()}: {ignored:P1} Ignored");
             }
 
-            // Critical Strike
-            if (weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike))
+            // Critical Strike - hidden for players, same reason as Crippling Blow above.
+            if (weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike)
+                && !WorldObject.CritImbuesSuppressedForPlayers)
             {
                 var mod = WorldObject.GetCriticalStrikeMod(skill);
                 effectDescriptions.Add($"- {ImbuedEffectType.CriticalStrike.DisplayName()}: +{mod:P1} Crit Chance");
