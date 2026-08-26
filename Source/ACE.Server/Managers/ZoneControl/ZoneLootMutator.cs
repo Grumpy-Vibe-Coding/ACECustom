@@ -121,9 +121,10 @@ namespace ACE.Server.Managers.ZoneControl
         ///   - forceMax (this drop won the per-kill slot special) now reaches an authored band as well.
         ///     It only ever reached the ladder fallback before, because RollRange had no notion of it.
         ///
-        /// This does NOT change which cards roll. Every caller is still behind its own Won(...) gate (or,
-        /// for Rend Power, a presence test on its min/max pair), and Won() returns FALSE for an UNDEFINED
-        /// stat - unset means NEVER, not "0 pct". A zone that authors nothing rolls nothing, as before.
+        /// This does NOT change which cards roll. Every caller is behind its own Won(...) gate - all six
+        /// of them since 2026-08-25, when Rend Power gained weapon_rend_power_chance and stopped gating
+        /// on the presence of its own min/max pair - and Won() returns FALSE for an UNDEFINED stat:
+        /// unset means NEVER, not "0 pct". A zone that authors nothing rolls nothing, as before.
         /// </summary>
         private static void StampWeaponCard(WorldObject wo, EvaluatedProfile p,
             ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
@@ -230,7 +231,20 @@ namespace ACE.Server.Managers.ZoneControl
             var isWeapon = isMelee || isMissile || wo is Caster;
 
             // Cast on Strike (melee/missile — procs fire from the swing path; never clobber an existing proc)
-            if ((isMelee || isMissile) && wo.ProcSpell == null && Won(p, ZoneStat.WeaponProcChance))
+            // CASTERS INCLUDED since 2026-08-25 (owner). The old condition was (isMelee || isMissile)
+            // and the comment on the card said procs "fire from the swing path, so casters never roll
+            // it". That was simply wrong: ProcSpell fires through TryProcEquippedItems, and the PLAYER
+            // MAGIC path calls it with the caster passed as the weapon - Player_Magic.cs:1426
+            // (TryProcEquippedItems(this, targetCreature, false, caster)) and SpellProjectile.cs:455
+            // (procs the ProjectileLauncher on impact). Monsters already did the same via
+            // Monster_Magic.cs. We also stamp ProcSpellSelfTargeted = false, which is exactly what
+            // those call sites match on - so a wand carrying a proc has always fired it. We just never
+            // stamped one. Nothing in the engine needed changing; this is one condition.
+            //
+            // WORTH MORE ON A WAND than on a sword, and that is a tuning fact, not a bug: a caster's
+            // "strike" is a spell cast at range, and casts come faster and safer than melee swings, so
+            // the same weapon_proc_rate buys more procs. Watch it before raising the rate.
+            if (isWeapon && wo.ProcSpell == null && Won(p, ZoneStat.WeaponProcChance))
             {
                 var spellId = (uint)Math.Round(p.Get(ZoneStat.WeaponProcSpell, 0));
                 if (spellId == 0)
@@ -260,18 +274,26 @@ namespace ACE.Server.Managers.ZoneControl
             // roll). Wire value = vuln fraction (150% = 1.5 = the normal rend cap/floor, up to 1000% =
             // 10.0); the engine sets rendingMod = 1 + this, replacing the skill formula (and its 2.5 cap).
             //
-            // NOTE on the gate (2026-08-25): unlike the other five cards this one has NO chance stat -
-            // it is a PRESENCE test on the min/max pair, so a zone that authors either key gives Rend
-            // Power to every rend-carrying weapon it drops, at 100 pct. Because the gate and
-            // RollBanded's "is anything authored?" test are the same condition, the tier band below is
-            // currently UNREACHABLE for this card: the gate only opens when something is authored, and
-            // authored always wins. That is deliberate. Making the band reachable means gating on a new
-            // weapon_rend_power_chance instead, and Won() treats an undefined stat as NEVER - so that
-            // switch would silently turn Rend Power OFF in every zone that authors a min/max today. It
-            // needs an owner ruling plus a migration (author the chance as 1.0 on those zones), so it
-            // is deliberately NOT part of this pass. The row exists here so the ladder is ready the day
-            // the gate changes, and so the plugin's WpnBands table has a server-side counterpart.
-            if (isWeapon && (p.Has(ZoneStat.WeaponRendPowerMin) || p.Has(ZoneStat.WeaponRendPowerMax))
+            // THE GATE (changed 2026-08-25, second pass): this card used to be the ONE special with no
+            // chance stat of its own - the gate was a PRESENCE test on the min/max pair. That is what
+            // made its T11 -> T25 ladder unreachable, and the reason is worth keeping written down:
+            // the presence test and ZoneStatResolver.WeaponDropBand's "is a pin authored?" test were
+            // the SAME condition, so the gate could only open when a pin existed, and a pin always
+            // wins over the ladder. The band below the gate was therefore dead code by construction.
+            // It now gates on weapon_rend_power_chance, exactly like the other five, so an UNPINNED
+            // Rend Power resolves through the ladder (WeaponDropBand at drop, WeaponResolveBand on
+            // every equip) and a band retune reaches weapons already in the world.
+            //
+            // KNOWN AND ACCEPTED CONSEQUENCE (owner ruling 2026-08-25, no migration): Won() treats an
+            // UNDEFINED stat as NEVER, not as "0 pct", so a zone that authors only min/max and no
+            // chance now rolls Rend Power on nothing. Re-author the chance on those zones. There is
+            // deliberately no default-to-1.0 shim - a shim would resurrect the exact coupling between
+            // "a pin exists" and "the card fires" that this change exists to break.
+            //
+            // The rend requirement is NOT part of the chance and must stay ANDed on: prop 9056 only
+            // means anything on a weapon that actually carries a rend imbue, so a chance of 1.0 still
+            // skips every non-rending weapon in the zone.
+            if (isWeapon && Won(p, ZoneStat.WeaponRendPowerChance)
                 && (wo.GetImbuedEffects() & AllRends) != 0)
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecRendPower, lootTier, forceMax);
 
@@ -347,52 +369,14 @@ namespace ACE.Server.Managers.ZoneControl
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecSlayer, lootTier, forceMax);
             }
 
-            // pre-Paragoned: levels from use (same properties the Paragon Weapons recipe stamps)
-            if (isWeapon && Won(p, ZoneStat.WeaponParagonChance))
-            {
-                wo.ItemMaxLevel = (wo.ItemMaxLevel ?? 0) + 1;
-                wo.ItemBaseXp = 2000000000;
-                wo.ItemTotalXp = wo.ItemTotalXp ?? 0;
-            }
-
-            // ── pre-applied crafts — ALWAYS LAST (owner rule: hilts/strings go on after every other
-            // tuner, so their bonuses ADD on top of whatever the cards above set). Numbers mirror the
-            // live recipes; adds land on the item's EFFECTIVE value (engine default when no prop). ──
-
-            // Bandit Hilt (melee): recipe 527870063 complete. ManaStoneDestroyChance 0.01 is NOT junk —
-            // it is the hilt system's completion marker: the apply recipe REQUIRES it < 0.01 ("This
-            // weapon has already been hilted!"), so stamping it blocks a second hilt on this drop.
-            if (isMelee && Won(p, ZoneStat.WeaponHiltChance))
-            {
-                wo.Attuned = AttunedStatus.Attuned;
-                wo.Bonded = BondedStatus.Bonded;
-                wo.SetProperty(PropertyBool.Ivoryable, true);
-                wo.SetProperty(PropertyInt.WieldRequirements2, 8);   // WieldRequirement.Training
-                wo.SetProperty(PropertyInt.WieldSkillType2, 46);
-                wo.SetProperty(PropertyInt.WieldDifficulty2, 3);     // specialized
-                wo.Value = 0;
-                wo.SetProperty(PropertyFloat.ManaStoneDestroyChance, 0.01);
-                wo.SetProperty(PropertyFloat.DamageMod,
-                    (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 1.075);
-                wo.SetProperty(PropertyFloat.CriticalFrequency,
-                    (wo.GetProperty(PropertyFloat.CriticalFrequency) ?? 0.1) + 0.25);
-                wo.SetProperty(PropertyFloat.CriticalMultiplier,
-                    (wo.GetProperty(PropertyFloat.CriticalMultiplier) ?? 1.0) + 0.175);
-            }
-
-            // Oiled Bowstring (bows): recipe 527870116 complete
-            if (isMissile && Won(p, ZoneStat.WeaponBowstringChance))
-            {
-                wo.SetProperty(PropertyInt.WieldRequirements2, 8);
-                wo.SetProperty(PropertyInt.WieldSkillType2, 47);     // Missile Weapons
-                wo.SetProperty(PropertyInt.WieldDifficulty2, 3);
-                wo.SetProperty((PropertyBool)SplitArrowsBoolId, true);
-                wo.SetProperty((PropertyInt)SplitArrowCountIntId,
-                    (wo.GetProperty((PropertyInt)SplitArrowCountIntId) ?? 0) + 1);   // stacks with the Split Arrows card
-                wo.SetProperty((PropertyFloat)SplitArrowRangeFloatId, 12.0);         // recipe SETS 12 — string goes on last
-                wo.SetProperty(PropertyFloat.DamageMod,
-                    (wo.GetProperty(PropertyFloat.DamageMod) ?? 1.0) + 0.05);
-            }
+            // REMOVED 2026-08-25 (owner): the Paragon, Bandit Hilt and Oiled Bowstring loot cards.
+            // They stamped, at drop time, effects that already exist as player-obtainable content - the
+            // Paragon Weapons recipe, hilt recipe 527870063 and bowstring recipe 527870116. Only the
+            // drop-time CARDS are gone; the recipes and the Paragon gems are untouched and a player can
+            // still apply any of them by hand.
+            // NOTE for anyone deleting more: ZoneStatResolver's HasBanditHilt detection STAYS. It is not
+            // part of this card - it exists so a hilt a player applied AFTER the drop is re-added when a
+            // weapon re-resolves, and removing it would erase that player's bonus on their next equip.
 
             // the zone-cantrip LINES on top of whatever the roll produced — the zone's pool only
             // (prop-based ZoneCantrips catalog; retail cantrips deliberately excluded)
@@ -527,9 +511,37 @@ namespace ACE.Server.Managers.ZoneControl
             return candidates[candidates.Count - 1].Def;
         }
 
-        /// <summary>True when the profile defines the chance stat AND the 0..1 roll comes up a winner.</summary>
+        /// <summary>
+        /// True when the card is switched ON at this scope, the profile defines the chance stat, AND the
+        /// 0..1 roll comes up a winner.
+        ///
+        /// 🔴 THE EXPLICIT OFF SWITCH LIVES HERE, NOT AT THE CALL SITES (2026-08-25, weapon/armour parity).
+        /// Every chance-gated weapon card - all fourteen, including the seven with no band of their own
+        /// (Phantom, Paragon, Cast on Strike, Cleave, Split Arrows, Bandit Hilt, Bowstring) - already
+        /// passes through this one method, so one test covers the lot. Repeating it per call site would
+        /// be seventeen chances to miss one, and the one missed would fail silently: the card would keep
+        /// rolling while the plugin's checkbox said it was off, which is the exact class of bug this
+        /// change exists to kill.
+        ///
+        /// WHY A SEPARATE FLAG AND NOT "clear the chance stat". Clearing works at the tier Default,
+        /// because there is nothing under it. At ZONE scope it does NOT: the zone layer is merged ON TOP
+        /// of the Default (ZoneVariantProfile.Merge), so a cleared zone key means INHERIT and the
+        /// Default's chance sails straight through. An explicit false beats the inherited chance; it
+        /// also leaves the zone's own tuned chance value sitting untouched in the store, so an off/on
+        /// cycle is lossless.
+        ///
+        /// SCOPING - this method is NOT weapon-only. Its non-weapon caller is the extra-cantrip roll,
+        /// which passes armor_cantrip_chance for a non-weapon drop. That name can never be a key in the
+        /// toggle map (ZoneStat.IsWeaponCardChance rejects it at authoring time, and the map is the only
+        /// writer), so WeaponCardEnabled misses the lookup and returns true: armour is untouched.
+        /// </summary>
         private static bool Won(EvaluatedProfile p, string chanceStat)
         {
+            // Off beats everything, including an inherited chance - checked BEFORE Has() so it reads as
+            // the master switch it is, and so it costs one dictionary miss on the overwhelmingly common
+            // "nothing authored anywhere" path.
+            if (!p.WeaponCardEnabled(chanceStat))
+                return false;
             if (!p.Has(chanceStat))
                 return false;
             var chance = Math.Clamp(p.Get(chanceStat), 0.0, 1.0);

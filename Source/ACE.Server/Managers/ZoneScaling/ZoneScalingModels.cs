@@ -169,7 +169,6 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponSlayerChance = "weapon_slayer_chance"; // slayer vs the killed monster's own creature type
         public const string WeaponSlayerMin = "weapon_slayer_min";       // SlayerDamageBonus min (raw multiplier, floor 1.5, cap 10.0)
         public const string WeaponSlayerMax = "weapon_slayer_max";       // SlayerDamageBonus max
-        public const string WeaponParagonChance = "weapon_paragon_chance"; // drops pre-Paragoned (+1 ItemMaxLevel, levels from use)
         public const string WeaponCantripChance = "weapon_cantrip_chance"; // one EXTRA cantrip on a rolled weapon, from the zone's custom pool ONLY
         public const string ArmorCantripChance = "armor_cantrip_chance";   // one EXTRA cantrip on rolled armor/clothing/jewelry, custom pool ONLY
         // Armor v2 (2026-08-21, Cantrip_Band_Ladder v2; the old per-bucket cantrip_draws_bN keys were
@@ -250,10 +249,17 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponShieldCleaveMin = "weapon_shield_cleave_min"; //   fraction of shield ignored 0..1 (default 0.5)
         public const string WeaponShieldCleaveMax = "weapon_shield_cleave_max";
         public const string WeaponPhantomChance = "weapon_phantom_chance"; // Phantom (hollow): hits ignore BOTH magic armor (impen/banes) and magic resist (prots)
+        // Rend Power (2026-08-25): this card used to be the ONE special with no chance stat of its own -
+        // its gate was a PRESENCE test on the min/max pair below, which meant "authored = 100 pct". That
+        // made its T11 -> T25 ladder unreachable, because the presence test and WeaponDropBand's
+        // "is a pin authored?" test were the SAME condition: the gate only opened when a pin existed,
+        // and a pin always wins over the ladder. It now gates on this chance like the other five.
+        // Consequence, accepted by the owner: a zone that authors only min/max and no chance no longer
+        // rolls Rend Power at all, because Won() treats an UNDEFINED stat as NEVER (not as "0 pct").
+        // Re-author those zones with a chance; there is deliberately no back-compat shim.
+        public const string WeaponRendPowerChance = "weapon_rend_power_chance"; // Rend Power: per-drop odds on a rend-carrying weapon
         public const string WeaponRendPowerMin = "weapon_rend_power_min";  // rend strength as a DIRECT vuln bonus, rolled per drop; wire 1.5..10.0 = +150%..+1000% (rendingMod = 1 + this)
         public const string WeaponRendPowerMax = "weapon_rend_power_max";
-        public const string WeaponHiltChance = "weapon_hilt_chance";       // melee drops with a Fine Bandit Blade Hilt pre-attached (full recipe minus ManaStoneDestroyChance)
-        public const string WeaponBowstringChance = "weapon_bowstring_chance"; // bow drops restrung with a Finely Oiled Bowstring (full recipe)
 
         // C4. structured loot set + QB scaling (T11+ endgame loot; see ACE_Loot_Systems_DeepDive doc §12-13)
         // PER-SLOT drop counts (owner 2026-07-20: no set enabler, each slot has its own count).
@@ -349,7 +355,7 @@ namespace ACE.Server.Managers.ZoneScaling
             BonusCurrency,
             WeaponAttuned, WeaponBonded, WeaponUnenchantable,
             WeaponProcChance, WeaponProcRate, WeaponProcSpell, WeaponImbueChance,
-            WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax, WeaponParagonChance,
+            WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax,
             WeaponCantripChance, ArmorCantripChance,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,
             WeaponSplitChance, WeaponSplitMin, WeaponSplitMax, WeaponSplitRange, WeaponSplitDmg,
@@ -357,8 +363,7 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponCrushChance, WeaponCrushMin, WeaponCrushMax,
             WeaponArmorRendChance, WeaponArmorRendMin, WeaponArmorRendMax,
             WeaponShieldCleaveChance, WeaponShieldCleaveMin, WeaponShieldCleaveMax,
-            WeaponPhantomChance, WeaponRendPowerMin, WeaponRendPowerMax,
-            WeaponHiltChance, WeaponBowstringChance,
+            WeaponPhantomChance, WeaponRendPowerChance, WeaponRendPowerMin, WeaponRendPowerMax,
             LootSlotWeapons,
             LootSlotHelm, LootSlotChest, LootSlotShoulder, LootSlotBracer, LootSlotGlove,
             LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,
@@ -386,6 +391,44 @@ namespace ACE.Server.Managers.ZoneScaling
             // (see the note above), so appending is safe for an older plugin / older server.
             ArmorBaseLevel, ArmorProtBase, ArmorProtEqualize,
         };
+
+        /// <summary>
+        /// The weapon-card CHANCE stats, derived from <see cref="All"/> by shape (weapon_*_chance).
+        ///
+        /// WHY DERIVED AND NOT A HAND-WRITTEN LIST (2026-08-25). This is the identifier space of
+        /// `/zonecontrol weaponcard &lt;stat&gt; on|off` and the only key set
+        /// <see cref="ZoneVariantProfile.CustomWeaponCards"/> may ever hold. Armour's equivalent toggle
+        /// keys off a NUMERIC catalog key, which cannot go stale because the catalog is the registry.
+        /// A weapon card has no registry - its identity IS its chance stat - so the temptation is to
+        /// paste a fifteen-entry list here and let it rot the next time a card is added or renamed.
+        /// Deriving it means a new weapon_&lt;card&gt;_chance constant is toggleable the moment it lands
+        /// in All, with no second place to remember.
+        ///
+        /// THE TRAP: this matches weapon_cantrip_chance too, which is not one of the fourteen combat
+        /// cards but the "one EXTRA cantrip on a rolled weapon" roll. That is intentional and harmless -
+        /// it also passes through ZoneLootMutator.Won, so the toggle works on it exactly as it does on a
+        /// card. Its ARMOUR twin, armor_cantrip_chance, is deliberately NOT in this set (wrong prefix),
+        /// so armour drops can never be silenced by a weapon verb.
+        /// </summary>
+        public static readonly string[] WeaponCardChances = BuildWeaponCardChances();
+
+        private static readonly HashSet<string> WeaponCardChanceSet =
+            new HashSet<string>(WeaponCardChances, StringComparer.OrdinalIgnoreCase);
+
+        private static string[] BuildWeaponCardChances()
+        {
+            var list = new List<string>();
+            foreach (var s in All)
+                if (s.StartsWith("weapon_", StringComparison.Ordinal) && s.EndsWith("_chance", StringComparison.Ordinal))
+                    list.Add(s);
+            list.Sort(StringComparer.Ordinal);
+            return list.ToArray();
+        }
+
+        /// <summary>True when <paramref name="statKey"/> names a weapon card's chance stat, i.e. is a legal
+        /// identifier for the `weaponcard` verb and for the CustomWeaponCards map.</summary>
+        public static bool IsWeaponCardChance(string statKey)
+            => statKey != null && WeaponCardChanceSet.Contains(statKey);
     }
 
     /// <summary>
@@ -562,6 +605,29 @@ namespace ACE.Server.Managers.ZoneScaling
         /// turned off). Consulted by the per-kill special roll only. Missing on older profiles = empty dict.</summary>
         public Dictionary<int, bool> CustomSpecials { get; set; } = new();
 
+        /// <summary>
+        /// Per-WEAPON-CARD on/off (owner 2026-08-25), keyed by the card's CHANCE STAT NAME
+        /// (weapon_bite_chance, weapon_rend_power_chance, ...) -> enabled. A key absent here is ON.
+        /// Authored by `/zonecontrol weaponcard`, merged OVERWRITE per key exactly like CustomSpecials.
+        ///
+        /// WHY THIS EXISTS AT ALL, since a card's odds already live in weapon_&lt;card&gt;_chance.
+        /// Before this map, "off" was the ABSENCE of the chance stat, which had two defects:
+        ///   1. turning a card off destroyed its tuned chance value - the number had to be retyped from
+        ///      memory to turn it back on;
+        ///   2. 🔴 at ZONE scope, clearing the key means INHERIT, not OFF. The zone layer is merged on
+        ///      top of the tier Default (ZoneVariantProfile.Merge), so a cleared zone key falls straight
+        ///      through to the Default's chance and the card keeps rolling while the UI shows it off.
+        ///      A zone simply could not switch off a card its tier Default enabled. Closing that is the
+        ///      entire point of this map.
+        /// It therefore stores an EXPLICIT true/false, never just an off-list: a zone must be able to
+        /// re-enable a card the Default turned off as well as disable one the Default turned on, and
+        /// only a three-state (true / false / absent) can express both against a merged parent.
+        ///
+        /// Consulted in exactly one place - ZoneLootMutator.Won - which is the single gate every
+        /// chance-gated weapon card already passes through. Missing on older profiles = empty dict.
+        /// </summary>
+        public Dictionary<string, bool> CustomWeaponCards { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Bonus-currency drop table: each entry rolls independently on every governed kill and
         /// injects a stack onto the corpse. Missing on deserialize of older profiles = empty list.</summary>
         public List<ZoneCurrencyDrop> CurrencyDrops { get; set; } = new();
@@ -646,6 +712,13 @@ namespace ACE.Server.Managers.ZoneScaling
                     foreach (var kv in layer.CustomSpecials)
                         result.CustomSpecials[kv.Key] = kv.Value;
 
+                // weapon-card on/off: same OVERWRITE-per-key semantics as CustomSpecials. This is what
+                // lets a ZONE win against its tier Default in BOTH directions - an explicit false here
+                // beats an inherited true, which a merely-absent chance stat never could.
+                if (layer.CustomWeaponCards != null)
+                    foreach (var kv in layer.CustomWeaponCards)
+                        result.CustomWeaponCards[kv.Key] = kv.Value;
+
                 if (layer.CurrencyDrops != null)
                     foreach (var drop in layer.CurrencyDrops)
                     {
@@ -680,6 +753,7 @@ namespace ACE.Server.Managers.ZoneScaling
             && (CustomCantripBands == null || CustomCantripBands.Count == 0)
             && (CustomCantripSlots == null || CustomCantripSlots.Count == 0)
             && (CustomSpecials == null || CustomSpecials.Count == 0)
+            && (CustomWeaponCards == null || CustomWeaponCards.Count == 0)
             && (CurrencyDrops == null || CurrencyDrops.Count == 0)
             && (SpellRules == null || SpellRules.Count == 0);
     }
@@ -761,10 +835,14 @@ namespace ACE.Server.Managers.ZoneScaling
             Dictionary<int, double> propFloats = null, Dictionary<int, bool> propBools = null,
             List<int> customCantrips = null, List<ZoneCurrencyDrop> currencyDrops = null,
             List<ZoneSpellRule> spellRules = null, Dictionary<int, CantripBand> cantripBands = null,
-            Dictionary<int, int> cantripSlots = null, Dictionary<int, bool> specialToggles = null)
+            Dictionary<int, int> cantripSlots = null, Dictionary<int, bool> specialToggles = null,
+            Dictionary<string, bool> weaponCardToggles = null)
         {
             CantripSlots = cantripSlots is { Count: > 0 } ? new Dictionary<int, int>(cantripSlots) : EmptyCantripSlots;
             SpecialToggles = specialToggles is { Count: > 0 } ? new Dictionary<int, bool>(specialToggles) : EmptySpecialToggles;
+            WeaponCardToggles = weaponCardToggles is { Count: > 0 }
+                ? new Dictionary<string, bool>(weaponCardToggles, StringComparer.OrdinalIgnoreCase)
+                : EmptyWeaponCardToggles;
             ScopeKey = scopeKey;
             Tier = tier;
             Variant = variant;
@@ -800,6 +878,28 @@ namespace ACE.Server.Managers.ZoneScaling
         /// <summary>Per-special on/off (absent = on). See ZoneVariantProfile.CustomSpecials.</summary>
         public IReadOnlyDictionary<int, bool> SpecialToggles { get; }
         public bool SpecialEnabled(int key) => !SpecialToggles.TryGetValue(key, out var on) || on;
+
+        private static readonly IReadOnlyDictionary<string, bool> EmptyWeaponCardToggles
+            = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Per-weapon-card on/off keyed by CHANCE STAT NAME (absent = on). Merged view, so this is
+        /// the tier Default's toggles with the zone's (and any per-WCID bucket's) laid over them per key.
+        /// See ZoneVariantProfile.CustomWeaponCards.</summary>
+        public IReadOnlyDictionary<string, bool> WeaponCardToggles { get; }
+
+        /// <summary>
+        /// May the card behind <paramref name="chanceStat"/> roll at this scope? Absent = YES (sparse, same
+        /// rule as SpecialEnabled), so a scope that authors no toggle behaves exactly as it did before the
+        /// map existed.
+        ///
+        /// Deliberately keyed by the raw stat name and NOT filtered to weapon cards here: the map can only
+        /// ever contain names ZoneStat.IsWeaponCardChance accepted at authoring time, so any other chance
+        /// stat asked about - armor_cantrip_chance above all - misses the lookup and comes back ON. That is
+        /// the scoping that keeps this weapon-only; do not "improve" it by adding a prefix test on the hot
+        /// path, and do not let anything write an unvalidated key into the map.
+        /// </summary>
+        public bool WeaponCardEnabled(string chanceStat)
+            => chanceStat == null || !WeaponCardToggles.TryGetValue(chanceStat, out var on) || on;
 
         /// <summary>Custom cantrip SpellIds for the extra-loot-cantrip roll (may be null = none defined).</summary>
         public IReadOnlyList<int> CustomCantrips { get; }

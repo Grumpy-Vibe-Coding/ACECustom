@@ -152,6 +152,8 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol cantrip <name> lines <min> <max> [c1] [c2] [c3]   (Armor v2 line ladder: min guaranteed, extra slots up to max roll c1/c2/c3 in order, first miss stops; writes cantrip_lines_*)");
                 Msg("  /zonecontrol cantrip <name> weight <filler|average|chase> <n>   (key pick weight per class; writes cantrip_weight_*)");
                 Msg("  /zonecontrol cantrip <name> special <key> <on|off|clear>   (per-special on/off for the per-kill slot-special roll; clear = drop the override)");
+                Msg("  /zonecontrol weaponcard <name> <chance_stat> <on|off|clear> | weaponcard <name> list   [--wcid <id>]   (explicit per-card on/off; OFF beats an inherited chance, and the tuned chance value survives an off/on cycle)");
+                Msg("  /zonecontrol default <var> weaponcard <chance_stat> <on|off|clear> | list   (the same switch on the tier Default; a zone can override it either way)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
                 Msg("  /zonecontrol survey <name> [lbHex]   (per-landblock content: generator + creature summary; lbHex = full detail for one landblock)");
@@ -954,6 +956,36 @@ namespace ACE.Server.Command.Handlers
                                 Msg("op must be off | on | add | chance | remove | list");
                                 return;
                         }
+                    }
+
+                    case "weaponcard":
+                    {
+                        // ZONE-scope weapon-card on/off (owner 2026-08-25). The tier-Default form lives under
+                        // `default <var> weaponcard ...` instead - see case "default" below. Two forms rather
+                        // than one `weaponcard default <var>` because the plugin's Weapons > Specials tab is
+                        // zone-capable with a Target dropdown, unlike the armour Specials tab, and these are
+                        // the two literal strings it emits.
+                        //
+                        // A DISTINCT VERB FROM ARMOUR'S `cantrip <scope> special <key> on|off` on purpose:
+                        // armour specials are numeric catalog keys, weapon cards are named chance stats.
+                        // Overloading one verb across two id spaces would make "special 28" and
+                        // "special weapon_bite_chance" the same command and guarantee a class of typo that
+                        // silently hits the wrong system.
+                        if (args.Count < 3)
+                        { Msg("Usage: weaponcard <name> <chance_stat> <on|off|clear> | weaponcard <name> list   [--wcid <id>]"); return; }
+                        var wcName = args[1];
+                        var wcArea = ZoneControlManager.GetArea(wcName);
+                        if (wcArea == null) { Msg($"No zone '{wcName}' (create it first)."); return; }
+                        var wcScopeTag = $"'{wcName}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")}";
+
+                        HandleWeaponCard(args, 2, wcScopeTag,
+                            "Usage: weaponcard <name> <chance_stat> <on|off|clear> | weaponcard <name> list",
+                            wcid.HasValue ? wcArea.Profile.VariantForWcid(wcid.Value) : wcArea.Profile.Minion,
+                            ZoneControlManager.ResolveProfileForDisplay(wcName, wcid),
+                            edit => ZoneControlManager.MutateArea(wcName, a =>
+                                edit(wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion)),
+                            Msg);
+                        return;
                     }
 
                     case "currency":
@@ -2209,6 +2241,7 @@ namespace ACE.Server.Command.Handlers
                             Msg("  default <var> clearstat <stat>");
                             Msg("  default <var> copyfrom <var>              seed from another variation");
                             Msg("  default <var> clear                       drop the whole Default");
+                            Msg("  default <var> weaponcard <chance_stat> <on|off|clear> | weaponcard list");
                             return;
                         }
 
@@ -2298,7 +2331,24 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        Msg("op must be show | set | clearstat | copyfrom | clear | list");
+                        if (dop == "weaponcard")
+                        {
+                            // TIER-DEFAULT weapon-card on/off (owner 2026-08-25). Same op set as the zone
+                            // form; the zone form layers over whatever is set here. Note the argument order
+                            // is `default <var> weaponcard <stat>` while the zone form is
+                            // `weaponcard <name> <stat>` - that asymmetry is inherited from this verb's
+                            // existing shape (`default <var> set <stat> <value>`), not a choice, and the
+                            // plugin sends both literal strings.
+                            var dprof = ZoneControlManager.GetVariationDefault(dvar)?.Profile;
+                            HandleWeaponCard(args, 3, $"Default v{dvar}",
+                                "Usage: default <var> weaponcard <chance_stat> <on|off|clear> | default <var> weaponcard list",
+                                dprof, dprof,
+                                edit => ZoneControlManager.MutateVariationDefault(dvar, d => edit(d.Profile)),
+                                Msg);
+                            return;
+                        }
+
+                        Msg("op must be show | set | clearstat | copyfrom | clear | list | weaponcard");
                         return;
                     }
 
@@ -2576,6 +2626,96 @@ namespace ACE.Server.Command.Handlers
             }
         }
 
+        /// <summary>
+        /// Resolve a weapon-card identifier typed in chat or sent by the plugin.
+        ///
+        /// The canonical form is the card's CHANCE STAT NAME (weapon_bite_chance) - that is what the
+        /// plugin sends and what the store holds. The bare card name ("bite", "rend_power", "rend power")
+        /// is also accepted as a chat convenience and normalised to the same key; the store never sees
+        /// the short form, so there is exactly one spelling on disk and on the wire.
+        ///
+        /// Returns null for anything that is not a weapon card, INCLUDING armor_cantrip_chance and any
+        /// other chance stat - this is the gate that keeps ZoneVariantProfile.CustomWeaponCards free of
+        /// keys EvaluatedProfile.WeaponCardEnabled would then wrongly answer for.
+        /// </summary>
+        private static string NormalizeWeaponCard(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            var t = s.Trim().ToLowerInvariant().Replace(' ', '_');
+            if (ZoneStat.IsWeaponCardChance(t)) return NormalizeStat(t);
+            var expanded = "weapon_" + t + "_chance";
+            return ZoneStat.IsWeaponCardChance(expanded) ? NormalizeStat(expanded) : null;
+        }
+
+        /// <summary>
+        /// The ONE implementation of `weaponcard <stat> on|off|clear` / `weaponcard list`, shared by the
+        /// zone form (`weaponcard &lt;name&gt; ...`) and the tier-Default form (`default &lt;var&gt; weaponcard ...`).
+        /// Both scopes must behave identically or the plugin's checkbox means two different things
+        /// depending on the Target dropdown, so there is deliberately no second copy of this logic.
+        ///
+        /// <paramref name="authored"/> is the bucket being EDITED (may be null when it does not exist yet -
+        /// `list` then shows nothing authored, and a write creates it). <paramref name="effective"/> is the
+        /// merged view after inheritance, which is what actually gates drops; for a tier Default the two are
+        /// the same object because nothing sits under it.
+        ///
+        /// 🔴 `clear` and `off` are NOT the same thing and the messages say so out loud, because assuming
+        /// they were is the bug this whole feature exists to fix: at zone scope `clear` means INHERIT (the
+        /// tier Default's answer wins, which may well be ON) while `off` means OFF regardless.
+        /// </summary>
+        private static void HandleWeaponCard(List<string> args, int idIdx, string scopeTag, string usage,
+            ZoneVariantProfile authored, ZoneVariantProfile effective,
+            Action<Action<ZoneVariantProfile>> mutate, Action<string> Msg)
+        {
+            if (args.Count <= idIdx) { Msg(usage); return; }
+
+            if (args[idIdx].Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                Msg($"{scopeTag} weapon cards (absent = ON):");
+                foreach (var stat in ZoneStat.WeaponCardChances)
+                {
+                    var own = authored?.CustomWeaponCards != null && authored.CustomWeaponCards.TryGetValue(stat, out var o)
+                        ? (bool?)o : null;
+                    var eff = effective?.CustomWeaponCards != null && effective.CustomWeaponCards.TryGetValue(stat, out var e)
+                        ? (bool?)e : null;
+                    // only the interesting rows: authored here, or turned off by a layer underneath
+                    if (own == null && eff != false) continue;
+                    var where = own.HasValue ? "here" : "inherited";
+                    Msg($"    {stat,-30} {((eff ?? true) ? "ON" : "OFF")}  ({where})");
+                }
+                Msg("    (every card not listed is ON)");
+                return;
+            }
+
+            if (args.Count <= idIdx + 1) { Msg(usage); return; }
+            var card = NormalizeWeaponCard(args[idIdx]);
+            if (card == null)
+            {
+                Msg($"'{args[idIdx]}' is not a weapon card. Name it by its chance stat, e.g. weapon_bite_chance.");
+                Msg("  cards = " + string.Join(", ", ZoneStat.WeaponCardChances));
+                return;
+            }
+
+            var tok = args[idIdx + 1].ToLowerInvariant();
+            if (tok == "clear")
+            {
+                var had = false;
+                mutate(vp => had = vp.CustomWeaponCards.Remove(card));
+                Msg(had
+                    ? $"{scopeTag} weapon card: {card} override cleared - this scope no longer decides; the layer underneath does (which may be ON)."
+                    : $"{scopeTag} weapon card: {card} had no override here.");
+                return;
+            }
+            if (tok != "on" && tok != "off") { Msg(usage); return; }
+
+            var on = tok == "on";
+            mutate(vp => vp.CustomWeaponCards[card] = on);
+            // The tuned chance value is NEVER touched by this verb - that is the point of the flag. Say so,
+            // because the old way of switching a card off was to delete the chance and lose the number.
+            Msg(on
+                ? $"{scopeTag} weapon card: {card} ON - rolls at its authored chance here (chance value untouched)."
+                : $"{scopeTag} weapon card: {card} OFF - never rolls here, even if a lower layer sets a chance (chance value kept).");
+        }
+
         /// <summary>ctspoff=key,key,... - the specials turned OFF at this (evaluated) scope. Sparse; absent = all on.
         /// APPEND-ONLY tag (2026-08-23).</summary>
         private static void AppendSpecialsOff(StringBuilder sb, Dictionary<int, bool> toggles)
@@ -2584,6 +2724,25 @@ namespace ACE.Server.Command.Handlers
             var off = toggles.Where(kv => !kv.Value).Select(kv => kv.Key).OrderBy(k => k).ToList();
             if (off.Count == 0) return;
             sb.Append("|ctspoff=").Append(string.Join(",", off));
+        }
+
+        /// <summary>
+        /// wpnoff=weapon_bite_chance,weapon_slayer_chance - the weapon CARDS turned OFF at this scope, by
+        /// chance stat name. Sparse; the tag being absent means every card is on, exactly like ctspoff.
+        /// APPEND-ONLY tag (2026-08-25): it is appended LAST in both payloads so an older plugin, which
+        /// splits on '|' and matches by key, ignores it harmlessly.
+        ///
+        /// Only the FALSE entries ride the wire. The store holds explicit true/false per card (a zone must
+        /// be able to re-enable what its tier Default turned off), but "on" is the default the plugin
+        /// already assumes, so an explicit true carries no information and would only make the tag bigger.
+        /// Same reduction AppendSpecialsOff does, for the same reason.
+        /// </summary>
+        private static void AppendWeaponCardsOff(StringBuilder sb, Dictionary<string, bool> toggles)
+        {
+            if (toggles == null || toggles.Count == 0) return;
+            var off = toggles.Where(kv => !kv.Value).Select(kv => kv.Key).OrderBy(k => k, StringComparer.Ordinal).ToList();
+            if (off.Count == 0) return;
+            sb.Append("|wpnoff=").Append(string.Join(",", off));
         }
 
         private static void AppendLadder(StringBuilder sb)
@@ -2647,6 +2806,10 @@ namespace ACE.Server.Command.Handlers
                 }
             }
             AppendSpecialsOff(sb, vp?.CustomSpecials);
+            // LAST tag in the [[ZCD]] payload. vp here is this Default's OWN authored profile, so the
+            // off-set is "authored on this tier Default" - there is no layer under a Default for it to
+            // have inherited from, so authored and evaluated are the same thing at this scope.
+            AppendWeaponCardsOff(sb, vp?.CustomWeaponCards);
             return sb.ToString();
         }
 
@@ -3014,6 +3177,16 @@ namespace ACE.Server.Command.Handlers
             }
 
             AppendLadder(sb);   // APPEND-ONLY (2026-08-22): ladder apply versions, last so older plugins ignore it
+            // APPEND-ONLY (2026-08-25), and genuinely last in the [[ZC]] payload. 🔴 vp here is
+            // ResolveProfileForDisplay - the EVALUATED view after the Default -> zone -> wcid merge, which is
+            // the convention every other layered tag in this payload already uses (the stat rows, cantrips=,
+            // ctslots=, ctspoff=). So wpnoff at zone scope answers "which cards are OFF FOR THIS ZONE",
+            // inherited ones included - not "which did this zone author". That is exactly what gates the
+            // drop, so it is what a checkbox should show. If the plugin ever needs the authored-vs-inherited
+            // split it wants a second field, the way curr= carries its own OWN flag; do not quietly change
+            // what this one means, because the two readings disagree only in the inherited case, which is
+            // the case nobody tests.
+            AppendWeaponCardsOff(sb, vp?.CustomWeaponCards);
             return sb.ToString();
         }
 
