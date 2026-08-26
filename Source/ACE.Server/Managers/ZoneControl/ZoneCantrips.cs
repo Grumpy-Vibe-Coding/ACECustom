@@ -420,7 +420,15 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand WeaponSlayer = new WeaponBand
         {
             Name = "Slayer", MinStat = ZoneScaling.ZoneStat.WeaponSlayerMin, MaxStat = ZoneScaling.ZoneStat.WeaponSlayerMax,
-            Min = 1.80, Max = 2.10, Min25 = 2.40, Max25 = 3.00, Lo = 1.5, Hi = 10.0,
+            // T11 floor RE-ANCHORED 2026-08-25 (owner): exactly 1.75, the highest value a player can
+            // APPLY to a weapon. Fifteen separate stones and gems all SetValue exactly 1.75 and each
+            // reaches 508-535 real weapon WCIDs, so it is not a rarity - it is the baseline any drop has
+            // to at least match. Retail Isparian weapons reach 4.0 and the Weeping Axe 3.4, but those are
+            // fixed weapons you WIELD rather than something you apply to a drop, so they are not the bar.
+            // NOTE Lo below is 1.5, which sits BENEATH the free craftable value - it was never a
+            // meaningful floor. The engine's own no-match fallback is 1.0, not 1.5.
+            // Max and the T25 pair are PROVISIONAL, same as the other bands.
+            Min = 1.75, Max = 1.75, Min25 = 2.40, Max25 = 3.00, Lo = 1.5, Hi = 10.0,
         };
 
         // Shield Cleaving -> IgnoreShield, the fraction of the defender's shield AL ignored. Plugin
