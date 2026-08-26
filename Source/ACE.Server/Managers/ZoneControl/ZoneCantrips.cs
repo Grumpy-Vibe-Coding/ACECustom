@@ -325,6 +325,152 @@ namespace ACE.Server.Managers.ZoneControl
             return ((int)Math.Round(min * f), (int)Math.Round(max * f));
         }
 
+        // ---- WEAPON card bands (2026-08-25) -----------------------------------------------------
+        //
+        // WHY THIS IS A SEPARATE TABLE AND NOT SIX MORE Catalog ROWS
+        //
+        // The six continuous weapon specials (Biting Strike, Crushing Blow, Armor Rend, Shield
+        // Cleaving, Slayer, Rend Power) are DOUBLES whose second decimal matters: 0.58 crit chance,
+        // 1.85x crush, 2.10 slayer. Def.Min/Max are ints, and CatalogBandAt returns (int, int).
+        // Widening those would drag ValueFor/GradeFor, StampGraded, Stamp, the "[min-max]" LongDesc
+        // text (which ZoneControlCommands.TryParseZcLine PARSES BACK for legacy-item migration),
+        // CantripBand (which is BOTH the [[ZC]]/[[ZCD]] wire shape AND the on-disk store JSON), and
+        // the plugin's int.Parse of the cantrips= tag - a synchronised server+plugin deploy for six
+        // values that never travel the wire in the first place. So: a separate table, double bounds,
+        // keyed by the STAT NAME PAIR that already exists.
+        //
+        // Keying by stat name rather than by a new integer Catalog key is deliberate. Catalog keys
+        // are load-bearing forever (see the comment at Catalog and at the retired 37-40 block): they
+        // live in saved zone pools (ZoneVariantProfile.CustomCantrips) and on already-dropped items.
+        // Minting six of them for weapons would leak weapon keys into the armour line pool and into
+        // the "cantrip <scope> band <key>" command surface, where they mean nothing. This table
+        // mints none, changes no existing type, and needs ZERO wire or store work.
+        //
+        // WHAT THIS TABLE IS: the FALLBACK a weapon card rolls from when the zone authors NEITHER
+        // weapon_<card>_min NOR weapon_<card>_max - exactly the role CatalogBandAt plays for armour
+        // lines. An authored min/max still wins outright and behaves exactly as it did before this
+        // table existed, including the "one box = exact value, not a band" rule in RollRange.
+        //
+        // UNITS: every number below is in WIRE space, i.e. the units the weapon_*_min/max stats
+        // already carry and the units the roll site writes onto the item. The plugin's Weapons-tab
+        // boxes are NOT all in wire space, so each row states its own conversion. Getting this wrong
+        // is silent: a 100x error in Biting Strike just clamps to 1.0 and every weapon crits always.
+        //
+        // KEEP IN STEP WITH THE PLUGIN. The same six anchors are mirrored in the ZoneControl plugin
+        // at ZoneControlHud.cs "WpnBands" (BOX space there, wire space here). The plugin table is
+        // what the owner reads while authoring; this one is what actually rolls. If one moves and
+        // the other does not, the tooltip lies about what drops. There is no wire tag that syncs
+        // them - that is the price of option (C), and it is cheaper than the alternative.
+        //
+        // Lo/Hi on each row are NOT design numbers - they are copied verbatim from that card's
+        // existing RollRange(..., lo, hi) arguments in ZoneLootMutator.TrySpecialRolls, so the
+        // banded path can never produce a value the authored path could not. If a clamp moves there,
+        // move it here in the same edit.
+        /// <summary>
+        /// A T11 -> T25 magnitude ladder for ONE continuous weapon special, in wire units.
+        /// Deliberately NOT <see cref="Def"/>: doubles, no catalog key, never in the armour line pool.
+        /// </summary>
+        public sealed class WeaponBand
+        {
+            public string Name;              // card name as the plugin's Weapons tab shows it
+            public string MinStat, MaxStat;  // the authored zone stats that OVERRIDE this ladder entirely
+            public double Min, Max;          // T11 anchor, WIRE units
+            public double Min25, Max25;      // T25 anchor, WIRE units
+            public double Lo, Hi;            // hard clamp - mirrors the card's RollRange(lo, hi) at its roll site
+        }
+
+        // Biting Strike -> CriticalFrequency. Plugin box is PERCENT 0..100; wire is a 0..1 fraction.
+        // Conversion: wire = box / 100. Box 58-65 -> 0.58-0.65 at T11; box 78-88 -> 0.78-0.88 at T25.
+        public static readonly WeaponBand WeaponBite = new WeaponBand
+        {
+            Name = "Biting Strike", MinStat = ZoneScaling.ZoneStat.WeaponBiteMin, MaxStat = ZoneScaling.ZoneStat.WeaponBiteMax,
+            Min = 0.58, Max = 0.65, Min25 = 0.78, Max25 = 0.88, Lo = 0.0, Hi = 1.0,
+        };
+
+        // Armor Rend -> prop 9057, the fraction of the target's armour ignored. Plugin box is
+        // PERCENT 0..100; wire is a 0..1 fraction. Conversion: wire = box / 100.
+        // Box 62-68 -> 0.62-0.68 at T11; box 74-80 -> 0.74-0.80 at T25.
+        public static readonly WeaponBand WeaponArmorRend = new WeaponBand
+        {
+            Name = "Armor Rend", MinStat = ZoneScaling.ZoneStat.WeaponArmorRendMin, MaxStat = ZoneScaling.ZoneStat.WeaponArmorRendMax,
+            Min = 0.62, Max = 0.68, Min25 = 0.74, Max25 = 0.80, Lo = 0.0, Hi = 1.0,
+        };
+
+        // Rend Power -> prop 9056, a vuln FRACTION (the engine computes rendingMod = 1 + this, so
+        // wire 1.60 means the target takes 2.60x from that element - NOT 1.60x; that off-by-one bit
+        // once already, 2026-08-24). Plugin box is PERCENT 0..1000, i.e. box 160 = wire 1.60.
+        // Conversion: wire = box / 100. Box 160-185 -> 1.60-1.85 at T11; box 220-270 -> 2.20-2.70 at T25.
+        public static readonly WeaponBand WeaponRendPower = new WeaponBand
+        {
+            Name = "Rend Power", MinStat = ZoneScaling.ZoneStat.WeaponRendPowerMin, MaxStat = ZoneScaling.ZoneStat.WeaponRendPowerMax,
+            Min = 1.60, Max = 1.85, Min25 = 2.20, Max25 = 2.70, Lo = 1.5, Hi = 10.0,
+        };
+
+        // Slayer -> SlayerDamageBonus, a RAW damage multiplier vs the killed creature type. The
+        // plugin box is raw too (weapon_slayer_* is NOT in the plugin's PercentStats set), so there
+        // is NO conversion: box 1.80 = wire 1.80. Box 1.80-2.10 at T11; box 2.40-3.00 at T25.
+        public static readonly WeaponBand WeaponSlayer = new WeaponBand
+        {
+            Name = "Slayer", MinStat = ZoneScaling.ZoneStat.WeaponSlayerMin, MaxStat = ZoneScaling.ZoneStat.WeaponSlayerMax,
+            Min = 1.80, Max = 2.10, Min25 = 2.40, Max25 = 3.00, Lo = 1.5, Hi = 10.0,
+        };
+
+        // Shield Cleaving -> IgnoreShield, the fraction of the defender's shield AL ignored. Plugin
+        // box is PERCENT 0..100; wire is a 0..1 fraction. Conversion: wire = box / 100.
+        // Box 60-75 -> 0.60-0.75 at T11; box 90-100 -> 0.90-1.00 at T25 (1.00 = shield fully ignored).
+        public static readonly WeaponBand WeaponShieldCleave = new WeaponBand
+        {
+            Name = "Shield Cleaving", MinStat = ZoneScaling.ZoneStat.WeaponShieldCleaveMin, MaxStat = ZoneScaling.ZoneStat.WeaponShieldCleaveMax,
+            Min = 0.60, Max = 0.75, Min25 = 0.90, Max25 = 1.00, Lo = 0.0, Hi = 1.0,
+        };
+
+        // Crushing Blow -> PropertyFloat.CriticalMultiplier. The band is in DISPLAY space, i.e. the
+        // final crit damage multiplier the card advertises (7.50 = 7.5x), which is also what the
+        // plugin box holds - weapon_crush_* is NOT a PercentStat, so there is NO conversion here.
+        // The "- 1.0" that turns a display multiplier into the stored CriticalMultiplier does NOT live
+        // in this table and must never be baked into it, or the two spaces get mixed and every
+        // comparison is off by exactly one. Since 2026-08-25 it lives in exactly one method,
+        // ZoneStatResolver.EngineValue, which both the drop-time write site and the equip-time
+        // re-resolve call - the card's value is produced from a recorded grade now, so a second
+        // subtraction anywhere would walk a 7.5x weapon down by 1.0 on every single login.
+        public static readonly WeaponBand WeaponCrush = new WeaponBand
+        {
+            Name = "Crushing Blow", MinStat = ZoneScaling.ZoneStat.WeaponCrushMin, MaxStat = ZoneScaling.ZoneStat.WeaponCrushMax,
+            Min = 7.50, Max = 8.50, Min25 = 9.50, Max25 = 10.00, Lo = 2.0, Hi = 10.0,
+        };
+
+        /// <summary>Every weapon band, for help text / catalog printouts. Order is display order.</summary>
+        public static readonly WeaponBand[] WeaponBands =
+        {
+            WeaponBite, WeaponArmorRend, WeaponRendPower, WeaponSlayer, WeaponShieldCleave, WeaponCrush,
+        };
+
+        /// <summary>
+        /// The weapon band at a tier: linear on (tier - 11) / 14, clamped to [11, 25] - the SAME
+        /// anchoring shape <see cref="CatalogBandAt"/> uses for a Min25/Max25 armour row, so a weapon
+        /// band and a cantrip band read the same way and a reader only has to learn the rule once.
+        /// The only difference is that nothing is rounded: these are doubles all the way through.
+        ///
+        /// The tier passed in MUST be the loot tier (the lootTier PARAMETER of TrySpecialRolls), not a
+        /// property read off the weapon. At roll time the weapon carries NO tier property at all -
+        /// ZcTier is never stamped on weapons, and WeaponAugScaleTier is stamped in Creature_Death
+        /// AFTER MutateLootItem has already run. Asking the item (ZoneStatResolver.TierOf or
+        /// ZoneCraftGate.TierOf) therefore returns 0 at THIS instant and every band would collapse to
+        /// its T11 rung with no error anywhere. Both of those helpers are fine LATER in the same sweep -
+        /// the drop-path self-check and the equip-time re-resolve both use them - just not here.
+        /// </summary>
+        public static (double Min, double Max) WeaponBandAt(WeaponBand b, int tier)
+        {
+            if (b == null) return (0.0, 0.0);
+            var (min, max) = b.Min <= b.Max ? (b.Min, b.Max) : (b.Max, b.Min);
+            var (min25, max25) = b.Min25 <= b.Max25 ? (b.Min25, b.Max25) : (b.Max25, b.Min25);
+            var t = (Math.Clamp(tier, 11, 25) - 11) / 14.0;   // 0 at T11 and below .. 1 at T25 and above
+            var lo = min + (min25 - min) * t;
+            var hi = max + (max25 - max) * t;
+            if (lo > hi) (lo, hi) = (hi, lo);                 // insurance against a hand-edited crossing ladder
+            return (Math.Clamp(lo, b.Lo, b.Hi), Math.Clamp(hi, b.Lo, b.Hi));
+        }
+
         /// <summary>
         /// Tier-weighted roll position (owner 2026-08-22, Option A): the carrot for pushing tiers is
         /// "better gear AND better-rolled gear". Every band splits into thirds (low / mid / high); the

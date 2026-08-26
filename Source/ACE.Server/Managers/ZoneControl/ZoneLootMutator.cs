@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 using ACE.Common;
@@ -93,6 +93,95 @@ namespace ACE.Server.Managers.ZoneControl
             return a >= b ? a : ThreadSafeRandom.Next((float)a, (float)b);
         }
 
+        /// <summary>
+        /// 🔴 THE WEAPON CARD WRITE SITE - all six of them, one method (2026-08-25, weapon/armour parity).
+        ///
+        /// WHAT CHANGED AND WHY. Until this method existed each card computed its FINAL number inline
+        /// and wrote it straight onto the item. That number was then the only record of the roll: the
+        /// weapon carried no grade, so ZoneStatResolver.ApplyIfStale returned at its HasRecord guard and
+        /// a band retune could never reach a weapon already in someone's pack. Armour has not worked
+        /// that way since 2026-08-22 - an armour line records a GRADE 0-1000 and the property is a cache
+        /// resolved from that grade against the LIVE ladder. The owner's instruction was to make the two
+        /// identical ("full parity with weapons and armor"), so this does for a weapon card exactly what
+        /// ZoneCantrips.StampGraded does for an armour line:
+        ///     roll a grade -> resolve it inside the effective band -> write the property -> RECORD THE GRADE.
+        /// The grade is the truth; the property is its projection. RollBanded, which used to be the
+        /// number producer, is now only consulted through ZoneStatResolver.WeaponDropBand.
+        ///
+        /// PRECEDENCE at drop is unchanged and lives in ZoneStatResolver.WeaponDropBand: an authored
+        /// weapon_&lt;card&gt;_min/_max on the zone (which already has the tier Default merged into it)
+        /// wins outright, including the "one box = EXACT value, not a range" rule; otherwise the card's
+        /// T11-&gt;T25 ladder rung. The RESOLVE side reads the tier Default only - see WeaponResolveBand.
+        ///
+        /// TWO DELIBERATE BEHAVIOUR CHANGES, both of them the parity the owner asked for:
+        ///   - the roll inside an AUTHORED band is now the tier-weighted grade (T11 uniform, climbing to
+        ///     10/30/60 at T25) instead of RollRange's flat uniform draw. Armour lines have rolled that
+        ///     way since 2026-08-22; "push a tier and your gear also ROLLS better" now holds for a
+        ///     hand-tuned zone too, not only for a zone on the ladder fallback.
+        ///   - forceMax (this drop won the per-kill slot special) now reaches an authored band as well.
+        ///     It only ever reached the ladder fallback before, because RollRange had no notion of it.
+        ///
+        /// This does NOT change which cards roll. Every caller is still behind its own Won(...) gate (or,
+        /// for Rend Power, a presence test on its min/max pair), and Won() returns FALSE for an UNDEFINED
+        /// stat - unset means NEVER, not "0 pct". A zone that authors nothing rolls nothing, as before.
+        /// </summary>
+        private static void StampWeaponCard(WorldObject wo, EvaluatedProfile p,
+            ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
+        {
+            var (lo, hi) = ZoneStatResolver.WeaponDropBand(p, ws, tier);
+            var grade = ZoneStatResolver.RollGrade(tier, forceMax);
+            var display = Math.Clamp(ZoneStatResolver.ValueForD(lo, hi, grade), ws.Band.Lo, ws.Band.Hi);
+            // EngineValue is the ONE display -> engine conversion in the server (Crushing Blow's
+            // "- 1.0"). Do not subtract anything here and do not pre-convert before calling: the
+            // resolver calls the same method on every equip, and a second subtraction anywhere would
+            // walk a 7.5x weapon down to 6.5x, then 5.5x, on every login, silently.
+            wo.SetProperty(ws.Prop, ZoneStatResolver.EngineValue(ws, display));
+            ZoneStatResolver.AddLine(wo, ws.Key, grade);
+        }
+
+        // ── pre-applied craft deltas that land on a CARD's own property ────────────────────────────
+        // These two mirror the live Bandit Hilt recipe (527870063) and are stamped by the hilt block at
+        // the bottom of TrySpecialRolls, AFTER the cards, so they ADD on top of Biting Strike and
+        // Crushing Blow. They are consts rather than inline literals because ZoneStatResolver.Compute
+        // has to add the same amounts back when it re-resolves a hilted weapon - if these two numbers
+        // ever disagree, a hilted weapon's crit stats move every time it is equipped. One number, two
+        // readers.
+        public const double BanditHiltCritFrequencyBonus = 0.25;
+        public const double BanditHiltCritMultiplierBonus = 0.175;
+
+        /// <summary>
+        /// True when this weapon carries a Bandit Hilt - ours from the drop path, or one a player
+        /// applied later with the real recipe (both stamp the same marks, and both need the same
+        /// treatment at re-resolve time).
+        ///
+        /// The test is deliberately FOUR conditions rather than one. ManaStoneDestroyChance alone is a
+        /// real retail property and would false-positive on any weenie that happens to carry it, which
+        /// would hand that weapon a free +0.25 crit chance on its next equip. All four together -
+        /// melee, ivoryable, the hilt's completion marker, and the hilt's Two Handed Combat training
+        /// gate on the SECOND wield slot - are what the hilt recipe stamps and effectively nothing else does.
+        /// (The recipe REQUIRES ManaStoneDestroyChance &lt; 0.01 to apply, which is why stamping 0.01 is
+        /// the marker that blocks a second hilt.)
+        /// </summary>
+        public static bool HasBanditHilt(WorldObject wo)
+        {
+            if (wo == null || !(wo is MeleeWeapon))
+                return false;
+            if ((wo.GetProperty(PropertyFloat.ManaStoneDestroyChance) ?? 0.0) < 0.01)
+                return false;
+            if (wo.GetProperty(PropertyBool.Ivoryable) != true)
+                return false;
+            return (wo.GetProperty(PropertyInt.WieldSkillType2) ?? 0) == 46
+                && (wo.GetProperty(PropertyInt.WieldRequirements2) ?? 0) == 8;
+        }
+
+        // RollBanded (the old "authored min/max, else the tier ladder, else clamp" number producer)
+        // was DELETED 2026-08-25. Its two jobs were split so that a weapon can carry a GRADE the way an
+        // armour piece does: the PRECEDENCE half moved to ZoneStatResolver.WeaponDropBand (and gained a
+        // resolve-time twin, WeaponResolveBand), and the ROLL + WRITE half moved to StampWeaponCard
+        // above, which also records the grade. Nothing about which cards roll, or about what an
+        // authored min/max means, changed in the move - see StampWeaponCard for the two deliberate
+        // exceptions (grade-weighted rolls and forceMax now reach an authored band too).
+
         // Split-arrow props (already in ACE.Entity — the custom bowstring system)
         // public: the weapon forge (/wsforge cards) stamps the same split-arrow properties
         public const int SplitArrowsBoolId = 9030;      // PropertyBool.SplitArrows
@@ -170,10 +259,21 @@ namespace ACE.Server.Managers.ZoneControl
             // on any rend-carrying weapon in the zone (whether from our roll above or the natural loot
             // roll). Wire value = vuln fraction (150% = 1.5 = the normal rend cap/floor, up to 1000% =
             // 10.0); the engine sets rendingMod = 1 + this, replacing the skill formula (and its 2.5 cap).
+            //
+            // NOTE on the gate (2026-08-25): unlike the other five cards this one has NO chance stat -
+            // it is a PRESENCE test on the min/max pair, so a zone that authors either key gives Rend
+            // Power to every rend-carrying weapon it drops, at 100 pct. Because the gate and
+            // RollBanded's "is anything authored?" test are the same condition, the tier band below is
+            // currently UNREACHABLE for this card: the gate only opens when something is authored, and
+            // authored always wins. That is deliberate. Making the band reachable means gating on a new
+            // weapon_rend_power_chance instead, and Won() treats an undefined stat as NEVER - so that
+            // switch would silently turn Rend Power OFF in every zone that authors a min/max today. It
+            // needs an owner ruling plus a migration (author the chance as 1.0 on those zones), so it
+            // is deliberately NOT part of this pass. The row exists here so the ladder is ready the day
+            // the gate changes, and so the plugin's WpnBands table has a server-side counterpart.
             if (isWeapon && (p.Has(ZoneStat.WeaponRendPowerMin) || p.Has(ZoneStat.WeaponRendPowerMax))
                 && (wo.GetImbuedEffects() & AllRends) != 0)
-                wo.SetProperty((PropertyFloat)RendingModOverridePropId,
-                    RollRange(p, ZoneStat.WeaponRendPowerMin, ZoneStat.WeaponRendPowerMax, 1.5, 1.5, 10.0));
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecRendPower, lootTier, forceMax);
 
             // Cleaving (melee): swing hits extra targets in a 180-degree arc
             if (isMelee && Won(p, ZoneStat.WeaponCleaveChance))
@@ -194,18 +294,24 @@ namespace ACE.Server.Managers.ZoneControl
                     Math.Clamp(p.Get(ZoneStat.WeaponSplitDmg, 1.0), 0.0, 1.0));
             }
 
-            // Biting Strike: crit chance override (base 0.1)
+            // Biting Strike: crit chance override (base 0.1). Unauthored magnitude follows the
+            // T11 -> T25 ladder (0.58-0.65 -> 0.78-0.88); the value is now the projection of a
+            // recorded grade, so a band retune reaches weapons already in the world.
             if (isWeapon && Won(p, ZoneStat.WeaponBiteChance))
-                wo.CriticalFrequency = RollRange(p, ZoneStat.WeaponBiteMin, ZoneStat.WeaponBiteMax, 0.5, 0.0, 1.0);
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecBite, lootTier, forceMax);
 
-            // Crushing Blow: card value IS the final crit damage multiplier (2 = 2x, the floor). The
-            // engine computes CriticalDamageMod = 1 + CriticalMultiplier, so store (mult - 1) to land
-            // exactly on the configured Nx rather than 1 + N.
+            // Crushing Blow: the card value IS the final crit damage multiplier (2 = 2x, the floor),
+            // and the engine computes CriticalDamageMod = 1 + CriticalMultiplier, so the STORED number
+            // is (multiplier - 1). That subtraction used to sit inline right here.
+            // 🔴 IT NO LONGER DOES, AND MUST NOT COME BACK. The number is produced from a recorded
+            // grade now, and produced again on every equip re-stamp, so a subtraction at this site as
+            // well would apply the "- 1" twice on the very first login and once more on every ladder
+            // apply after that - a 7.5x weapon walking down to 6.5x, 5.5x, 4.5x with nothing logged.
+            // The one and only conversion lives in ZoneStatResolver.EngineValue, which both this
+            // write site (via StampWeaponCard) and the resolver call. The band table stays in display
+            // space; do not bake the offset into it either.
             if (isWeapon && Won(p, ZoneStat.WeaponCrushChance))
-            {
-                var crushMult = RollRange(p, ZoneStat.WeaponCrushMin, ZoneStat.WeaponCrushMax, 2.0, 2.0, 10.0);
-                wo.SetProperty(PropertyFloat.CriticalMultiplier, crushMult - 1.0);
-            }
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecCrush, lootTier, forceMax);
 
             // Armor Rend: stamps the REAL ArmorRending imbue (shows with the rend family on the item) plus
             // a tunable amount = fraction of armor ignored; the override prop replaces the skill formula
@@ -215,13 +321,12 @@ namespace ACE.Server.Managers.ZoneControl
             if ((isMelee || isMissile) && Won(p, ZoneStat.WeaponArmorRendChance))
             {
                 wo.ImbuedEffect |= ImbuedEffectType.ArmorRending;
-                wo.SetProperty((PropertyFloat)ArmorRendOverridePropId,
-                    RollRange(p, ZoneStat.WeaponArmorRendMin, ZoneStat.WeaponArmorRendMax, 0.5, 0.0, 1.0));
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecArmorRend, lootTier, forceMax);
             }
 
             // Shield Cleaving: fraction of shield AL ignored (engine reads the value directly)
             if (isWeapon && Won(p, ZoneStat.WeaponShieldCleaveChance))
-                wo.IgnoreShield = RollRange(p, ZoneStat.WeaponShieldCleaveMin, ZoneStat.WeaponShieldCleaveMax, 0.5, 0.0, 1.0);
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecShieldCleave, lootTier, forceMax);
 
             // Phantom: a full "hollow" weapon — hits ignore BOTH the target's magic armor (impen/banes)
             // and magic resistance (Life prots). Always full hollow; no partial mode.
@@ -237,8 +342,9 @@ namespace ACE.Server.Managers.ZoneControl
             {
                 wo.SlayerCreatureType = killed.CreatureType;
                 // damage multiplier vs that creature type, rolled per drop; floor 1.5x (a normal slayer),
-                // cap 10x (=1000%). One box = exact, both = roll in range.
-                wo.SlayerDamageBonus = RollRange(p, ZoneStat.WeaponSlayerMin, ZoneStat.WeaponSlayerMax, 1.5, 1.5, 10.0);
+                // cap 10x (=1000%). One box = exact, both = roll in range; neither = the tier ladder
+                // (1.80-2.10 at T11 -> 2.40-3.00 at T25) instead of the old flat 1.5.
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecSlayer, lootTier, forceMax);
             }
 
             // pre-Paragoned: levels from use (same properties the Paragon Weapons recipe stamps)
@@ -291,6 +397,27 @@ namespace ACE.Server.Managers.ZoneControl
             // the zone-cantrip LINES on top of whatever the roll produced — the zone's pool only
             // (prop-based ZoneCantrips catalog; retail cantrips deliberately excluded)
             TryExtraCantrip(wo, p, isWeapon, forceMax, lootTier);
+
+            // WEAPON RESOLVE IDENTITY, last, once the record is final (2026-08-25).
+            //
+            // Armour gets this from LootGenerationFactory.ApplyT11GearStats -> StampIdentity, but that
+            // method returns at its `default:` case for weapons and casters, so nothing ever stamped a
+            // weapon's ZcResolvedVersion. An unstamped weapon reads 0, which is a legitimate stamp
+            // value (tier ladder v0, Zone Control on), so a weapon that dropped on a v0 tier would look
+            // ALREADY RESOLVED for ever and skip the very first re-resolve it was owed.
+            //
+            // Only the version is stamped, never ZcTier: ZcTier is the armour-shaped tier property, and
+            // ZoneStatResolver.TierOf / ZoneCraftGate.TierOf both expect a weapon's row to arrive via
+            // WeaponAugScaleTier instead. That property is written a few lines later in the same
+            // Creature_Death sweep (ApplyWeaponAugScaleStamp), which is also why lootTier has to be
+            // passed in here rather than read off the item - at this instant the weapon has no tier
+            // property at all.
+            //
+            // Guarded on HasRecord, not on isWeapon, so it also covers a weapon carrying only armour-
+            // style cantrip lines (weapons have always been able to roll those through
+            // weapon_cantrip_chance, and they were never stamped either).
+            if (isWeapon && ZoneStatResolver.HasRecord(wo))
+                ZoneStatResolver.StampWeaponResolve(wo, lootTier);
         }
 
         /// <summary>

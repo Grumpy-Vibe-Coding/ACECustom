@@ -20,6 +20,9 @@ namespace ACE.Server.Managers.ZoneControl
     /// Record format, PropertyString.ZcCantrips: "28:490;19:1000;c1:900;c2:850;c3:900;c4:880;25:500;41:650"
     ///   - positive key  = ZoneCantrips catalog key (lines AND specials), value = grade 0-1000
     ///   - c1..c4        = the core four (DamageResist / CritDamageResist / CritResist / NetherResist)
+    ///   - -11..-30      = the reserved WEAPON block (2026-08-25): the six continuous weapon cards,
+    ///                     which are PropertyFloats and resolve through ZoneCantrips.WeaponBand rather
+    ///                     than the armour catalog. See the block comment at WeaponBiteKey.
     ///   - Reinforced (49) is NOT recorded: an earned, frozen armor mod (owner ruling 2026-08-22 §8.3)
     /// PropertyInt.ZcTier = the ladder row; PropertyInt.ZcResolvedVersion = the per-tier ladder version the
     /// cache was last written against (ZoneControlManager.GetLadderVersion).
@@ -60,6 +63,119 @@ namespace ACE.Server.Managers.ZoneControl
 
         public static bool IsCoreKey(int key) => key <= CoreDamageResist && key >= CoreNetherResist;
 
+        // ── weapon-special pseudo keys (2026-08-25, weapon/armour parity) ────────
+        //
+        // WHY A RESERVED NEGATIVE BLOCK AND NOT SIX MORE ZoneCantrips.Catalog ROWS
+        //
+        // Catalog keys are load-bearing forever: they live in saved zone pools
+        // (ZoneVariantProfile.CustomCantrips), in the `cantrip <scope> band <key>` command surface,
+        // and in the plugin's mirrored CantripCatalog. Minting six of them for weapons would leak
+        // weapon keys into the ARMOUR line pool (TryExtraCantrip walks the catalog), into the plugin's
+        // Cantrips tab, and into the [[ZC]] wire - for six values that never travel the wire at all.
+        // That crossing is the thing this design deliberately avoided when the WeaponBand table was
+        // added (see the long comment above ZoneCantrips.WeaponBand). So: a reserved key block that
+        // lives ONLY in the item's own ZcCantrips record, exactly the way the core four do.
+        //
+        // WHY NEGATIVE. The record's key token is parsed by Read(): 'cN' is a core key, anything else
+        // goes through int.TryParse with NumberStyles.Integer, which accepts a leading '-'. So "-16:640"
+        // round-trips through Read/Format with ZERO format work, and a negative key can never collide
+        // with a catalog key (all positive) or with a core key (-1..-4, and those are written as 'cN'
+        // by Format, so they never appear as a bare negative token in a well-formed record).
+        //
+        // -5..-10 IS A DELIBERATE GAP so the core block can grow (a fifth core rating) without
+        // renumbering weapons. -11..-30 is the WEAPON block; only -11..-16 are defined today.
+        // NOTE for anyone touching the record format: a bare '-' in a ZcCantrips string means
+        // "this record contains a weapon key" and NOTHING else - grades are 0..1000 and never
+        // signed. HasWeaponKey below depends on that; keep it true.
+        public const int WeaponBiteKey = -11;
+        public const int WeaponArmorRendKey = -12;
+        public const int WeaponRendPowerKey = -13;
+        public const int WeaponSlayerKey = -14;
+        public const int WeaponShieldCleaveKey = -15;
+        public const int WeaponCrushKey = -16;
+
+        /// <summary>The reserved weapon block, -11..-30. Membership of the block, NOT "is defined":
+        /// an unknown key inside the block is skipped by Compute exactly like an unknown catalog key,
+        /// so an item stamped by a newer build never throws on an older one.</summary>
+        public static bool IsWeaponKey(int key) => key <= -11 && key >= -30;
+
+        /// <summary>
+        /// One continuous weapon card as the RECORD sees it: the ladder row it resolves against
+        /// (<see cref="ZoneCantrips.WeaponBand"/>, which owns the T11-&gt;T25 anchors, the authored
+        /// stat names and the hard clamp) plus the PropertyFloat the engine actually reads.
+        ///
+        /// <see cref="DisplayIsMultiplier"/> is the Crushing Blow trap, isolated to one bool: the
+        /// band and the plugin box are in DISPLAY space (7.50 = "crits hit for 7.5x") but the engine
+        /// computes <c>1 + CriticalMultiplier</c>, so the stored number is display - 1. See
+        /// <see cref="EngineValue"/> - that method is the ONLY place in the server that subtracts it.
+        /// </summary>
+        public sealed class WeaponSpecial
+        {
+            public int Key;
+            public ZoneCantrips.WeaponBand Band;
+            public PropertyFloat Prop;
+            public bool DisplayIsMultiplier;
+            public string Name => Band?.Name ?? "?";
+        }
+
+        // The six rows. NAMED, and the drop-time write sites reference them BY NAME - never by an index
+        // into the array below. An index would silently re-point a card at the wrong property the day
+        // someone reorders the table, and the only symptom would be Slayer weapons that ignore shields.
+        public static readonly WeaponSpecial SpecBite = new WeaponSpecial
+        { Key = WeaponBiteKey, Band = ZoneCantrips.WeaponBite, Prop = PropertyFloat.CriticalFrequency };
+
+        public static readonly WeaponSpecial SpecArmorRend = new WeaponSpecial
+        { Key = WeaponArmorRendKey, Band = ZoneCantrips.WeaponArmorRend, Prop = (PropertyFloat)ZoneLootMutator.ArmorRendOverridePropId };
+
+        public static readonly WeaponSpecial SpecRendPower = new WeaponSpecial
+        { Key = WeaponRendPowerKey, Band = ZoneCantrips.WeaponRendPower, Prop = (PropertyFloat)ZoneLootMutator.RendingModOverridePropId };
+
+        public static readonly WeaponSpecial SpecSlayer = new WeaponSpecial
+        { Key = WeaponSlayerKey, Band = ZoneCantrips.WeaponSlayer, Prop = PropertyFloat.SlayerDamageBonus };
+
+        public static readonly WeaponSpecial SpecShieldCleave = new WeaponSpecial
+        { Key = WeaponShieldCleaveKey, Band = ZoneCantrips.WeaponShieldCleave, Prop = PropertyFloat.IgnoreShield };
+
+        /// <summary>The ONLY row with DisplayIsMultiplier - see <see cref="EngineValue"/>.</summary>
+        public static readonly WeaponSpecial SpecCrush = new WeaponSpecial
+        { Key = WeaponCrushKey, Band = ZoneCantrips.WeaponCrush, Prop = PropertyFloat.CriticalMultiplier, DisplayIsMultiplier = true };
+
+        /// <summary>The weapon block, in record-key order - for lookup and for the stable fold order
+        /// <see cref="WeaponPinFingerprint"/> depends on.</summary>
+        public static readonly WeaponSpecial[] WeaponSpecials =
+        {
+            SpecBite, SpecArmorRend, SpecRendPower, SpecSlayer, SpecShieldCleave, SpecCrush,
+        };
+
+        public static bool TryGetWeapon(int key, out WeaponSpecial ws)
+        {
+            foreach (var w in WeaponSpecials)
+                if (w.Key == key) { ws = w; return true; }
+            ws = null;
+            return false;
+        }
+
+        /// <summary>
+        /// 🔴 THE ONLY "- 1.0" IN THE WEAPON PATH. Display space -&gt; the number the engine stores.
+        ///
+        /// Crushing Blow's card value IS the final crit damage multiplier (7.50 = crits deal 7.5x).
+        /// WorldObject_Weapon.GetWeaponCritDamageMod reads PropertyFloat.CriticalMultiplier and the
+        /// damage pipeline computes 1 + that, so the stored number must be display - 1. Retail's
+        /// absent-property default is 1.0, i.e. the familiar 2x crit - which is why 0 is NOT the
+        /// inert value for this property and why a naive "zero it out" is wrong (see WeaponResolveBand).
+        ///
+        /// WHY IT LIVES HERE AND NOWHERE ELSE. Before this pass the subtraction sat inline at the one
+        /// drop-time write site in ZoneLootMutator. Now the number is produced from a recorded grade,
+        /// and produced AGAIN on every equip re-stamp (ApplyIfStale -&gt; Compute -&gt; Apply). If the
+        /// subtraction were duplicated at the drop site as well, a 7.5x weapon would be stamped 6.5 at
+        /// drop, then re-resolved to 5.5 on the first login, 4.5 on the next ladder apply, and so on -
+        /// walking silently down forever with nothing in any log. So: DROP and RESOLVE both call this
+        /// method, this method is the only subtraction, and neither caller may pre-convert.
+        /// If you add a second display-space card, add a row with DisplayIsMultiplier - do not inline.
+        /// </summary>
+        public static double EngineValue(WeaponSpecial ws, double display)
+            => ws != null && ws.DisplayIsMultiplier ? display - 1.0 : display;
+
         // ── grade math ──────────────────────────────────────────────────────────
 
         /// <summary>Grade -> value inside an inclusive band. Linear, rounded once.</summary>
@@ -68,6 +184,20 @@ namespace ACE.Server.Managers.ZoneControl
             if (min > max) (min, max) = (max, min);
             grade = Math.Clamp(grade, 0, GradeMax);
             return min + (int)Math.Round((max - min) * (grade / (double)GradeMax));
+        }
+
+        /// <summary>
+        /// Grade -> value inside an inclusive DOUBLE band - the weapon-card sibling of
+        /// <see cref="ValueFor"/>. Deliberately NOT "call ValueFor and divide": every weapon card is a
+        /// PropertyFloat whose second decimal is the whole design (0.62 armour rend, 1.85x crush,
+        /// 0.58 crit chance). Routing those through the int overload rounds 0.62 to 1 and every
+        /// Biting Strike weapon on the shard crits on every swing, with nothing in any log to say why.
+        /// </summary>
+        public static double ValueForD(double min, double max, int grade)
+        {
+            if (min > max) (min, max) = (max, min);
+            grade = Math.Clamp(grade, 0, GradeMax);
+            return min + (max - min) * (grade / (double)GradeMax);
         }
 
         /// <summary>Value -> grade (migration of pre-grade items). Flat band = 1000.</summary>
@@ -116,6 +246,103 @@ namespace ACE.Server.Managers.ZoneControl
                 && live != null && live.Max > 0)
                 return live.Min <= live.Max ? (live.Min, live.Max) : (live.Max, live.Min);
             return ZoneCantrips.CatalogBandAt(def, tier);
+        }
+
+        /// <summary>
+        /// The band a WEAPON card resolves against at a tier - the exact twin of <see cref="EffectiveBand"/>,
+        /// and it must be read the same way:
+        ///
+        ///   1. Zone Control OFF -> the card's own T11 rung, TIER-BLIND, and nothing authored is consulted.
+        ///      Same rule as EffectiveBand / CoreWindow / BaseArmorLevel: off the switch nothing climbs
+        ///      with tier and no authored layer is read (owner 2026-08-23).
+        ///      🔴 NOTE this is deliberately NOT the armour SLOT-SPECIAL treatment (Compute zeroes those
+        ///      when the switch is off). Zeroing works for a slot special because its props are additive
+        ///      ZC-only ratings where 0 IS the inert value. Weapon cards write RETAIL properties where 0
+        ///      is not inert but CATASTROPHIC: SlayerDamageBonus 0 makes the weapon deal literally zero
+        ///      damage to its slayer type (WorldObject_Weapon.GetWeaponCreatureSlayerModifier returns the
+        ///      property verbatim once the creature type matches), and CriticalFrequency 0 means the
+        ///      weapon can never crit at all. The bottom rung of the card's own ladder is the honest
+        ///      "Zone Control is not tuning this" answer, and it is still inside the card's Lo/Hi clamp,
+        ///      so it can never produce a number the authored path could not.
+        ///   2. The TIER DEFAULT's authored weapon_&lt;card&gt;_min / _max -> that band, including the
+        ///      "one box = EXACT value, not a range" rule the drop path has always had.
+        ///   3. Otherwise the ladder: ZoneCantrips.WeaponBandAt(band, tier).
+        ///
+        /// Step 2 reads the TIER DEFAULT, never a zone, for the same reason EffectiveBand does: the piece
+        /// does not remember where it dropped, and a re-resolve only ever happens after an explicit ladder
+        /// apply, when the tier Default IS the published truth. A ZONE-level weapon pin therefore shapes
+        /// NEW DROPS IN THAT ZONE ONLY and existing weapons drift to the tier Default on their next equip -
+        /// which is precisely what a zone-level cantrip band already does to armour, and what the
+        /// `cantrip &lt;zone&gt; band` command already prints when you author one.
+        ///
+        /// <paramref name="stats"/> is the tier Default's Stats dictionary, passed in so a caller
+        /// resolving several cards on one weapon pays for ONE locked snapshot read instead of twelve.
+        /// Pass null to have it fetched here.
+        /// </summary>
+        public static (double Min, double Max) WeaponResolveBand(WeaponSpecial ws, int tier,
+            Dictionary<string, ZoneScaling.StatCurve> stats = null, bool statsFetched = false)
+        {
+            if (ws?.Band == null)
+                return (0.0, 0.0);
+            var b = ws.Band;
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return ZoneCantrips.WeaponBandAt(b, 11);
+            if (!statsFetched)
+                stats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
+            var pin = PinBand(stats, b);
+            if (pin.HasValue)
+                return Clamp(pin.Value.Min, pin.Value.Max, b);
+            return ZoneCantrips.WeaponBandAt(b, tier);
+        }
+
+        /// <summary>
+        /// The band a WEAPON card ROLLS from at drop time: the zone's evaluated profile (which already
+        /// has the tier Default merged into it at snapshot-build time) when it authors either box, else
+        /// the ladder. The twin of the (CantripBands ?? CatalogBandAt) pair in
+        /// ZoneLootMutator.TryExtraCantrip - drop reads the ZONE, resolve reads the tier DEFAULT.
+        /// Identical when the zone adds no pin of its own, which is the normal case.
+        /// </summary>
+        public static (double Min, double Max) WeaponDropBand(ZoneScaling.EvaluatedProfile p, WeaponSpecial ws, int tier)
+        {
+            if (ws?.Band == null)
+                return (0.0, 0.0);
+            var b = ws.Band;
+            if (p != null && (p.Has(b.MinStat) || p.Has(b.MaxStat)))
+            {
+                // The historical RollRange semantics, preserved EXACTLY: one box authored = that exact
+                // value (min == max), both authored = the range, reversed bounds swap. If a half-authored
+                // pair fell through to the ladder instead, every zone that sets one box would silently
+                // start producing a range and its tuning would shift under it.
+                var lo = p.Has(b.MinStat) ? p.Get(b.MinStat) : p.Get(b.MaxStat);
+                var hi = p.Has(b.MaxStat) ? p.Get(b.MaxStat) : lo;
+                return Clamp(lo, hi, b);
+            }
+            return ZoneCantrips.WeaponBandAt(b, tier);
+        }
+
+        /// <summary>The authored pin on a Stats dictionary, or null when neither box is set. Same
+        /// one-box rule as <see cref="WeaponDropBand"/>; StatCurve.Evaluate(1) is how every other
+        /// Default-layer read in this file spells "the authored number".</summary>
+        private static (double Min, double Max)? PinBand(Dictionary<string, ZoneScaling.StatCurve> stats, ZoneCantrips.WeaponBand b)
+        {
+            if (stats == null || stats.Count == 0)
+                return null;
+            var hasMin = stats.TryGetValue(b.MinStat, out var cMin) && cMin != null;
+            var hasMax = stats.TryGetValue(b.MaxStat, out var cMax) && cMax != null;
+            if (!hasMin && !hasMax)
+                return null;
+            var lo = hasMin ? cMin.Evaluate(1) : cMax.Evaluate(1);
+            var hi = hasMax ? cMax.Evaluate(1) : lo;
+            return (lo, hi);
+        }
+
+        /// <summary>Order + clamp a weapon band to the card's own Lo/Hi. Those bounds are copied from
+        /// the card's historical RollRange(lo, hi) arguments, so no path - authored, ladder or fallback -
+        /// can ever produce a value the old drop-time code could not.</summary>
+        private static (double Min, double Max) Clamp(double lo, double hi, ZoneCantrips.WeaponBand b)
+        {
+            if (lo > hi) (lo, hi) = (hi, lo);
+            return (Math.Clamp(lo, b.Lo, b.Hi), Math.Clamp(hi, b.Lo, b.Hi));
         }
 
         /// <summary>
@@ -258,7 +485,46 @@ namespace ACE.Server.Managers.ZoneControl
         public static bool HasRecord(WorldObject wo)
             => wo != null && !string.IsNullOrEmpty(wo.GetProperty(PropertyString.ZcCantrips));
 
-        public static int TierOf(WorldObject wo) => wo?.GetProperty(PropertyInt.ZcTier) ?? 0;
+        /// <summary>
+        /// The item's ladder row. ARMOUR, clothing and jewelry carry ZcTier; WEAPONS DO NOT -
+        /// LootGenerationFactory.ApplyT11GearStats returns at its `default:` case for weapons/casters
+        /// BEFORE <see cref="StampIdentity"/> ever runs, so a weapon's tier lives in
+        /// PropertyInt.WeaponAugScaleTier (stamped by ApplyWeaponAugScaleStamp later in the same
+        /// Creature_Death sweep). Reading only ZcTier - which is what this did before 2026-08-25 -
+        /// returned 0 for every weapon, which meant Compute silently resolved weapon lines at the T11
+        /// rung no matter what tier they dropped at, and ApplyIfStale bailed at its `tier &lt;= 0` guard
+        /// so a weapon NEVER re-resolved. Both were live bugs for the armour-style cantrip lines
+        /// weapons already carried; the weapon cards inherit the fix.
+        ///
+        /// Same shape as ZoneCraftGate.TierOf - if one of the two changes, change both.
+        /// ORDERING TRAP: at ZoneLootMutator time NEITHER property is set yet (the aug-scale stamp runs
+        /// after MutateLootItem), so every drop-time caller must pass the loot tier explicitly rather
+        /// than asking the item. VerifyLiveStatCache runs after both stamps, so it may ask.
+        /// </summary>
+        public static int TierOf(WorldObject wo)
+        {
+            if (wo == null)
+                return 0;
+            var zc = wo.GetProperty(PropertyInt.ZcTier) ?? 0;
+            if (zc > 0)
+                return zc;
+            return wo.GetProperty(PropertyInt.WeaponAugScaleTier) ?? 0;
+        }
+
+        /// <summary>
+        /// True when the record contains at least one reserved WEAPON key. Allocation-free and
+        /// deliberately a raw character scan, because it sits on the ApplyIfStale early-out - the
+        /// no-op path every login takes for every worn piece.
+        ///
+        /// It is exact, not a heuristic: Format writes core keys as 'cN', catalog keys as positive
+        /// integers and grades as 0..1000, so the ONLY '-' a well-formed record can contain is the
+        /// sign of a weapon key. Keep that true if you ever extend the format.
+        /// </summary>
+        public static bool HasWeaponKey(WorldObject wo)
+        {
+            var raw = wo?.GetProperty(PropertyString.ZcCantrips);
+            return !string.IsNullOrEmpty(raw) && raw.IndexOf('-') >= 0;
+        }
 
         /// <summary>Parse the record. Unknown / malformed entries are skipped, never thrown on.</summary>
         public static List<LineRecord> Read(WorldObject wo)
@@ -322,16 +588,100 @@ namespace ACE.Server.Managers.ZoneControl
         /// changes what a resolve produces, so without it flipping the switch would move the appraisal
         /// (which computes live) while the item's stamped props never changed (owner 2026-08-23).
         /// </summary>
-        public static int ResolveStamp(int tier) =>
-            ZoneControlManager.GetLadderVersion(tier).Version * 2
-            + (ServerConfig.zonecontrol_enabled.Value ? 0 : 1);
+        public static int ResolveStamp(int tier) => ResolveStamp(tier, false);
+
+        /// <summary>
+        /// As above, plus the WEAPON PIN FINGERPRINT when <paramref name="withWeaponPins"/> is set.
+        ///
+        /// WHY THIS EXISTS (2026-08-25). `ladder apply` is the only thing that bumps
+        /// ZoneControlManager.GetLadderVersion, and the only Default-layer edits wired to auto-apply are
+        /// core_anchor_dr / core_anchor_cdr and the cantrip band editor (ZoneControlCommands
+        /// .AutoApplyForDefault). Authoring or clearing a weapon_&lt;card&gt;_min/max on a tier Default
+        /// changes what <see cref="WeaponResolveBand"/> returns, so without something in the identity
+        /// moving, every weapon already in the world would keep its old number FOREVER and the edit
+        /// would appear to do nothing except on new drops. Folding the authored pins into the stamp
+        /// makes the pin edit itself the invalidation - no command surface change, and it cannot be
+        /// forgotten the way "remember to run ladder apply" can.
+        ///
+        /// It is deliberately NOT folded into GetLadderVersion: that Version is displayed by
+        /// `/zonecontrol ladder show`, echoed by ladder apply and shipped to the plugin in the |ladder=
+        /// tag, where "v3" is a human-meaningful count of applies. A hashed number there would be a lie
+        /// in a GM surface. ResolveStamp, by contrast, is compared and never displayed as a quantity.
+        ///
+        /// ZERO WHEN NOTHING IS AUTHORED, and the shift keeps bit 0 (the Zone Control mode bit) intact:
+        /// a shard with no weapon pins produces byte-for-byte the pre-2026-08-25 stamp, so deploying
+        /// this does not spuriously re-resolve a single existing item.
+        ///
+        /// withWeaponPins is passed by the caller rather than derived here because the same item must
+        /// get the same answer at stamp time and at compare time; every internal caller derives it from
+        /// <see cref="HasWeaponKey"/> on the item itself. An armour piece never pays the lookup.
+        /// </summary>
+        public static int ResolveStamp(int tier, bool withWeaponPins)
+        {
+            var stamp = ZoneControlManager.GetLadderVersion(tier).Version * 2
+                      + (ServerConfig.zonecontrol_enabled.Value ? 0 : 1);
+            if (!withWeaponPins)
+                return stamp;
+            var fp = WeaponPinFingerprint(tier);
+            return fp == 0 ? stamp : unchecked(stamp ^ (fp << 1));
+        }
+
+        /// <summary>
+        /// A hash of the tier Default's authored weapon_*_min/max values, or 0 when the tier authors
+        /// none of them. Rows are folded in <see cref="WeaponSpecials"/> order so the result is stable
+        /// across runs; the value's exact bits are meaningless, only "did it change" matters.
+        /// With Zone Control OFF this returns 0 because <see cref="WeaponResolveBand"/> consults nothing
+        /// authored in that mode - a pin edit genuinely cannot change what a weapon resolves to, so it
+        /// must not invalidate anything either.
+        /// </summary>
+        private static int WeaponPinFingerprint(int tier)
+        {
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return 0;
+            var stats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
+            if (stats == null || stats.Count == 0)
+                return 0;
+            var h = 0;
+            foreach (var ws in WeaponSpecials)
+            {
+                h = Fold(h, stats, ws.Band.MinStat);
+                h = Fold(h, stats, ws.Band.MaxStat);
+            }
+            return h;
+
+            static int Fold(int acc, Dictionary<string, ZoneScaling.StatCurve> s, string stat)
+            {
+                if (!s.TryGetValue(stat, out var curve) || curve == null)
+                    return acc;
+                // the VALUE, not the curve object: a re-author to the same number must not invalidate,
+                // and MutateVariationDefault replaces the StatCurve instance on every edit.
+                return unchecked(acc * 31 + curve.Evaluate(1).GetHashCode() + stat.Length);
+            }
+        }
 
         /// <summary>Stamp the tier + the CURRENT resolve stamp (a fresh drop is resolved by definition).</summary>
         public static void StampIdentity(WorldObject wo, int tier)
         {
             if (wo == null) return;
             wo.SetProperty(PropertyInt.ZcTier, tier);
-            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(tier));
+            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(tier, HasWeaponKey(wo)));
+        }
+
+        /// <summary>
+        /// The WEAPON half of <see cref="StampIdentity"/>: the resolve stamp WITHOUT ZcTier.
+        ///
+        /// A weapon must not carry ZcTier. ZoneCraftGate.TierOf, the crafting gate and
+        /// <see cref="TierOf"/> above all treat "has ZcTier" as "this is an armour-shaped piece"; the
+        /// weapon's row is PropertyInt.WeaponAugScaleTier, stamped a few lines later in the same
+        /// Creature_Death sweep by ApplyWeaponAugScaleStamp. So the producer stamps only the version
+        /// here and lets TierOf find the tier the weapon way.
+        ///
+        /// Call this AFTER the last grade has been recorded - HasWeaponKey reads the finished record.
+        /// </summary>
+        public static void StampWeaponResolve(WorldObject wo, int tier)
+        {
+            if (wo == null || tier <= 0) return;
+            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(tier, HasWeaponKey(wo)));
         }
 
         // ── resolution ──────────────────────────────────────────────────────────
@@ -362,6 +712,14 @@ namespace ACE.Server.Managers.ZoneControl
             public List<ResolvedLine> Lines = new();
             /// <summary>Every int prop the cache should hold, SET semantics (retail Gear* + 502xx block).</summary>
             public Dictionary<PropertyInt, int> Ints = new();
+            /// <summary>
+            /// Every FLOAT prop the cache should hold, same SET semantics. This is the weapon half of the
+            /// cache: every continuous weapon card is a PropertyFloat (CriticalFrequency,
+            /// SlayerDamageBonus, IgnoreShield, CriticalMultiplier and the two override prop ids 9056 /
+            /// 9057), so none of them could ever live in <see cref="Ints"/>.
+            /// Values here are already in ENGINE space - <see cref="EngineValue"/> has run.
+            /// </summary>
+            public Dictionary<PropertyFloat, double> Floats = new();
             /// <summary>Resolved Armor Level (base for tier + the key-25 line), null when the piece has no AL.</summary>
             public int? ArmorLevel;
         }
@@ -382,8 +740,37 @@ namespace ACE.Server.Managers.ZoneControl
             var hasArmor = wo.ArmorLevel.HasValue && wo.ItemType == ItemType.Armor;
             var alBonus = 0;
 
+            // The tier Default's Stats, fetched AT MOST ONCE per resolve and only when the record
+            // actually contains a weapon key. GetVariationDefault takes the manager lock, and a fully
+            // carded weapon would otherwise take it twelve times (two stat names per card).
+            Dictionary<string, ZoneScaling.StatCurve> defStats = null;
+            var defStatsFetched = false;
+
             foreach (var rec in Read(wo))
             {
+                if (IsWeaponKey(rec.Key))
+                {
+                    // An unknown key inside the reserved weapon block is skipped, not thrown on - an
+                    // item stamped by a newer build must stay loadable on an older one.
+                    if (!TryGetWeapon(rec.Key, out var ws))
+                        continue;
+                    if (!defStatsFetched)
+                    {
+                        defStats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
+                        defStatsFetched = true;
+                    }
+                    var (wlo, whi) = WeaponResolveBand(ws, tier, defStats, statsFetched: true);
+                    var display = Math.Clamp(ValueForD(wlo, whi, rec.Grade), ws.Band.Lo, ws.Band.Hi);
+                    // EngineValue is the single display -> engine conversion (Crushing Blow's "- 1.0").
+                    // The drop site routes through the same method, so the subtraction happens exactly
+                    // once no matter how many times a weapon is re-equipped. See EngineValue.
+                    r.Floats[ws.Prop] = EngineValue(ws, display);
+                    // NOT added to r.Lines. r.Lines is the APPRAISAL projection (AppraiseInfo walks it),
+                    // and weapon cards have never had appraisal lines - adding them here would silently
+                    // change the examine panel of every Zone Control weapon on the shard, which is a
+                    // GUI change and needs its own plan + go. Floats alone is the mechanical parity.
+                    continue;
+                }
                 if (IsCoreKey(rec.Key))
                 {
                     var (cmin, cmax) = CoreWindow(rec.Key, tier);
@@ -415,6 +802,26 @@ namespace ACE.Server.Managers.ZoneControl
                 else if (def.Ints != null)
                     foreach (var (propId, _) in def.Ints)
                         r.Ints[(PropertyInt)propId] = value;
+            }
+
+            // 🔴 PRE-APPLIED CRAFTS THAT LAND ON A CARD'S OWN PROPERTY.
+            // The Bandit Hilt is stamped LAST at drop time (owner rule: hilts go on after every other
+            // tuner so their bonuses ADD on top), and two of the things it adds to are the very
+            // properties Biting Strike and Crushing Blow own: +0.25 CriticalFrequency and +0.175
+            // CriticalMultiplier. Before the cards were graded that was harmless - nothing ever
+            // recomputed the property. Now r.Floats is written with SET semantics on every equip, so
+            // without this the hilt's contribution would be ERASED the first time a hilted weapon was
+            // re-resolved, and there would be nothing in any log to say where the crit went.
+            // Re-adding it here is also correct for a hilt a PLAYER applied with the real recipe after
+            // the drop - same marker, same delta, same erase avoided.
+            // Only props the RECORD actually produced are touched: a hilted weapon with no Biting
+            // Strike card has no -11 key, so CriticalFrequency is not in r.Floats and is left alone.
+            if (r.Floats.Count > 0 && ZoneLootMutator.HasBanditHilt(wo))
+            {
+                if (r.Floats.TryGetValue(PropertyFloat.CriticalFrequency, out var cf))
+                    r.Floats[PropertyFloat.CriticalFrequency] = cf + ZoneLootMutator.BanditHiltCritFrequencyBonus;
+                if (r.Floats.TryGetValue(PropertyFloat.CriticalMultiplier, out var cm))
+                    r.Floats[PropertyFloat.CriticalMultiplier] = cm + ZoneLootMutator.BanditHiltCritMultiplierBonus;
             }
 
             // EVERY recorded armour piece resolves its AL, line or no line: the tier base is no longer a
@@ -450,6 +857,23 @@ namespace ACE.Server.Managers.ZoneControl
                     changed++;
                 }
             }
+            // The weapon half, SAME semantics as the ints above: SET, nerf-guarded, counted only when
+            // the stored number actually moves. The comparison is exact rather than epsilon-based on
+            // purpose - both sides come from the same deterministic band math, so an unchanged ladder
+            // reproduces the identical double and this writes nothing. An epsilon here would let a
+            // genuine sub-epsilon retune go unstamped, and the stamp would then claim it had landed.
+            foreach (var kv in r.Floats)
+            {
+                var cur = wo.GetProperty(kv.Key);
+                var next = kv.Value;
+                if (!allowNerf && cur.HasValue && next < cur.Value)
+                    next = cur.Value;
+                if (cur != next)
+                {
+                    wo.SetProperty(kv.Key, next);
+                    changed++;
+                }
+            }
             if (r.ArmorLevel.HasValue)
             {
                 var cur = wo.ArmorLevel;
@@ -464,7 +888,9 @@ namespace ACE.Server.Managers.ZoneControl
             }
             // wield gates follow the tier row live too (owner 2026-08-23: T16+ Item Augs + Triune on existing pieces)
             changed += ACE.Server.Factories.LootGenerationFactory.RefreshWieldGate(wo, r.Tier);
-            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(r.Tier));
+            // HasWeaponKey off the ITEM, not off r.Floats: the stamp written here has to be the same
+            // number ApplyIfStale computes on the next equip, and that one only has the item to go on.
+            wo.SetProperty(PropertyInt.ZcResolvedVersion, ResolveStamp(r.Tier, HasWeaponKey(wo)));
             return changed;
         }
 
@@ -484,7 +910,7 @@ namespace ACE.Server.Managers.ZoneControl
             if (tier <= 0) return false;
             var ladder = ZoneControlManager.GetLadderVersion(tier);
             var seen = wo.GetProperty(PropertyInt.ZcResolvedVersion) ?? 0;
-            if (seen == ResolveStamp(tier))
+            if (seen == ResolveStamp(tier, HasWeaponKey(wo)))
                 return false;
             var r = Compute(wo);
             if (r == null) return false;

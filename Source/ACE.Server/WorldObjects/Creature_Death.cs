@@ -1423,6 +1423,23 @@ namespace ACE.Server.WorldObjects
                     if (cur != kv.Value)
                         diffs.Add($"{kv.Key} item={(cur.HasValue ? cur.Value.ToString() : "null")} resolved={kv.Value}");
                 }
+                // WEAPON half (2026-08-25): every continuous weapon card is a PropertyFloat, so the
+                // same assertion has to walk r.Floats or the whole weapon lane would go unchecked.
+                //
+                // EPSILON, unlike the ints above: these are doubles produced by band interpolation, and
+                // the drop path and the resolve path reach the number by slightly different routes (the
+                // drop path clamps a freshly interpolated value; the resolve path re-interpolates from
+                // the stored grade). Bit-exact equality would make this warn on last-place noise and
+                // train everyone to ignore it. 1e-9 is far below the second decimal that any of these
+                // cards is designed in, so a REAL divergence - a producer bypassing the record, a
+                // Crushing Blow "- 1.0" applied twice, a zone band diverging from the tier Default the
+                // resolver reads - is still caught loudly.
+                foreach (var kv in r.Floats)
+                {
+                    var cur = wo.GetProperty(kv.Key);
+                    if (!cur.HasValue || Math.Abs(cur.Value - kv.Value) > 1e-9)
+                        diffs.Add($"{kv.Key} item={(cur.HasValue ? cur.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "null")} resolved={kv.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                }
                 if (r.ArmorLevel.HasValue && wo.ArmorLevel != r.ArmorLevel.Value)
                     diffs.Add($"ArmorLevel item={(wo.ArmorLevel.HasValue ? wo.ArmorLevel.Value.ToString() : "null")} resolved={r.ArmorLevel.Value}");
                 if (diffs.Count > 0)
