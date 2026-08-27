@@ -267,7 +267,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// GetMatchingRends uses so a multi-type weapon picks the same element for both cards. Returns
         /// false for a weapon with no resolvable element (a plain bow takes its element from the ammo,
         /// a generic caster has none) - those roll no proc, exactly as they roll no rend.</summary>
-        private static bool TryGetProcSpells(DamageType dt, out uint arc, out uint ring)
+        public static bool TryGetProcSpells(DamageType dt, out uint arc, out uint ring)
         {
             foreach (var row in ProcSpellsByElement)
             {

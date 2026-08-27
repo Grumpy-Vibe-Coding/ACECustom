@@ -610,7 +610,11 @@ namespace ACE.Server.Command.Handlers
 
         private sealed class ForgeCards
         {
-            public bool Proc; public uint ProcSpell; public double ProcRate = 0.15;
+            // Cast on Strike, rewired 2026-08-27 to the two-slot card. `proc` alone is a shorthand
+            // for both slots, since test gear almost always wants the full thing.
+            public bool ProcArc; public bool ProcRing;
+            public double ProcRate = 0.05; public double ProcDmg = 440;
+            public int ProcSpellcraft = 9999; public double ProcAugCap;
             public bool Rend;
             public double? RendPower;
             public int? Cleave;
@@ -639,8 +643,13 @@ namespace ACE.Server.Command.Handlers
                 double Num(double dflt) => val != null && double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : dflt;
                 switch (key)
                 {
-                    case "proc": cards.Proc = true; cards.ProcSpell = (uint)Num(0); break;
-                    case "procrate": cards.ProcRate = Math.Clamp(Num(0.15), 0.0, 1.0); break;
+                    case "proc": cards.ProcArc = true; cards.ProcRing = true; break;
+                    case "procarc": cards.ProcArc = true; break;
+                    case "procring": cards.ProcRing = true; break;
+                    case "procrate": cards.ProcRate = Math.Clamp(Num(0.05), 0.0, 1.0); break;
+                    case "procdmg": cards.ProcDmg = Math.Max(0.0, Num(440)); break;
+                    case "procspellcraft": cards.ProcSpellcraft = (int)Math.Max(0, Num(9999)); break;
+                    case "procaugcap": cards.ProcAugCap = Math.Max(0.0, Num(0)); break;
                     case "rend": cards.Rend = true; break;
                     case "rendpower": cards.RendPower = Math.Clamp(Num(1.5), 1.5, 10.0); break;
                     case "cleave": cards.Cleave = (int)Math.Clamp(Num(1), 1, 10); break;
@@ -676,21 +685,6 @@ namespace ACE.Server.Command.Handlers
             return ImbuedEffectType.Undef;
         }
 
-        /// <summary>Max-level bolt matching the weapon's own damage type (test gear wants max).</summary>
-        private static uint ForgeDefaultProcSpell(DamageType dt)
-        {
-            var list = dt.HasFlag(DamageType.Slash) ? SpellLevelProgression.WhirlingBlade
-                     : dt.HasFlag(DamageType.Pierce) ? SpellLevelProgression.ForceBolt
-                     : dt.HasFlag(DamageType.Bludgeon) ? SpellLevelProgression.ShockWave
-                     : dt.HasFlag(DamageType.Acid) ? SpellLevelProgression.AcidStream
-                     : dt.HasFlag(DamageType.Fire) ? SpellLevelProgression.FlameBolt
-                     : dt.HasFlag(DamageType.Cold) ? SpellLevelProgression.FrostBolt
-                     : dt.HasFlag(DamageType.Electric) ? SpellLevelProgression.LightningBolt
-                     : dt.HasFlag(DamageType.Nether) ? SpellLevelProgression.HarmOther
-                     : SpellLevelProgression.ForceBolt;   // plain bows etc. - element lives on the ammo
-            return (uint)list[list.Count - 1];
-        }
-
         /// <summary>Stamps the enabled cards; returns a " | cards: ... | skipped: ..." note for the
         /// forge message (empty when no cards).</summary>
         private static string ApplyForgeCards(WorldObject wo, ForgeCards c)
@@ -700,17 +694,42 @@ namespace ACE.Server.Command.Handlers
             var applied = new List<string>();
             var skipped = new List<string>();
 
-            if (c.Proc)
+            // Cast on Strike. CASTERS ARE ELIGIBLE - the old "melee/missile only" skip here was stale
+            // even before this rewrite (a wand fires its proc on a spell hit; see ZoneLootMutator).
+            // Spells come from ZoneLootMutator's element table so the forge and the loot path can never
+            // disagree about which spell an element casts.
+            if (c.ProcArc || c.ProcRing)
             {
-                if (isMelee || isMissile)
+                if (ZoneLootMutator.TryGetProcSpells(wo.W_DamageType, out var arcId, out var ringId))
                 {
-                    var spellId = c.ProcSpell != 0 ? c.ProcSpell : ForgeDefaultProcSpell(wo.W_DamageType);
-                    wo.ProcSpell = spellId;
-                    wo.ProcSpellRate = c.ProcRate;
-                    wo.ProcSpellSelfTargeted = false;
-                    applied.Add($"proc {spellId} @ {c.ProcRate:0.##}");
+                    if (c.ProcArc)
+                    {
+                        wo.ProcSpell = arcId;
+                        wo.ProcSpellRate = c.ProcRate;
+                        wo.ProcSpellSelfTargeted = false;
+                        wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcArcDamagePropId, c.ProcDmg);
+                        applied.Add($"proc arc {arcId} @ {c.ProcRate:0.##} dmg {c.ProcDmg:0}");
+                    }
+
+                    if (c.ProcRing)
+                    {
+                        wo.SetProperty((PropertyDataId)ZoneLootMutator.ProcSpell2PropId, ringId);
+                        wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRate2PropId, c.ProcRate);
+                        wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRingDamagePropId, c.ProcDmg);
+                        applied.Add($"proc ring {ringId} @ {c.ProcRate:0.##} dmg {c.ProcDmg:0}");
+                    }
+
+                    // Without this the proc is resisted ~100 pct of the time on a melee character, and
+                    // the forged weapon would look broken for reasons that have nothing to do with it.
+                    if (c.ProcSpellcraft > 0)
+                        wo.ItemSpellcraft = c.ProcSpellcraft;
+
+                    if (c.ProcAugCap > 0)
+                        wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcAugCapPropId, c.ProcAugCap);
                 }
-                else skipped.Add("proc (melee/missile only)");
+                // A plain bow takes its element from the ammo and a generic caster has none, so there is
+                // no element to match a spell to - the same reason they roll no rend.
+                else skipped.Add("proc (weapon has no resolvable damage type)");
             }
 
             if (c.Rend)
@@ -957,7 +976,7 @@ namespace ACE.Server.Command.Handlers
             "Forges one Weapon Scaling test weapon of the given class (or a full set with 'all').",
             "<class|all> [quality 0-1000, default 500] [element] [tier 10-25, default 11; 10 = T10 loot-table range, unscaled + no wield gate, quality ignored] [cards:key=val,key,...]\n" +
             "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand\n" +
-            "cards: proc[=spellId] procrate=0-1 (Cast on Strike; no id = max-level bolt matching the element) rend (matching rend imbue)\n" +
+            "cards: proc (Cast on Strike, BOTH slots) procarc procring (one slot only) procrate=0-1 procdmg=<n> procspellcraft=<n> procaugcap=<n> rend (matching rend imbue)\n" +
             "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
             "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 slayer=1.5-10 slayertype=<name>\n" +
             "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)\n" +
