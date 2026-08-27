@@ -92,6 +92,9 @@ namespace ACE.Server.Managers.ZoneControl
         /// ring are separate entities and roll separately, so a weapon carrying both procs more often
         /// than one carrying either.</summary>
         public const int ProcRate2PropId = 9059;
+        /// <summary>Ceiling on the FLAT Melee+Missile+War+Void aug sum added to B. Stamped on the
+        /// weapon so the damage path can read it without a zone lookup. 0/absent = uncapped.</summary>
+        public const int ProcAugCapPropId = 9061;
 
         /// <summary>
         /// Card amount pairs: min only / max only = exact value, both = uniform roll in the range each
@@ -368,6 +371,13 @@ namespace ACE.Server.Managers.ZoneControl
                     var craft = (int)Math.Round(p.Get(ZoneStat.WeaponProcSpellcraft, 9999));
                     if (craft > 0)
                         wo.ItemSpellcraft = craft;
+
+                    // Stamped on the item rather than read from the zone at hit time, like every other
+                    // card value - so a weapon keeps the cap it dropped with and a retune reaches only
+                    // new drops, which is the same contract the damage bands have.
+                    var augCap = p.Get(ZoneStat.WeaponProcAugCap, 0);
+                    if (augCap > 0)
+                        wo.SetProperty((PropertyFloat)ProcAugCapPropId, augCap);
                 }
             }
 

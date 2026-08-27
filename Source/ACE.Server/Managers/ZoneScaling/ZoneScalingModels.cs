@@ -193,6 +193,16 @@ namespace ACE.Server.Managers.ZoneScaling
         // a T11 mob's magic_defense 1100 is resisted ~100 pct of the time. Stamping ItemSpellcraft moves
         // the check onto the WEAPON. This is the prerequisite for everything else on the card.
         public const string WeaponProcSpellcraft = "weapon_proc_spellcraft";  // stamped ItemSpellcraft
+        // FLAT aug fold-in (owner 2026-08-27, "Flat"). The player's Melee + Missile + War + Void
+        // effective aug counts are SUMMED and added to B, so a proc scales with what the wielder has
+        // actually invested in - including a pure melee character, whose proc read exactly zero augs
+        // before, since the stock path only ever added War/Void.
+        //
+        // THE CAP IS THE WHOLE SAFETY MECHANISM. Each count reaches 10,000 on the live shard, so an
+        // uncapped sum is a 0..40,000 flat addition on top of a 440 base - the same uncontrolled,
+        // wielder-driven spread that B was introduced to remove. UNSET = UNCAPPED; there is no
+        // defensible default to invent here, so it is a knob the owner must set.
+        public const string WeaponProcAugCap = "weapon_proc_aug_cap";        // max TOTAL aug contribution; unset/0 = uncapped
         public const string WeaponImbueChance = "weapon_imbue_chance";   // random imbue (rends / Critical Strike / Crippling Blow / Armor Rending)
         public const string WeaponSlayerChance = "weapon_slayer_chance"; // slayer vs the killed monster's own creature type
         public const string WeaponSlayerMin = "weapon_slayer_min";       // SlayerDamageBonus min (raw multiplier, floor 1.5, cap 10.0)
@@ -387,7 +397,7 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponAttuned, WeaponBonded, WeaponUnenchantable,
             WeaponProcArcChance, WeaponProcArcRate, WeaponProcRingChance, WeaponProcRingRate,
             WeaponProcArcDmgMin, WeaponProcArcDmgMax, WeaponProcRingDmgMin, WeaponProcRingDmgMax,
-            WeaponProcSpellcraft, WeaponImbueChance,
+            WeaponProcSpellcraft, WeaponProcAugCap, WeaponImbueChance,
             WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax,
             WeaponCantripChance, ArmorCantripChance,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,

@@ -717,16 +717,16 @@ namespace ACE.Server.WorldObjects
                 }
                 baseDamage = ThreadSafeRandom.Next(Spell.MinDamage, Spell.MaxDamage);
 
-                // Zone Control "Cast on Strike": an authored B REPLACES the rolled base AND the flat
-                // aug term below - it must never multiply them. EffectiveWarAugCount is added 1:1 and
-                // the live shard ranges 0 to 10,000 War augs, so the stock base swings 60x between two
-                // players holding the SAME weapon, driven by a stat that has nothing to do with the
-                // weapon. Replacing is what turns the card from uncontrolled into bandable; the same
-                // reasoning as an authored zone spell_damage replacing a monster's.
+                // Zone Control "Cast on Strike": an authored B REPLACES THE ROLLED SPELL BASE, and
+                // nothing else. The War/Void aug term below still applies on top of it - owner
+                // 2026-08-27: "The procs will be based simply off war or void just like originally
+                // coded. The procs are spells." So the BASE is the weapon's (banded, tunable, 440 = one
+                // melee hit at T11) and the SCALING is the caster's, exactly as for a hand-cast spell.
                 //
-                // Owner 2026-08-27: Melee/Missile/War/Void augs WILL be folded back in on top of B,
-                // in the form "440 + X pct" - flat-vs-pct and the cap are not ruled yet, so that term
-                // is deliberately absent rather than guessed.
+                // Consequence, chosen deliberately: a melee character with no War or Void augs gets B
+                // and nothing more. Melee and Missile aug counts are NOT read here - an earlier build
+                // did that and it was wrong; a proc is a spell and scales with spell investment.
+                //
                 // WHICH slot fired decides which band applies - the arc and the ring carry separate
                 // damage now. Matched on the spell id rather than on a flag, because the projectile is
                 // all we have here and the two slots can never hold the same spell.
@@ -739,28 +739,35 @@ namespace ACE.Server.WorldObjects
                         procDmgOverride = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingDamagePropId);
                 }
 
-                if (procDmgOverride.HasValue && procDmgOverride.Value > 0)
-                {
+                var isZcProc = procDmgOverride.HasValue && procDmgOverride.Value > 0;
+
+                if (isZcProc)
                     baseDamage = (long)Math.Round(procDmgOverride.Value);
-                }
-                else if (sourceCreature != null)
+
+                if (sourceCreature != null)
                 {
                     // Effective counts: purchased gems plus the school's growth charm. Player_Magic's
                     // smart-ring path mirrors this method and must use the same counts.
+                    long augs = 0;
                     if (Spell.School == MagicSchool.WarMagic)
-                    {
-                        if (sourceCreature.EffectiveWarAugCount >= 1)
-                        {
-                            baseDamage += sourceCreature.EffectiveWarAugCount;
-                        }
-                    }
+                        augs = sourceCreature.EffectiveWarAugCount;
                     else if (Spell.School == MagicSchool.VoidMagic)
+                        augs = sourceCreature.EffectiveVoidAugCount;
+
+                    // The card's own ceiling on that term, stamped on the weapon at drop. Applies ONLY
+                    // to a Cast on Strike proc - a hand-cast spell is deliberately untouched, so this
+                    // cannot change what any existing spell does. Uncapped, the aug term is 0..10,000
+                    // flat on a 440 base, which is the wielder-driven spread the banded base exists to
+                    // contain re-entering through the aug door. Unset = uncapped.
+                    if (augs > 0 && isZcProc)
                     {
-                        if (sourceCreature.EffectiveVoidAugCount >= 1)
-                        {
-                            baseDamage += sourceCreature.EffectiveVoidAugCount;
-                        }
+                        var augCap = weapon?.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcAugCapPropId);
+                        if (augCap.HasValue && augCap.Value > 0)
+                            augs = Math.Min(augs, (long)Math.Round(augCap.Value));
                     }
+
+                    if (augs > 0)
+                        baseDamage += augs;
                 }
 
                 // Zone Control (retail-semantics since 2026-08-02, owner ruling — the old WYSIWYG felt-damage
