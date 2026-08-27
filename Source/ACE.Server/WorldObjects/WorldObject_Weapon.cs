@@ -1228,7 +1228,10 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Returns TRUE if this item has a proc / 'cast on strike' spell
         /// </summary>
-        public bool HasProc => ProcSpell != null;
+        /// <summary>True when EITHER Cast on Strike slot is filled. This has to include slot 2: every
+        /// caller in WorldObject_Combat gates on HasProc before calling TryProcItem, so a weapon that
+        /// rolled only a ring would otherwise never fire it.</summary>
+        public bool HasProc => ProcSpell != null || ProcSpell2 != null;
 
         /// <summary>
         /// Returns TRUE if this item has a proc spell
@@ -1239,60 +1242,36 @@ namespace ACE.Server.WorldObjects
             return HasProc && ProcSpell == spellID;
         }
 
+        /// <summary>Cast on Strike slot 2 - the RING. Slot 1 (the arc) is the engine's own ProcSpell,
+        /// so nothing outside this file needs to know a second slot exists: TryProcItem rolls both.</summary>
+        public uint? ProcSpell2
+        {
+            get => GetProperty((PropertyDataId)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcSpell2PropId);
+            set { if (!value.HasValue) RemoveProperty((PropertyDataId)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcSpell2PropId); else SetProperty((PropertyDataId)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcSpell2PropId, value.Value); }
+        }
+
+        /// <summary>Slot 2's own per-hit rate. Independent of slot 1's (owner 2026-08-27).</summary>
+        public double? ProcSpellRate2
+        {
+            get => GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRate2PropId);
+            set { if (!value.HasValue) RemoveProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRate2PropId); else SetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRate2PropId, value.Value); }
+        }
+
+        public bool HasProc2 => ProcSpell2 != null;
+
+        /// <summary>
+        /// Rolls BOTH Cast on Strike slots. Two independent rolls, not one roll that picks a spell
+        /// (owner 2026-08-27: the arc and the ring are separate entities) - so a weapon carrying both
+        /// procs more often than one carrying either, which is the only version where the second slot
+        /// is actually worth rolling.
+        ///
+        /// Kept as a single public entry point on purpose: every caller in WorldObject_Combat and the
+        /// cleave paths already calls TryProcItem, so folding slot 2 in here means the second slot
+        /// needs no call-site changes anywhere and cannot be forgotten at one of them.
+        /// </summary>
         public void TryProcItem(WorldObject attacker, Creature target, bool selfTarget)
         {
-            // roll for a chance of casting spell
-            var chance = ProcSpellRate ?? 0.0f;
-
-            // special handling for aetheria
-            if (Aetheria.IsAetheria(WeenieClassId) && attacker is Creature wielder)
-                chance = Aetheria.CalcProcRate(this, wielder);
-
-            var rng = ThreadSafeRandom.Next(0.0f, 1.0f);
-            if (rng >= chance)
-                return;
-
-            var spell = new Spell(ProcSpell.Value);
-
-            if (spell.NotFound)
-            {
-                if (attacker is Player player)
-                {
-                    if (spell._spellBase == null)
-                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"SpellId {ProcSpell.Value} Invalid.", ChatMessageType.System));
-                    else
-                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"{spell.Name} spell not implemented, yet!", ChatMessageType.System));
-                }
-                return;
-            }
-
-            // not sure if this should go before or after the resist check
-            // after would match Player_Magic, but would require changing the signature of TryCastSpell yet again
-            // starting with the simpler check here
-            if (!selfTarget && target != null && target.NonProjectileMagicImmune && !spell.IsProjectile)
-            {
-                if (attacker is Player player)
-                    player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You fail to affect {target.Name} with {spell.Name}", ChatMessageType.Magic));
-
-                return;
-            }
-
-            var itemCaster = this is Creature ? null : this;
-
-            // For self-targeted spells, use the attacker as the target
-            var spellTarget = selfTarget ? attacker : target;
-
-            if (spell.NonComponentTargetType == ItemType.None)
-                attacker.TryCastSpell(spell, null, itemCaster, itemCaster, true, true);
-            else if (spell.NonComponentTargetType == ItemType.Vestements)
-            {
-                // TODO: spell.NonComponentTargetType should probably always go through TryCastSpell_WithItemRedirects,
-                // however i don't feel like testing every possible known type of item procspell in the current db to ensure there are no regressions
-                // current test case: 33990 Composite Bow casting Tattercoat
-                attacker.TryCastSpell_WithRedirects(spell, spellTarget, itemCaster, itemCaster, true, true);
-            }
-            else
-                attacker.TryCastSpell(spell, spellTarget, itemCaster, itemCaster, true, true);
+            TryProcItemWithChanceMod(attacker, target, selfTarget, 1.0f);
         }
 
         /// <summary>
@@ -1300,25 +1279,41 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void TryProcItemWithChanceMod(WorldObject attacker, Creature target, bool selfTarget, float chanceMultiplier)
         {
-            var baseChance = ProcSpellRate ?? 0.0f;
+            // Slot 1 - the arc, and every pre-existing proc on the shard (cloaks, aetheria, the ~11,700
+            // player Ring Glyph crafts). Aetheria's own rate curve applies here and only here.
+            if (ProcSpell != null)
+            {
+                var baseChance = ProcSpellRate ?? 0.0f;
 
-            if (Aetheria.IsAetheria(WeenieClassId) && attacker is Creature wielder)
-                baseChance = Aetheria.CalcProcRate(this, wielder);
+                if (Aetheria.IsAetheria(WeenieClassId) && attacker is Creature wielder)
+                    baseChance = Aetheria.CalcProcRate(this, wielder);
 
-            var chance = Math.Clamp(baseChance * Math.Max(0f, chanceMultiplier), 0f, 1f);
+                TryProcOneSpell(attacker, target, selfTarget, ProcSpell.Value, baseChance, chanceMultiplier);
+            }
+
+            // Slot 2 - the ring. Rolled separately against its own rate.
+            if (ProcSpell2 != null)
+                TryProcOneSpell(attacker, target, selfTarget, ProcSpell2.Value, ProcSpellRate2 ?? 0.0, chanceMultiplier);
+        }
+
+        /// <summary>The body that was TryProcItem before the card gained a second slot - one roll, one
+        /// spell. Unchanged in behaviour; it just takes the spell and rate as arguments now.</summary>
+        private void TryProcOneSpell(WorldObject attacker, Creature target, bool selfTarget, uint procSpellId, double baseChance, float chanceMultiplier)
+        {
+            var chance = Math.Clamp(baseChance * Math.Max(0f, chanceMultiplier), 0.0, 1.0);
 
             var rng = ThreadSafeRandom.Next(0.0f, 1.0f);
             if (rng >= chance)
                 return;
 
-            var spell = new Spell(ProcSpell.Value);
+            var spell = new Spell(procSpellId);
 
             if (spell.NotFound)
             {
                 if (attacker is Player player)
                 {
                     if (spell._spellBase == null)
-                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"SpellId {ProcSpell.Value} Invalid.", ChatMessageType.System));
+                        player.Session.Network.EnqueueSend(new GameMessageSystemChat($"SpellId {procSpellId} Invalid.", ChatMessageType.System));
                     else
                         player.Session.Network.EnqueueSend(new GameMessageSystemChat($"{spell.Name} spell not implemented, yet!", ChatMessageType.System));
                 }

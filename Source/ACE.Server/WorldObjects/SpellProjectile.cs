@@ -497,6 +497,22 @@ namespace ACE.Server.WorldObjects
         /// Calculates the damage for a spell projectile
         /// Used by war magic, void magic, and life magic projectiles
         /// </summary>
+        /// <summary>Lower-case element word for the Cast on Strike combat line ("... for 1,408 pierce
+        /// damage"). Deliberately the SPELL's damage type, which for this card is always the weapon's
+        /// own element.</summary>
+        private static string ZcElementWord(DamageType dt)
+        {
+            if (dt.HasFlag(DamageType.Slash)) return "slash";
+            if (dt.HasFlag(DamageType.Pierce)) return "pierce";
+            if (dt.HasFlag(DamageType.Bludgeon)) return "bludgeon";
+            if (dt.HasFlag(DamageType.Acid)) return "acid";
+            if (dt.HasFlag(DamageType.Cold)) return "cold";
+            if (dt.HasFlag(DamageType.Electric)) return "electric";
+            if (dt.HasFlag(DamageType.Fire)) return "fire";
+            if (dt.HasFlag(DamageType.Nether)) return "nether";
+            return "magic";
+        }
+
         public float? CalculateDamage(WorldObject source, Creature target, ref bool criticalHit, ref bool critDefended, ref bool overpower)
         {
             if (source == null || target == null)
@@ -701,7 +717,33 @@ namespace ACE.Server.WorldObjects
                 }
                 baseDamage = ThreadSafeRandom.Next(Spell.MinDamage, Spell.MaxDamage);
 
-                if (sourceCreature != null)
+                // Zone Control "Cast on Strike": an authored B REPLACES the rolled base AND the flat
+                // aug term below - it must never multiply them. EffectiveWarAugCount is added 1:1 and
+                // the live shard ranges 0 to 10,000 War augs, so the stock base swings 60x between two
+                // players holding the SAME weapon, driven by a stat that has nothing to do with the
+                // weapon. Replacing is what turns the card from uncontrolled into bandable; the same
+                // reasoning as an authored zone spell_damage replacing a monster's.
+                //
+                // Owner 2026-08-27: Melee/Missile/War/Void augs WILL be folded back in on top of B,
+                // in the form "440 + X pct" - flat-vs-pct and the cap are not ruled yet, so that term
+                // is deliberately absent rather than guessed.
+                // WHICH slot fired decides which band applies - the arc and the ring carry separate
+                // damage now. Matched on the spell id rather than on a flag, because the projectile is
+                // all we have here and the two slots can never hold the same spell.
+                double? procDmgOverride = null;
+                if (FromProc && weapon != null)
+                {
+                    if (weapon.ProcSpell.HasValue && weapon.ProcSpell.Value == Spell.Id)
+                        procDmgOverride = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcArcDamagePropId);
+                    else if (weapon.ProcSpell2.HasValue && weapon.ProcSpell2.Value == Spell.Id)
+                        procDmgOverride = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingDamagePropId);
+                }
+
+                if (procDmgOverride.HasValue && procDmgOverride.Value > 0)
+                {
+                    baseDamage = (long)Math.Round(procDmgOverride.Value);
+                }
+                else if (sourceCreature != null)
                 {
                     // Effective counts: purchased gems plus the school's growth charm. Player_Magic's
                     // smart-ring path mirrors this method and must use the same counts.
@@ -1281,12 +1323,23 @@ namespace ACE.Server.WorldObjects
                 // Show actual damage landed (0 when fully absorbed); mbSuffix describes what the barrier blocked.
                 var displayAmount = amount;
 
+                // Zone Control "Cast on Strike" reads with its OWN name and its own sentence (owner
+                // 2026-08-27). Gated on FromProc AND on the spell being one of ours, so every retail
+                // proc - cloaks, aetheria, the player Ring Glyph crafts - keeps the stock message.
+                // The rename exists because the client would otherwise print the DAT name, and "Nether
+                // Arc I" reads as a weak spell when the card is anything but.
+                var zcProcName = (string)null;
+                if (FromProc)
+                    ACE.Server.Managers.ZoneControl.ZoneLootMutator.TryGetProcDisplayName(Spell.Id, out zcProcName);
+
                 if (sourcePlayer != null)
                 {
                     var critProt = critDefended ? " Your critical hit was avoided with their augmentation!" : "";
                     var amtStr = Creature.FormatDamage(displayAmount, sourcePlayer.DamageNumberFormat);
 
-                    var attackerMsg = $"{critMsg}{overpowerMsg}{sneakMsg}You {verb} {target.Name} for {amtStr} points with {Spell.Name}.{critProt}{mbSuffix}";
+                    var attackerMsg = zcProcName != null
+                        ? $"{critMsg}{overpowerMsg}{sneakMsg}{zcProcName} hits {target.Name} for {amtStr} {ZcElementWord(Spell.DamageType)} damage.{critProt}{mbSuffix}"
+                        : $"{critMsg}{overpowerMsg}{sneakMsg}You {verb} {target.Name} for {amtStr} points with {Spell.Name}.{critProt}{mbSuffix}";
 
                     // could these crit / sneak attack?
                     if (nonHealth)
@@ -1304,7 +1357,9 @@ namespace ACE.Server.WorldObjects
                     var critProt = critDefended ? " Your augmentation allows you to avoid a critical hit!" : "";
                     var amtStr = Creature.FormatDamage(displayAmount, targetPlayer.DamageNumberFormat);
 
-                    var defenderMsg = $"{critMsg}{overpowerMsg}{sneakMsg}{ProjectileSource.Name} {plural} you for {amtStr} points with {Spell.Name}.{critProt}{mbSuffix}";
+                    var defenderMsg = zcProcName != null
+                        ? $"{critMsg}{overpowerMsg}{sneakMsg}{ProjectileSource.Name}'s {zcProcName} hits you for {amtStr} {ZcElementWord(Spell.DamageType)} damage.{critProt}{mbSuffix}"
+                        : $"{critMsg}{overpowerMsg}{sneakMsg}{ProjectileSource.Name} {plural} you for {amtStr} points with {Spell.Name}.{critProt}{mbSuffix}";
 
                     if (nonHealth)
                     {

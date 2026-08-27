@@ -815,7 +815,18 @@ namespace ACE.Server.Network.Structure
             if (wo.SpellDID.HasValue)
                 SpellBook.Add(wo.SpellDID.Value);
 
-            if (wo.ProcSpell.HasValue)
+            // Zone Control "Cast on Strike" withholds its spell id from the client (owner 2026-08-27).
+            // The client renders a SpellBook entry's name from its own DAT, so handing it the id would
+            // print "Nether Arc I" beside our own Property Details line that deliberately says "Nether
+            // Arc" - the level marker reads as a weak spell, which the card is not.
+            //
+            // GATED ON PROP 9058, NOT ON THE SPELL ID. A spell-id test would also swallow the ~11,700
+            // live items carrying player-crafted Ring Glyph procs of the very same spells, rewriting
+            // appraisal on gear we never touched. 9058 is stamped by this card and by nothing else.
+            var zcArcDmg = wo.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcArcDamagePropId);
+            var zcHasProcCard = zcArcDmg.HasValue && zcArcDmg.Value > 0;
+
+            if (wo.ProcSpell.HasValue && !zcHasProcCard)
                 SpellBook.Add(wo.ProcSpell.Value);
 
             var woSpellDID = wo.SpellDID;   // prevent recursive lock
@@ -1362,6 +1373,23 @@ namespace ACE.Server.Network.Structure
                 }
                 else
                     effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade}");
+            }
+
+            // Cast on Strike (owner 2026-08-27: "Appraisal line should show Force Arc (13% proc chance)").
+            // One line PER SLOT - the arc and the ring are separate entities with separate rates, so a
+            // single merged line would hide which one a given rate belongs to. Names come from our own
+            // table, never from Spell.Name: the whole point is to drop the level marker.
+            var zcArcB = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcArcDamagePropId);
+            var zcRingB = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingDamagePropId);
+            if ((zcArcB ?? 0) > 0 || (zcRingB ?? 0) > 0)
+            {
+                if (weapon.ProcSpell.HasValue &&
+                    ACE.Server.Managers.ZoneControl.ZoneLootMutator.TryGetProcDisplayName(weapon.ProcSpell.Value, out var arcName))
+                    effectDescriptions.Add($"- Cast on Strike: {arcName} ({(weapon.ProcSpellRate ?? 0f) * 100f:0.#}% proc chance)");
+
+                if (weapon.ProcSpell2.HasValue &&
+                    ACE.Server.Managers.ZoneControl.ZoneLootMutator.TryGetProcDisplayName(weapon.ProcSpell2.Value, out var ringName))
+                    effectDescriptions.Add($"- Cast on Strike: {ringName} ({(weapon.ProcSpellRate2 ?? 0f) * 100f:0.#}% proc chance)");
             }
 
             effectDescriptions.Add($"- Effective Melee Defense: {emdVal}");

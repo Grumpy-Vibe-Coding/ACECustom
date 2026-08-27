@@ -162,9 +162,37 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponUnenchantable = "weapon_unenchantable"; // nonzero = rolled weapons drop unenchantable (ResistMagic 9999)
 
         // C3. loot special-property rolls (independent 0..1 chance per eligible dropped item — "fun stuff")
-        public const string WeaponProcChance = "weapon_proc_chance";     // Cast on Strike: stamp ProcSpell on a rolled melee/missile weapon
-        public const string WeaponProcRate = "weapon_proc_rate";         // stamped on-hit ProcSpellRate (default 0.15)
-        public const string WeaponProcSpell = "weapon_proc_spell";       // explicit SpellId to stamp; unset/0 = random elemental bolt leveled by loot tier
+        // Cast on Strike, REWRITTEN 2026-08-27 (owner). The card is now TWO INDEPENDENT slots - an ARC
+        // and a RING - and both are picked from the weapon's OWN damage type, the same field the rend
+        // reads. The old weapon_proc_chance / _rate / _spell trio is GONE along with ProcSpellPool and
+        // its tier clamp; there is deliberately no back-compat shim (test shard, no migration).
+        //
+        // WHY MATCHED TO THE WEAPON: GetWeaponResistanceModifier resolves the rend off the SPELL's
+        // damage type (SpellProjectile.cs:752 -> WorldObject_Weapon.cs:641), so a proc only benefits
+        // from the weapon's rend when the two elements agree. Mismatched, the proc loses a 2.50-3.13x
+        // multiplier at T11 that the melee swing keeps. Matching is worth 4-5x and is not cosmetic.
+        public const string WeaponProcArcChance = "weapon_proc_arc_chance";   // per-drop odds the ARC slot is stamped
+        public const string WeaponProcArcRate = "weapon_proc_arc_rate";       // the arc's per-hit proc rate (engine ProcSpellRate)
+        public const string WeaponProcRingChance = "weapon_proc_ring_chance"; // per-drop odds the RING slot is stamped
+        public const string WeaponProcRingRate = "weapon_proc_ring_rate";     // the ring's per-hit proc rate (ProcRate2)
+        // The damage lever. B REPLACES the spell's rolled base AND the flat War/Void aug term at
+        // SpellProjectile.cs:704-722 - it must never multiply it: EffectiveWarAugCount is added 1:1 and
+        // the live shard ranges 0..10,000 War augs, a 60x spread coming from the WIELDER, not the weapon.
+        // A BAND PER SLOT, not one shared value (owner 2026-08-27, GUI layout B - two separate cards).
+        // Separate bands are what let the two be priced for what they actually are: the arc is one
+        // projectile at the target, the ring is 9 projectiles centred on the PLAYER (owner: rings keep
+        // the default behaviour and ring the caster, not the monster). At an identical B the ring would
+        // be strictly better on any melee weapon, since it hits everything around you for the same
+        // number. 440 = one melee hit is the anchor for BOTH; the ring's is expected to move first.
+        public const string WeaponProcArcDmgMin = "weapon_proc_arc_dmg_min";   // arc B floor (T11 anchor 440)
+        public const string WeaponProcArcDmgMax = "weapon_proc_arc_dmg_max";   // arc B ceiling (T11 660, PROVISIONAL)
+        public const string WeaponProcRingDmgMin = "weapon_proc_ring_dmg_min"; // ring B floor
+        public const string WeaponProcRingDmgMax = "weapon_proc_ring_dmg_max"; // ring B ceiling
+        // Without this the card is a LIE on a melee character: the proc's resist check falls back to the
+        // WIELDER's skill in the spell's school (TryResistSpell:140-161), and untrained War Magic ~600 vs
+        // a T11 mob's magic_defense 1100 is resisted ~100 pct of the time. Stamping ItemSpellcraft moves
+        // the check onto the WEAPON. This is the prerequisite for everything else on the card.
+        public const string WeaponProcSpellcraft = "weapon_proc_spellcraft";  // stamped ItemSpellcraft
         public const string WeaponImbueChance = "weapon_imbue_chance";   // random imbue (rends / Critical Strike / Crippling Blow / Armor Rending)
         public const string WeaponSlayerChance = "weapon_slayer_chance"; // slayer vs the killed monster's own creature type
         public const string WeaponSlayerMin = "weapon_slayer_min";       // SlayerDamageBonus min (raw multiplier, floor 1.5, cap 10.0)
@@ -357,7 +385,9 @@ namespace ACE.Server.Managers.ZoneScaling
             ArmorVsSlash, ArmorVsPierce, ArmorVsBludgeon, ArmorVsFire, ArmorVsCold, ArmorVsAcid, ArmorVsElectric, ArmorVsNether,
             BonusCurrency,
             WeaponAttuned, WeaponBonded, WeaponUnenchantable,
-            WeaponProcChance, WeaponProcRate, WeaponProcSpell, WeaponImbueChance,
+            WeaponProcArcChance, WeaponProcArcRate, WeaponProcRingChance, WeaponProcRingRate,
+            WeaponProcArcDmgMin, WeaponProcArcDmgMax, WeaponProcRingDmgMin, WeaponProcRingDmgMax,
+            WeaponProcSpellcraft, WeaponImbueChance,
             WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax,
             WeaponCantripChance, ArmorCantripChance,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,

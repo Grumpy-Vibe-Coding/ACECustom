@@ -93,6 +93,9 @@ namespace ACE.Server.Managers.ZoneControl
         public const int WeaponSlayerKey = -14;
         public const int WeaponShieldCleaveKey = -15;
         public const int WeaponCrushKey = -16;
+        /// <summary>Cast on Strike damage B, one key per slot (added 2026-08-27).</summary>
+        public const int WeaponProcArcDamageKey = -17;
+        public const int WeaponProcRingDamageKey = -18;
 
         /// <summary>The reserved weapon block, -11..-30. Membership of the block, NOT "is defined":
         /// an unknown key inside the block is skipped by Compute exactly like an unknown catalog key,
@@ -142,9 +145,18 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>The weapon block, in record-key order - for lookup and for the stable fold order
         /// <see cref="WeaponPinFingerprint"/> depends on.</summary>
+        /// <summary>Cast on Strike. Unlike the other six this property is not read by the melee damage
+        /// pipeline at all - SpellProjectile.CalculateDamage substitutes it for the rolled spell base.</summary>
+        public static readonly WeaponSpecial SpecProcArcDamage = new WeaponSpecial
+        { Key = WeaponProcArcDamageKey, Band = ZoneCantrips.WeaponProcArcDamage, Prop = (PropertyFloat)ZoneLootMutator.ProcArcDamagePropId };
+
+        public static readonly WeaponSpecial SpecProcRingDamage = new WeaponSpecial
+        { Key = WeaponProcRingDamageKey, Band = ZoneCantrips.WeaponProcRingDamage, Prop = (PropertyFloat)ZoneLootMutator.ProcRingDamagePropId };
+
         public static readonly WeaponSpecial[] WeaponSpecials =
         {
             SpecBite, SpecArmorRend, SpecRendPower, SpecSlayer, SpecShieldCleave, SpecCrush,
+            SpecProcArcDamage, SpecProcRingDamage,
         };
 
         public static bool TryGetWeapon(int key, out WeaponSpecial ws)

@@ -428,6 +428,35 @@ namespace ACE.Server.Managers.ZoneControl
         // Slayer -> SlayerDamageBonus, a RAW damage multiplier vs the killed creature type. The
         // plugin box is raw too (weapon_slayer_* is NOT in the plugin's PercentStats set), so there
         // is NO conversion: box 1.80 = wire 1.80. Box 1.80-2.10 at T11; box 2.40-3.00 at T25.
+        // Cast on Strike damage (added 2026-08-27, owner). B = the spell base the proc rolls, and it
+        // REPLACES the rolled base plus the flat War/Void aug term rather than multiplying it.
+        //
+        // WHY 440: collapsing everything a proc shares with a melee swing, landed proc damage is B x K
+        // with K ~= 3.20 against a T11 minion at the reference build, and measured melee lands ~1,413
+        // per hit there - so B ~= 440 is EXACTLY ONE MELEE HIT. That is the yardstick the owner chose
+        // over "tie the best craft" (~150), because 0.34 of a swing is not something a player notices.
+        // The ratio is rend-proof: a proc and a swing pass through the SAME weaponResistanceMod term
+        // with the same weapon, so a matched rend cancels out of it and 440 holds whatever the vuln
+        // cap becomes (see the vuln/rend MAX ruling, Creature_Properties.cs:167).
+        //
+        // Max 660 and BOTH T25 anchors are PROVISIONAL - owner 2026-08-27, "660 max (will change for
+        // sure)". Do not read them as designed. Augs are NOT folded in yet: the owner has not ruled
+        // flat-vs-pct, and when they do the form is "440 + X pct", so this band stays the anchor.
+        public static readonly WeaponBand WeaponProcArcDamage = new WeaponBand
+        {
+            Name = "Cast on Strike (Arc)", MinStat = ZoneScaling.ZoneStat.WeaponProcArcDmgMin, MaxStat = ZoneScaling.ZoneStat.WeaponProcArcDmgMax,
+            Min = 440, Max = 660, Min25 = 1800, Max25 = 2600, Lo = 1, Hi = 100000,
+        };
+
+        /// <summary>The ring's own band. Seeded identical to the arc's so the two start level and the
+        /// owner can tune them apart from a known baseline - NOT because they are expected to stay
+        /// equal. A ring is 9 projectiles centred on the wielder; an arc is one at the target.</summary>
+        public static readonly WeaponBand WeaponProcRingDamage = new WeaponBand
+        {
+            Name = "Cast on Strike (Ring)", MinStat = ZoneScaling.ZoneStat.WeaponProcRingDmgMin, MaxStat = ZoneScaling.ZoneStat.WeaponProcRingDmgMax,
+            Min = 440, Max = 660, Min25 = 1800, Max25 = 2600, Lo = 1, Hi = 100000,
+        };
+
         public static readonly WeaponBand WeaponSlayer = new WeaponBand
         {
             Name = "Slayer", MinStat = ZoneScaling.ZoneStat.WeaponSlayerMin, MaxStat = ZoneScaling.ZoneStat.WeaponSlayerMax,
@@ -481,6 +510,7 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand[] WeaponBands =
         {
             WeaponBite, WeaponArmorRend, WeaponRendPower, WeaponSlayer, WeaponShieldCleave, WeaponCrush,
+            WeaponProcArcDamage, WeaponProcRingDamage,
         };
 
         /// <summary>

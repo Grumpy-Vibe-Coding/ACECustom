@@ -77,6 +77,21 @@ namespace ACE.Server.Managers.ZoneControl
         // (rend power) and DamageEvent.DoCalculateDamage (armor rend amount).
         public const int RendingModOverridePropId = 9056;
         public const int ArmorRendOverridePropId = 9057;
+        /// <summary>Cast on Strike damage B, ONE PER SLOT. Read hook: SpellProjectile.CalculateDamage,
+        /// where the value for whichever slot's spell fired REPLACES the rolled spell base and the flat
+        /// War/Void aug term. Their PRESENCE is also the display gate - stamped by this card and nothing
+        /// else, which is what keeps the ~11,700 live Ring-Glyph items out of the new appraisal line and
+        /// the new combat message.</summary>
+        public const int ProcArcDamagePropId = 9058;
+        public const int ProcRingDamagePropId = 9060;
+        /// <summary>Cast on Strike slot 2 (the RING). Slot 1 (the ARC) reuses the engine's own
+        /// ProcSpell/ProcSpellRate so every existing call site fires it unchanged; only the second slot
+        /// needs new storage. PropertyDataId - 9041 is the first free id after VisualOverrideCombatTable.</summary>
+        public const int ProcSpell2PropId = 9041;
+        /// <summary>Slot 2's own per-hit rate. TWO INDEPENDENT RATES, owner 2026-08-27: the arc and the
+        /// ring are separate entities and roll separately, so a weapon carrying both procs more often
+        /// than one carrying either.</summary>
+        public const int ProcRate2PropId = 9059;
 
         /// <summary>
         /// Card amount pairs: min only / max only = exact value, both = uniform roll in the range each
@@ -216,13 +231,83 @@ namespace ACE.Server.Managers.ZoneControl
             return rends;
         }
 
-        // Default Cast-on-Strike pool: offensive bolts, leveled by the loot tier (index 0 = level I).
-        private static readonly List<SpellId>[] ProcSpellPool =
+        // ── Cast on Strike spell tables (REPLACED ProcSpellPool, 2026-08-27) ──────────────────────
+        //
+        // The old pool was an 8x8 table indexed `Math.Clamp(lootTier, 1, list.Count) - 1` with every
+        // inner list Count == 8 and lootTier always >= 11 on this shard, so the index was ALWAYS 7 and
+        // 56 of 64 entries were unreachable. It also picked uniformly at random with no reference to
+        // the weapon, so a Fire sword could roll Frost Bolt - and then its Fire Rend would not apply,
+        // because the rend resolves off the SPELL's damage type. Both problems die with the table:
+        // the spell is now picked from the weapon's own W_DamageType, and the tier lives in the DAMAGE
+        // band, which is where every other card puts it and where a retune reaches weapons already in
+        // the world.
+        //
+        // IDS VERIFIED against ace_world.spell and confirmed by the owner 2026-08-27. Arcs are level 1
+        // (non_Tracking = 1, single projectile, no spread); rings are level 6 (spread_Angle = 360, 9
+        // projectiles). The LEVEL IS NOT A DAMAGE LEVER - B replaces the rolled base, so a level 1 arc
+        // and a level 7 arc hit identically. Level 1 was chosen so the displayed name stays clean; the
+        // numeral is stripped by ProcDisplayName below rather than by picking a higher spell, because
+        // "Incantation of" reads as level 8 just as loudly as "I" reads as level 1 (owner).
+        private static readonly (DamageType Dt, uint Arc, uint Ring)[] ProcSpellsByElement =
         {
-            SpellLevelProgression.FlameBolt, SpellLevelProgression.FrostBolt, SpellLevelProgression.AcidStream,
-            SpellLevelProgression.LightningBolt, SpellLevelProgression.ShockWave, SpellLevelProgression.ForceBolt,
-            SpellLevelProgression.WhirlingBlade, SpellLevelProgression.HarmOther,
+            (DamageType.Slash,    2753, 1784),  // Blade Arc I        / Horizon's Blades
+            (DamageType.Pierce,   2718, 1786),  // Force Arc I        / Nuhmudira's Spines
+            (DamageType.Bludgeon, 2746, 1789),  // Shock Arc I        / Tectonic Rifts
+            (DamageType.Acid,     2711, 1783),  // Acid Arc I         / Searing Disc
+            (DamageType.Cold,     2725, 1787),  // Frost Arc I        / Halo of Frost
+            (DamageType.Electric, 2732, 1788),  // Lightning Arc I    / Eye of the Storm
+            (DamageType.Fire,     2739, 1785),  // Flame Arc I        / Cassius' Ring of Fire
+            (DamageType.Nether,   5369, 5361),  // Nether Arc I       / Clouded Soul (the VOID one)
         };
+
+        /// <summary>The arc/ring pair matching the weapon's own damage type, in the same fixed order
+        /// GetMatchingRends uses so a multi-type weapon picks the same element for both cards. Returns
+        /// false for a weapon with no resolvable element (a plain bow takes its element from the ammo,
+        /// a generic caster has none) - those roll no proc, exactly as they roll no rend.</summary>
+        private static bool TryGetProcSpells(DamageType dt, out uint arc, out uint ring)
+        {
+            foreach (var row in ProcSpellsByElement)
+            {
+                if (dt.HasFlag(row.Dt))
+                {
+                    arc = row.Arc; ring = row.Ring;
+                    return true;
+                }
+            }
+            arc = 0; ring = 0;
+            return false;
+        }
+
+        /// <summary>Display name for a Cast on Strike spell, with the level marker stripped (owner
+        /// 2026-08-27: "level 1 reads as a weak spell. That isn't the case since we are adding augs to
+        /// the damage equation"). The client renders its OWN name from the DAT for anything it is handed
+        /// a spell id for, which is why AppraiseInfo also has to withhold the id - see BuildSpells.
+        /// Anything not on this table is not ours; callers fall back to the engine's Spell.Name.</summary>
+        public static bool TryGetProcDisplayName(uint spellId, out string name)
+        {
+            switch (spellId)
+            {
+                case 2753: name = "Blade Arc"; return true;
+                case 2718: name = "Force Arc"; return true;
+                case 2746: name = "Shock Arc"; return true;
+                case 2711: name = "Acid Arc"; return true;
+                case 2725: name = "Frost Arc"; return true;
+                case 2732: name = "Lightning Arc"; return true;
+                case 2739: name = "Flame Arc"; return true;
+                case 5369: name = "Nether Arc"; return true;
+                // The level 6 rings already carry no numeral, but they still belong on the table: it is
+                // what the combat-message and appraisal paths test to decide the line is OURS.
+                case 1784: name = "Horizon's Blades"; return true;
+                case 1786: name = "Nuhmudira's Spines"; return true;
+                case 1789: name = "Tectonic Rifts"; return true;
+                case 1783: name = "Searing Disc"; return true;
+                case 1787: name = "Halo of Frost"; return true;
+                case 1788: name = "Eye of the Storm"; return true;
+                case 1785: name = "Cassius' Ring of Fire"; return true;
+                case 5361: name = "Clouded Soul"; return true;
+                default: name = null; return false;
+            }
+        }
 
         private static void TrySpecialRolls(WorldObject wo, EvaluatedProfile p, Creature killed, int lootTier, bool forceMax)
         {
@@ -244,17 +329,46 @@ namespace ACE.Server.Managers.ZoneControl
             // WORTH MORE ON A WAND than on a sword, and that is a tuning fact, not a bug: a caster's
             // "strike" is a spell cast at range, and casts come faster and safer than melee swings, so
             // the same weapon_proc_rate buys more procs. Watch it before raising the rate.
-            if (isWeapon && wo.ProcSpell == null && Won(p, ZoneStat.WeaponProcChance))
+            // TWO INDEPENDENT SLOTS, 0/1/2 per item (owner 2026-08-27). Both are the weapon's OWN
+            // element - a Fire weapon can roll Flame Arc, Cassius' Ring of Fire, both or neither, and
+            // can never roll a Cold arc. Each slot has its own chance and its own per-hit rate.
+            //
+            // THE `wo.ProcSpell == null` GUARD STAYS and now gates BOTH slots: a weapon that already
+            // carries a proc is a player's Ring Glyph craft, and this card leaves it alone entirely
+            // rather than stacking a second spell onto someone else's work.
+            if (isWeapon && wo.ProcSpell == null && TryGetProcSpells(wo.W_DamageType, out var arcId, out var ringId))
             {
-                var spellId = (uint)Math.Round(p.Get(ZoneStat.WeaponProcSpell, 0));
-                if (spellId == 0)
+                var gotArc = Won(p, ZoneStat.WeaponProcArcChance);
+                var gotRing = Won(p, ZoneStat.WeaponProcRingChance);
+
+                if (gotArc)
                 {
-                    var list = ProcSpellPool[ThreadSafeRandom.Next(0, ProcSpellPool.Length - 1)];
-                    spellId = (uint)list[Math.Clamp(lootTier, 1, list.Count) - 1];
+                    wo.ProcSpell = arcId;
+                    wo.ProcSpellRate = Math.Clamp(p.Get(ZoneStat.WeaponProcArcRate, 0.05), 0.0, 1.0);
+                    wo.ProcSpellSelfTargeted = false;
+                    StampWeaponCard(wo, p, ZoneStatResolver.SpecProcArcDamage, lootTier, forceMax);
                 }
-                wo.ProcSpell = spellId;
-                wo.ProcSpellRate = Math.Clamp(p.Get(ZoneStat.WeaponProcRate, 0.15), 0.0, 1.0);
-                wo.ProcSpellSelfTargeted = false;
+
+                if (gotRing)
+                {
+                    wo.SetProperty((PropertyDataId)ProcSpell2PropId, ringId);
+                    wo.SetProperty((PropertyFloat)ProcRate2PropId,
+                        Math.Clamp(p.Get(ZoneStat.WeaponProcRingRate, 0.05), 0.0, 1.0));
+                    StampWeaponCard(wo, p, ZoneStatResolver.SpecProcRingDamage, lootTier, forceMax);
+                }
+
+                if (gotArc || gotRing)
+                {
+
+                    // WITHOUT THIS THE CARD DOES NOTHING ON A MELEE CHARACTER. TryResistSpell:140-161
+                    // uses the weapon's ItemSpellcraft if set, else the WIELDER's skill in the spell's
+                    // school - and untrained War Magic (~600) against a T11 mob's authored
+                    // magic_defense of 1100 is resisted essentially every time. Authored, not a
+                    // literal: nothing on this shard is tuned yet, so it is a knob.
+                    var craft = (int)Math.Round(p.Get(ZoneStat.WeaponProcSpellcraft, 9999));
+                    if (craft > 0)
+                        wo.ItemSpellcraft = craft;
+                }
             }
 
             // Rending card: a rend imbue matching the weapon's own damage type (fire sword or fire wand
