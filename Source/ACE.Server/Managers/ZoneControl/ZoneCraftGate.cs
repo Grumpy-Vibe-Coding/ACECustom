@@ -215,9 +215,8 @@ namespace ACE.Server.Managers.ZoneControl
             if (ZoneCraftGateStore.BlockComponents && source != null
                 && ZoneCraftGateStore.IsBlockedComponent(source.WeenieClassId))
             {
-                reason = $"The {source.Name} cannot be applied to a Tier {tier} item - its bonuses are "
-                       + "added on top of what the item already rolled, and Tier "
-                       + $"{ZoneCraftGateStore.MinTier}+ gear drops finished.";
+                reason = $"{ComponentLabel(source)} cannot be applied to a Tier {tier} item - its bonus "
+                       + "adds on top of what the item already rolled. Ordinary tinkering still works.";
                 return true;
             }
 
@@ -264,6 +263,46 @@ namespace ACE.Server.Managers.ZoneControl
         /// anything needed to index it is missing: no salvage object, salvage with no MaterialType, or a
         /// target the matrix has no column for. That is the whole reason an un-authored install is
         /// byte-for-byte the old behaviour.</summary>
+        /// <summary>What to CALL a blocked component in the layer-0 refusal message.
+        ///
+        /// PREFERS MaterialType OVER Name, and the reason is a real bug the owner hit 2026-08-26: the
+        /// dev command /cisalvage RENAMES the bag it creates to "Salvage (100)"
+        /// (AdminCommands.HandleCISalvage), so the refusal read "The Salvage (100) cannot be applied"
+        /// and did not say WHICH salvage was refused. A player-looted bag is named properly, but the
+        /// material is the more reliable source either way - it is the thing the block is actually
+        /// keyed against conceptually, and it cannot be renamed.
+        ///
+        /// Falls back to Name for components that declare no MaterialType at all. That is not a rare
+        /// edge: it is exactly the two DEFAULT entries, the Fine Bandit Blade Hilt and the Finely
+        /// Oiled Bowstring, whose only ints are ItemType and 25 (verified 2026-08-25) - which is also
+        /// why layer 1 can never index them.</summary>
+        private static string ComponentLabel(WorldObject source)
+        {
+            var material = source.GetProperty(PropertyInt.MaterialType) ?? 0;
+            if (material > 0)
+            {
+                var name = Enum.GetName(typeof(MaterialType), (uint)material);
+                if (!string.IsNullOrEmpty(name))
+                    return Spaced(name);
+            }
+            return source.Name;
+        }
+
+        /// <summary>"WhiteQuartz" -> "White Quartz". The MaterialType enum names are CamelCase and go
+        /// straight into player-facing chat, so they need splitting or they read as a code identifier.
+        /// ASCII only - game text must stay ASCII.</summary>
+        private static string Spaced(string camel)
+        {
+            var sb = new System.Text.StringBuilder(camel.Length + 4);
+            for (var i = 0; i < camel.Length; i++)
+            {
+                if (i > 0 && char.IsUpper(camel[i]) && !char.IsUpper(camel[i - 1]))
+                    sb.Append(' ');
+                sb.Append(camel[i]);
+            }
+            return sb.ToString();
+        }
+
         private static CraftRuleMode ResolveMatrix(WorldObject source, WorldObject target,
             out CraftItemClass cls, out int material)
         {

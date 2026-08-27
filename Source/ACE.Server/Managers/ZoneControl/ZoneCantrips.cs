@@ -407,11 +407,22 @@ namespace ACE.Server.Managers.ZoneControl
         // Rend Power -> prop 9056, a vuln FRACTION (the engine computes rendingMod = 1 + this, so
         // wire 1.60 means the target takes 2.60x from that element - NOT 1.60x; that off-by-one bit
         // once already, 2026-08-24). Plugin box is PERCENT 0..1000, i.e. box 160 = wire 1.60.
-        // Conversion: wire = box / 100. Box 160-185 -> 1.60-1.85 at T11; box 220-270 -> 2.20-2.70 at T25.
+        // Conversion: wire = box / 100. Box 150-213 -> 1.50-2.13 at T11; box 275-400 -> 2.75-4.00 at T25.
+        //
+        // RE-ANCHORED 2026-08-26 (owner set all four numbers plus the clamp). The old 1.60/1.85 ->
+        // 2.20/2.70 was imbue-era: 1.60 was picked to CLEAR the vanilla rend's 2.5x cap by a margin.
+        // The doctrine the other cards were re-anchored to on 08-25 is TIE THE BEST CRAFT, and here
+        // the best craft IS that ceiling - every elemental salvage SetValues 1.50 stored = 2.50x, on
+        // 280 weapon targets per element. So the floor moves DOWN to 1.50 to tie it exactly, and the
+        // spread above it is what carries the card.
+        // Hi LOWERED 10.0 -> 5.0 in the same edit. Rend Power substitutes into vulnMod AFTER the v11
+        // vulnerability compression (Creature_Properties.cs:130-146 then :168-169), so it is the one
+        // channel that BYPASSES v11_vuln_cap entirely - at 10.0 the engine computes rendingMod = 11.0,
+        // an 11x multiplier on the whole damage line before prots. 5.0 is still a 6x ceiling.
         public static readonly WeaponBand WeaponRendPower = new WeaponBand
         {
             Name = "Rend Power", MinStat = ZoneScaling.ZoneStat.WeaponRendPowerMin, MaxStat = ZoneScaling.ZoneStat.WeaponRendPowerMax,
-            Min = 1.60, Max = 1.85, Min25 = 2.20, Max25 = 2.70, Lo = 1.5, Hi = 10.0,
+            Min = 1.50, Max = 2.13, Min25 = 2.75, Max25 = 4.00, Lo = 1.5, Hi = 5.0,
         };
 
         // Slayer -> SlayerDamageBonus, a RAW damage multiplier vs the killed creature type. The

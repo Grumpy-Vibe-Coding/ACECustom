@@ -104,6 +104,92 @@ namespace ACE.Server.Managers.ZoneControl
         /// component feeds.</summary>
         public static readonly uint[] DefaultBlockedComponents = { 719220045u, 719220085u };
 
+        /// <summary>One candidate for layer 0: a source WCID and the GROUP the plugin files it under.
+        ///
+        /// WHY A CATALOG EXISTS AT ALL. The store records only what IS blocked - an ALLOWED component is
+        /// simply absent from <see cref="Store.Components"/>. That is fine for the gate, which only ever
+        /// asks "is this one blocked?", but it means the plugin has nothing to draw an UNCHECKED row
+        /// from. The toggle UI needs the CANDIDATES, not just the current answer.
+        ///
+        /// WHY ONLY (Wcid, Group) AND NO DISPLAY TEXT. This table is published on the [[ZCCG]] wire,
+        /// which is ONE unchunked chat line (ZoneControlCommands.BuildCraftGatePayload -> Msg). The 49
+        /// names alone measure 907 characters and a prose description per row would add ~4.7 KB to that
+        /// single line. So the wire carries wcid~group (~1 KB) and the PLUGIN owns the display name and
+        /// the one-line explanation, compiled in - the same split the cantrip catalog already uses.
+        ///
+        /// The DB names could not have served anyway, which is the other half of the reason: TWELVE of
+        /// these weenies are named exactly "Foolproof" and three more are named "Salvage" (measured
+        /// 2026-08-26). A UI built on wire names would show twelve identical rows.
+        ///
+        /// GROUPING IS EDITORIAL, not derived. It cuts across data_Id, ItemType and recipe id in ways no
+        /// query reproduces, so it is authored here. A wrong auto-group is worse than no group.</summary>
+        public readonly struct ComponentCatalogEntry
+        {
+            public readonly uint Wcid;
+            public readonly string Group;
+            public ComponentCatalogEntry(uint wcid, string group) { Wcid = wcid; Group = group; }
+        }
+
+        /// <summary>Every component the owner has decided is a layer-0 CANDIDATE, with its group.
+        ///
+        /// This is NOT the blocked set - it is the menu. Membership in the blocked set is
+        /// <see cref="Store.Components"/>, published separately as `components=`. A WCID can be blocked
+        /// without being here (someone typed `craft components add`), and the plugin MUST still render
+        /// it - under "Other" - or the block would be invisible in the UI.
+        ///
+        /// Source: Component_Block_WCIDs_2026-08-25.md, applied 2026-08-26 as the 47-WCID list plus the
+        /// two entries in <see cref="DefaultBlockedComponents"/>.</summary>
+        public static readonly ComponentCatalogEntry[] ComponentCatalog =
+        {
+            // The two originals: crit bonuses written with ModificationOperation.Add, which layer 2 is
+            // structurally incapable of refusing and layer 1 cannot index (they declare no MaterialType).
+            new ComponentCatalogEntry(719220045u, "Default"),      // Fine Bandit Blade Hilt
+            new ComponentCatalogEntry(719220085u, "Default"),      // Finely Oiled Bowstring
+
+            // Elemental rends: 7 elements x 4 drivers (Salvaged, 100-bag, Foolproof, alt-Foolproof).
+            new ComponentCatalogEntry(21086u, "Rend"), new ComponentCatalogEntry(30260u, "Rend"),
+            new ComponentCatalogEntry(30104u, "Rend"), new ComponentCatalogEntry(36628u, "Rend"),
+            new ComponentCatalogEntry(21054u, "Rend"), new ComponentCatalogEntry(29577u, "Rend"),
+            new ComponentCatalogEntry(30099u, "Rend"), new ComponentCatalogEntry(36624u, "Rend"),
+            new ComponentCatalogEntry(21048u, "Rend"), new ComponentCatalogEntry(29574u, "Rend"),
+            new ComponentCatalogEntry(30097u, "Rend"), new ComponentCatalogEntry(36622u, "Rend"),
+            new ComponentCatalogEntry(21037u, "Rend"), new ComponentCatalogEntry(29571u, "Rend"),
+            new ComponentCatalogEntry(30094u, "Rend"), new ComponentCatalogEntry(36619u, "Rend"),
+            new ComponentCatalogEntry(21069u, "Rend"), new ComponentCatalogEntry(29580u, "Rend"),
+            new ComponentCatalogEntry(30102u, "Rend"), new ComponentCatalogEntry(36626u, "Rend"),
+            new ComponentCatalogEntry(21039u, "Rend"), new ComponentCatalogEntry(29572u, "Rend"),
+            new ComponentCatalogEntry(30095u, "Rend"), new ComponentCatalogEntry(36620u, "Rend"),
+            new ComponentCatalogEntry(21056u, "Rend"), new ComponentCatalogEntry(29578u, "Rend"),
+            new ComponentCatalogEntry(30100u, "Rend"), new ComponentCatalogEntry(36625u, "Rend"),
+
+            // Armor Rending - the Sunstone family. Fraction of the target's armour IGNORED.
+            new ComponentCatalogEntry(21079u, "ArmorRend"),
+            new ComponentCatalogEntry(30103u, "ArmorRend"),
+            new ComponentCatalogEntry(36627u, "ArmorRend"),
+
+            // The one imbue recipe shard-wide with NO requirement of any kind - it can overwrite freely.
+            new ComponentCatalogEntry(3110315u, "Combo"),          // Vial of Armor Rend
+
+            new ComponentCatalogEntry(21064u, "Nether"), new ComponentCatalogEntry(60000u, "Nether"),
+            new ComponentCatalogEntry(300011u, "Nether"), new ComponentCatalogEntry(64454645u, "Nether"),
+
+            // ILT proc converters: each writes a rend AND ProcSpell AND ResistanceModifier +2 as an ADD.
+            new ComponentCatalogEntry(527870013u, "Inscription"), new ComponentCatalogEntry(527870019u, "Inscription"),
+            new ComponentCatalogEntry(527870020u, "Inscription"), new ComponentCatalogEntry(527870021u, "Inscription"),
+            new ComponentCatalogEntry(527870022u, "Inscription"), new ComponentCatalogEntry(527870023u, "Inscription"),
+            new ComponentCatalogEntry(527870024u, "Inscription"), new ComponentCatalogEntry(527870031u, "Inscription"),
+
+            // Split arrows - both write SplitArrowCount +1 as an ADD, repeatable to 10.
+            new ComponentCatalogEntry(21085u, "Split"),            // Salvaged White Quartz (also Cleaving)
+            new ComponentCatalogEntry(21081u, "Split"),            // Salvaged Tiger Eye
+
+            new ComponentCatalogEntry(227190065u, "GemBag"),       // Bag of Abyssal-Touched Gems
+        };
+
+        /// <summary>The catalog, for the wire. Deliberately NOT filtered against the blocked set - the
+        /// plugin needs every candidate so it can draw the unticked rows.</summary>
+        public static IEnumerable<ComponentCatalogEntry> ComponentCatalogRows() => ComponentCatalog;
+
         private class Store
         {
             /// <summary>Master switch. False bypasses the WHOLE gate (layer 2 included), so the gate can

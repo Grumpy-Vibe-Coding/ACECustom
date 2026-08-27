@@ -3797,6 +3797,26 @@ namespace ACE.Server.Command.Handlers
                   .Append(CleanWire(ACE.Database.DatabaseManager.World.GetCachedWeenie(w)?.GetName() ?? ""));
             }
 
+            // ── APPENDED 2026-08-26: the layer-0 CANDIDATE catalog, for the per-component toggles ──
+            // `components=` above is what IS blocked. This is what COULD be, so the plugin can draw an
+            // UNTICKED row - the store records only the blocked set, so without this there is nothing to
+            // draw an allowed component from.
+            //
+            // wcid~group ONLY, deliberately. This whole payload is ONE unchunked chat line (Msg at the
+            // `craft get` verb), the 49 blocked names already measure 907 characters, and adding a prose
+            // description per row would put ~4.7 KB more on that same line. The plugin owns the display
+            // name and the explanation, compiled in. It has to anyway: TWELVE of these weenies are named
+            // exactly "Foolproof" in the world DB and three more are named "Salvage", so wire names could
+            // never have driven a legible list.
+            sb.Append("|compcat=");
+            var firstCat = true;
+            foreach (var e in ZoneCraftGateStore.ComponentCatalogRows())
+            {
+                if (!firstCat) sb.Append(';');
+                firstCat = false;
+                sb.Append(e.Wcid).Append('~').Append(CleanWire(e.Group));
+            }
+
             return sb.ToString();
         }
 

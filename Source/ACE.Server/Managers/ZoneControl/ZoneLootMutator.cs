@@ -258,15 +258,45 @@ namespace ACE.Server.Managers.ZoneControl
             }
 
             // Rending card: a rend imbue matching the weapon's own damage type (fire sword or fire wand
-            // -> Fire Rend; only if the natural roll didn't already produce an imbue). Casters ARE eligible
-            // (elemental rends reduce the target's resistance, boosting magic damage). Weapons with no
-            // resolvable damage type (e.g. plain bows — element comes from the ammo — or generic casters)
-            // roll nothing via the empty-pool guard below.
-            if (isWeapon && wo.ImbuedEffect == ImbuedEffectType.Undef && Won(p, ZoneStat.WeaponImbueChance))
+            // -> Fire Rend). Casters ARE eligible (elemental rends reduce the target's resistance, boosting
+            // magic damage). Weapons with no resolvable damage type (e.g. plain bows — element comes from
+            // the ammo — or generic casters) roll nothing via the empty-pool guard below.
+            //
+            // THE GATE (changed 2026-08-26, owner ruling "a Zone Control drop ALWAYS ends up with a rend
+            // matching its own damage type"). It used to be `wo.ImbuedEffect == ImbuedEffectType.Undef` -
+            // a STRICT equality on imbue slot 1, so ANY imbue at all, rend or not, vetoed the whole card.
+            // Two things were wrong with it:
+            //   - it was a veto by PRESENCE, not by conflict. A weapon carrying, say, CriticalStrike would
+            //     be refused its Fire Rend even though the two coexist happily (they are separate bits, and
+            //     the Armor Rend card twenty lines down already ORs its own imbue in alongside whatever
+            //     else is there). Nothing about a foreign imbue makes a matching rend wrong.
+            //   - it read slot 1 only, while every engine read site (GetImbuedEffects, and the AllRends test
+            //     on the Rend Power card below) ORs all five slots - so the gate and the readers disagreed.
+            // VERIFIED before removing it (2026-08-26) that the gate was in practice dead anyway: none of
+            // the 487 wcids across the ten weapon loot tables carries ImbuedEffect or ImbuedEffect2-5 in
+            // ace_world, and no mutation script the loot pipeline runs (Casters./MeleeWeapons./
+            // MissileWeapons./ArmorLevel.) writes ImbuedEffect - only the Recipes/ scripts do, and those
+            // are RecipeManager, i.e. player crafting long after the drop. So a weapon reaching this line
+            // from Creature_Death has always had a clean imbue field.
+            //
+            // WHAT REPLACED IT. No presence gate at all; instead the CANDIDATE POOL drops any rend the
+            // weapon already carries in ANY of the five slots, and the winner is OR'd in rather than
+            // assigned. That makes the card idempotent (re-running it can never duplicate or downgrade a
+            // rend) and non-destructive (a foreign imbue - CriticalStrike, ArmorRending, a defense imbue -
+            // survives untouched, which a plain `=` would have silently erased once the gate was gone).
+            // "Matched" means the same thing PlayerFactoryEx.AddRend means by it - a rend for an element
+            // the weapon can actually deal - except that GetMatchingRends is flag-based, so it handles
+            // multi-type weapons properly and covers Nether, which AddRend has no case for.
+            //
+            // The Won(...) chance roll STAYS. The owner drives "always" by setting weapon_imbue_chance to
+            // 1.0 in the store; that is a tuning value, not a code constant, and Won() still treats an
+            // undefined stat as NEVER so a zone that authors nothing keeps rolling nothing.
+            if (isWeapon && Won(p, ZoneStat.WeaponImbueChance))
             {
                 var candidates = GetMatchingRends(wo.W_DamageType);
+                candidates.RemoveAll(rend => (wo.GetImbuedEffects() & rend) != 0);
                 if (candidates.Count > 0)
-                    wo.ImbuedEffect = candidates[ThreadSafeRandom.Next(0, candidates.Count - 1)];
+                    wo.ImbuedEffect |= candidates[ThreadSafeRandom.Next(0, candidates.Count - 1)];
             }
 
             // rend power: per-weapon rend strength as a DIRECT vuln bonus, rolled per drop in [min, max]
