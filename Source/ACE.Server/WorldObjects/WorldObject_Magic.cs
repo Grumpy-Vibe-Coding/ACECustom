@@ -1098,7 +1098,15 @@ namespace ACE.Server.WorldObjects
             if (SpellProjectile.GetProjectileSpellType(spell.Id) == ProjectileSpellType.Ring
                 && this is Player ringPlayer
                 && !(ringPlayer.GetProperty(PropertyBool.ClassicRingAoe) ?? false))
-                ringPlayer.ApplyRingSpellAreaDamage(spell, lifeProjectileDamage: damage);
+            {
+                // Carry the proc flag and the authored ring band through - a ring's damage AND its
+                // combat message are both produced inside that method, never on the projectile path.
+                var zcRingB = fromProc
+                    ? (weapon?.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingDamagePropId) ?? 0)
+                    : 0;
+                ringPlayer.ApplyRingSpellAreaDamage(spell, lifeProjectileDamage: damage,
+                    fromProc: fromProc, procBaseDamage: zcRingB, procWeapon: fromProc ? weapon : null);
+            }
 
             if (spell.School == MagicSchool.LifeMagic)
             {

@@ -18,6 +18,8 @@ namespace ACE.Server.WorldObjects
 {
     partial class Player
     {
+        private static readonly log4net.ILog zcLog = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
         // ── Charm redirect spell IDs ───────────────────────────────────────────
         private const uint SpellId_TectonicRiftsI  = 1789u;
         private const uint SpellId_TectonicRiftsII = 6196u;
@@ -1780,7 +1782,22 @@ namespace ACE.Server.WorldObjects
         /// derived from the drain rather than from the spell's Min/Max — see SpellProjectile.LifeProjectileDamage.
         /// </para>
         /// </summary>
-        internal void ApplyRingSpellAreaDamage(Spell spell, Position centerOverride = null, float radiusOverride = 0f, float heightOverride = 0f, float flatDamage = 0f, WorldObject scanOrigin = null, bool fromProc = false, float lifeProjectileDamage = 0f)
+        /// <summary>Element word for the Cast on Strike ring line. Mirrors SpellProjectile.ZcElementWord;
+        /// the two message sites must read identically.</summary>
+        private static string ZcElementWord(DamageType dt)
+        {
+            if (dt.HasFlag(DamageType.Slash)) return "slash";
+            if (dt.HasFlag(DamageType.Pierce)) return "pierce";
+            if (dt.HasFlag(DamageType.Bludgeon)) return "bludgeon";
+            if (dt.HasFlag(DamageType.Acid)) return "acid";
+            if (dt.HasFlag(DamageType.Cold)) return "cold";
+            if (dt.HasFlag(DamageType.Electric)) return "electric";
+            if (dt.HasFlag(DamageType.Fire)) return "fire";
+            if (dt.HasFlag(DamageType.Nether)) return "nether";
+            return "magic";
+        }
+
+        internal void ApplyRingSpellAreaDamage(Spell spell, Position centerOverride = null, float radiusOverride = 0f, float heightOverride = 0f, float flatDamage = 0f, WorldObject scanOrigin = null, bool fromProc = false, float lifeProjectileDamage = 0f, double procBaseDamage = 0, WorldObject procWeapon = null)
         {
             var center = centerOverride ?? Location;
             if (center == null) return;
@@ -1830,7 +1847,14 @@ namespace ACE.Server.WorldObjects
             var attackSkill   = GetCreatureSkill(spell.School);
             var magicSkill    = attackSkill.Current;
             var resistanceType = Creature.GetResistanceType(spell.DamageType);
-            var weapon        = GetEquippedWand();
+            // PROC WEAPON WINS OVER THE EQUIPPED WAND. GetEquippedWand() is right for a hand-cast ring,
+            // but a ring fired as a weapon proc comes off a dagger/bow/wand that is NOT in the wand slot,
+            // so this returned NULL and every weapon-derived term silently vanished - above all the REND,
+            // since GetWeaponResistanceModifier bails on a null weapon. Measured in game 2026-08-27: the
+            // arc landed 56,378 and the ring 23,237 off the same Fire/Fire-Rending dagger, a 2.43x gap
+            // that is exactly the T11 rend band. Heritage bonus and the crit-damage mod were lost the
+            // same way.
+            var weapon        = procWeapon ?? GetEquippedWand();
 
             var isLifeProjectile = spell.MetaSpellType == ACE.Entity.Enum.SpellType.LifeProjectile;
 
@@ -1966,7 +1990,14 @@ namespace ACE.Server.WorldObjects
                         if (magicSkill > spell.Power)
                             skillBonus = spell.MinDamage * (magicSkill - spell.Power) / 1000.0f;
 
-                        baseDamage = ThreadSafeRandom.Next(spell.MinDamage, spell.MaxDamage);
+                        // Zone Control "Cast on Strike" ring slot: the authored B replaces the rolled
+                        // spell base here exactly as it does on the projectile path. A ring's damage is
+                        // applied by THIS method and never reaches SpellProjectile.CalculateDamage, so
+                        // without this the ring fires on the spell's own base and the whole band is
+                        // ignored - which is what the first in-game test was actually measuring.
+                        baseDamage = procBaseDamage > 0
+                            ? (long)Math.Round(procBaseDamage)
+                            : ThreadSafeRandom.Next(spell.MinDamage, spell.MaxDamage);
 
                         // Luminance augment — the pool MUST match the spell's school.  This previously
                         // added the War count unconditionally, which fed a caster's War pool into Void
@@ -2078,6 +2109,13 @@ namespace ACE.Server.WorldObjects
                         percent = finalDamage / creature.Health.MaxValue;
                     }
 
+                    // [ZCPROC] diagnostic - see SpellProjectile for why. Fires only for our ring procs.
+                    if (procBaseDamage > 0)
+                        zcLog.Info($"[ZCPROC] ring spell={spell.Name} ({spell.Id}) B={baseDamage} " +
+                                 $"weapon={(weapon?.Name ?? "NULL")} rendMod={weaponResistanceMod:F3} " +
+                                 $"resistMod={resistanceMod:F4} attrib={attribBonus:F2} crit={criticalHit} " +
+                                 $"final={finalDamage:F0} target={creature.Name}");
+
                     creature.TakeDamage(this, spell.DamageType, finalDamage, criticalHit);
 
                     // Only send "You hit X for Y" if the target survived
@@ -2089,7 +2127,19 @@ namespace ACE.Server.WorldObjects
                         string verb = null, plural = null;
                         Strings.GetAttackVerb(spell.DamageType, pct, ref verb, ref plural);
                         var critMsg     = criticalHit ? "Critical hit! " : "";
-                        var attackerMsg = $"{critMsg}You {verb} {creature.Name} for {amtStr} points with {spell.Name}.";
+
+                        // Zone Control "Cast on Strike" reads with its OWN name and sentence here too.
+                        // A ring proc never reaches SpellProjectile.DamageTarget - its damage is applied
+                        // by this method - so the message had to be matched in BOTH places or the arc
+                        // and the ring on the same weapon would print in two different formats, which is
+                        // exactly what the first in-game test showed.
+                        string zcRingName = null;
+                        if (fromProc)
+                            ACE.Server.Managers.ZoneControl.ZoneLootMutator.TryGetProcDisplayName(spell.Id, out zcRingName);
+
+                        var attackerMsg = zcRingName != null
+                            ? $"{critMsg}{zcRingName} hits {creature.Name} for {amtStr} {ZcElementWord(spell.DamageType)} damage."
+                            : $"{critMsg}You {verb} {creature.Name} for {amtStr} points with {spell.Name}.";
                         if (!SquelchManager.Squelches.Contains(creature, ACE.Entity.Enum.ChatMessageType.Magic))
                             Session?.Network.EnqueueSend(new GameMessageSystemChat(attackerMsg, ACE.Entity.Enum.ChatMessageType.Magic));
 

@@ -817,6 +817,15 @@ namespace ACE.Server.WorldObjects
                 finalDamage = baseDamage + critDamageBonus + skillBonus;
 
                 finalDamage *= elementalDamageMod * slayerMod * resistanceMod * absorbMod * attribBonus;
+
+                // [ZCPROC] diagnostic, added 2026-08-27 for the Cast on Strike bring-up. Combat chat
+                // never reaches ACE_Log.txt, so without this the only way to read a proc's terms is the
+                // owner pasting client text. Fires ONLY for our procs, so it cannot spam a live shard.
+                // REMOVE once the card is tuned.
+                if (isZcProc)
+                    log.Info($"[ZCPROC] arc spell={Spell.Name} ({Spell.Id}) B={baseDamage} " +
+                             $"rendMod={weaponResistanceMod:F3} resistMod={resistanceMod:F4} " +
+                             $"attrib={attribBonus:F2} crit={criticalHit} preRating={finalDamage:F0} target={target.Name}");
             }
             // Fork Charm: reduce damage for fork projectiles based on tier multiplier.
             if (IsForkProjectile)
