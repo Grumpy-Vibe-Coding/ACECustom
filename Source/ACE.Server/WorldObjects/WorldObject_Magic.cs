@@ -1105,7 +1105,10 @@ namespace ACE.Server.WorldObjects
                     ? (weapon?.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingDamagePropId) ?? 0)
                     : 0;
                 ringPlayer.ApplyRingSpellAreaDamage(spell, lifeProjectileDamage: damage,
-                    fromProc: fromProc, procBaseDamage: zcRingB, procWeapon: fromProc ? weapon : null);
+                    fromProc: fromProc, procBaseDamage: zcRingB, procWeapon: fromProc ? weapon : null,
+                    procVariance: fromProc
+                        ? (weapon?.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingVariancePropId) ?? 0)
+                        : 0);
             }
 
             if (spell.School == MagicSchool.LifeMagic)

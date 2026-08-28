@@ -95,6 +95,9 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>Ceiling on the FLAT Melee+Missile+War+Void aug sum added to B. Stamped on the
         /// weapon so the damage path can read it without a zone lookup. 0/absent = uncapped.</summary>
         public const int ProcAugCapPropId = 9061;
+        /// <summary>Per-hit spread, per slot. Applied to the WHOLE base (B + augs) at hit time.</summary>
+        public const int ProcArcVariancePropId = 9062;
+        public const int ProcRingVariancePropId = 9063;
 
         /// <summary>
         /// Card amount pairs: min only / max only = exact value, both = uniform roll in the range each
@@ -367,6 +370,9 @@ namespace ACE.Server.Managers.ZoneControl
                     wo.ProcSpellRate = Math.Clamp(p.Get(ZoneStat.WeaponProcArcRate, 0.05), 0.0, 1.0);
                     wo.ProcSpellSelfTargeted = false;
                     StampWeaponCard(wo, p, ZoneStatResolver.SpecProcArcDamage, lootTier, forceMax);
+                    var arcVar = Math.Clamp(p.Get(ZoneStat.WeaponProcArcVariance, 0), 0.0, 1.0);
+                    if (arcVar > 0)
+                        wo.SetProperty((PropertyFloat)ProcArcVariancePropId, arcVar);
                 }
 
                 if (gotRing)
@@ -375,6 +381,9 @@ namespace ACE.Server.Managers.ZoneControl
                     wo.SetProperty((PropertyFloat)ProcRate2PropId,
                         Math.Clamp(p.Get(ZoneStat.WeaponProcRingRate, 0.05), 0.0, 1.0));
                     StampWeaponCard(wo, p, ZoneStatResolver.SpecProcRingDamage, lootTier, forceMax);
+                    var ringVar = Math.Clamp(p.Get(ZoneStat.WeaponProcRingVariance, 0), 0.0, 1.0);
+                    if (ringVar > 0)
+                        wo.SetProperty((PropertyFloat)ProcRingVariancePropId, ringVar);
                 }
 
                 if (gotArc || gotRing)

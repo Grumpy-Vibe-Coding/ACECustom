@@ -192,6 +192,16 @@ namespace ACE.Server.Managers.ZoneScaling
         // WIELDER's skill in the spell's school (TryResistSpell:140-161), and untrained War Magic ~600 vs
         // a T11 mob's magic_defense 1100 is resisted ~100 pct of the time. Stamping ItemSpellcraft moves
         // the check onto the WEAPON. This is the prerequisite for everything else on the card.
+        // Per-hit spread, PER SLOT (owner 2026-08-27). The damage band is rolled ONCE at drop, so
+        // without this every proc from a given weapon hits for the exact same number forever - nine
+        // ring hits at exactly 23,237 in the first live test.
+        //
+        // 🔴 SPREADS THE WHOLE BASE, B **AND** THE AUG TERM (owner: "whole base"). Varying B alone
+        // would be invisible: at 9,000 War augs B is 4.7 pct of the base, so a 50 pct spread on B
+        // moves the landed number by ~2 pct. Same shape as spell_variance - it spreads DOWN from the
+        // rolled value, so the band stays the ceiling.
+        public const string WeaponProcArcVariance = "weapon_proc_arc_variance";   // 0 = flat, 0.5 = 50-100 pct of base
+        public const string WeaponProcRingVariance = "weapon_proc_ring_variance";
         public const string WeaponProcSpellcraft = "weapon_proc_spellcraft";  // stamped ItemSpellcraft
         // FLAT aug fold-in (owner 2026-08-27, "Flat"). The player's Melee + Missile + War + Void
         // effective aug counts are SUMMED and added to B, so a proc scales with what the wielder has
@@ -397,6 +407,7 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponAttuned, WeaponBonded, WeaponUnenchantable,
             WeaponProcArcChance, WeaponProcArcRate, WeaponProcRingChance, WeaponProcRingRate,
             WeaponProcArcDmgMin, WeaponProcArcDmgMax, WeaponProcRingDmgMin, WeaponProcRingDmgMax,
+            WeaponProcArcVariance, WeaponProcRingVariance,
             WeaponProcSpellcraft, WeaponProcAugCap, WeaponImbueChance,
             WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax,
             WeaponCantripChance, ArmorCantripChance,

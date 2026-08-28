@@ -1797,7 +1797,7 @@ namespace ACE.Server.WorldObjects
             return "magic";
         }
 
-        internal void ApplyRingSpellAreaDamage(Spell spell, Position centerOverride = null, float radiusOverride = 0f, float heightOverride = 0f, float flatDamage = 0f, WorldObject scanOrigin = null, bool fromProc = false, float lifeProjectileDamage = 0f, double procBaseDamage = 0, WorldObject procWeapon = null)
+        internal void ApplyRingSpellAreaDamage(Spell spell, Position centerOverride = null, float radiusOverride = 0f, float heightOverride = 0f, float flatDamage = 0f, WorldObject scanOrigin = null, bool fromProc = false, float lifeProjectileDamage = 0f, double procBaseDamage = 0, WorldObject procWeapon = null, double procVariance = 0)
         {
             var center = centerOverride ?? Location;
             if (center == null) return;
@@ -2046,6 +2046,15 @@ namespace ACE.Server.WorldObjects
                     }
 
                     // Damage selection:
+                    // Per-hit variance on the WHOLE base - see SpellProjectile for the reasoning.
+                    // Passed in rather than read off the weapon here, because this method is also the
+                    // Explosive Arrow path and must not start reading Cast on Strike props for it.
+                    if (procBaseDamage > 0 && procVariance > 0)
+                    {
+                        var v = Math.Clamp(procVariance, 0.0, 1.0);
+                        baseDamage = (long)Math.Round(baseDamage * (1.0 - v * ThreadSafeRandom.Next(0.0f, 1.0f)));
+                    }
+
                     // Cast on Strike: re-derive the crit bonus from the REPLACED base. Stock computes it
                     // from spell.MaxDamage, which for Cassius' Ring of Fire is 84 - so a crit added ~42
                     // to a ~9,440 base and a proc could not meaningfully crit at all. Crushing Blow was

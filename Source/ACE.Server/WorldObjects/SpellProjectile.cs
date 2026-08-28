@@ -814,6 +814,24 @@ namespace ACE.Server.WorldObjects
                     resistanceMod *= (float)ServerConfig.void_pvp_modifier.Value;
                 }
 
+                // Per-hit variance, applied to the WHOLE base - B AND the aug term (owner 2026-08-27:
+                // "whole base"). Varying B alone would be invisible: at 9,000 War augs B is 4.7 pct of
+                // the base. Spreads DOWN from the rolled value, same shape as zone spell_variance, so
+                // the band stays the ceiling. Before the crit re-derivation, so a crit scales off the
+                // number the hit actually uses.
+                if (isZcProc && weapon != null)
+                {
+                    var vProp = weapon.ProcSpell.HasValue && weapon.ProcSpell.Value == Spell.Id
+                        ? ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcArcVariancePropId
+                        : ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingVariancePropId;
+                    var variance = weapon.GetProperty((PropertyFloat)vProp) ?? 0.0;
+                    if (variance > 0)
+                    {
+                        variance = Math.Clamp(variance, 0.0, 1.0);
+                        baseDamage = (long)Math.Round(baseDamage * (1.0 - variance * ThreadSafeRandom.Next(0.0f, 1.0f)));
+                    }
+                }
+
                 // Cast on Strike: re-derive the crit bonus from the REPLACED base, same reasoning as the
                 // ring path and as the zone monster block below - stock computes it from Spell.MaxDamage
                 // (84 on these spells), so a crit added ~42 to a ~9,440 base and procs could not crit in

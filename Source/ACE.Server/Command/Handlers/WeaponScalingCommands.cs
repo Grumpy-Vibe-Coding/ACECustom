@@ -614,7 +614,7 @@ namespace ACE.Server.Command.Handlers
             // for both slots, since test gear almost always wants the full thing.
             public bool ProcArc; public bool ProcRing;
             public double ProcRate = 0.05; public double ProcDmg = 440;
-            public int ProcSpellcraft = 9999; public double ProcAugCap;
+            public int ProcSpellcraft = 9999; public double ProcAugCap; public double ProcVariance;
             public bool Rend;
             public double? RendPower;
             public int? Cleave;
@@ -650,6 +650,7 @@ namespace ACE.Server.Command.Handlers
                     case "procdmg": cards.ProcDmg = Math.Max(0.0, Num(440)); break;
                     case "procspellcraft": cards.ProcSpellcraft = (int)Math.Max(0, Num(9999)); break;
                     case "procaugcap": cards.ProcAugCap = Math.Max(0.0, Num(0)); break;
+                    case "procvariance": cards.ProcVariance = Math.Clamp(Num(0), 0.0, 1.0); break;
                     case "rend": cards.Rend = true; break;
                     case "rendpower": cards.RendPower = Math.Clamp(Num(1.5), 1.5, 10.0); break;
                     case "cleave": cards.Cleave = (int)Math.Clamp(Num(1), 1, 10); break;
@@ -708,6 +709,8 @@ namespace ACE.Server.Command.Handlers
                         wo.ProcSpellRate = c.ProcRate;
                         wo.ProcSpellSelfTargeted = false;
                         wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcArcDamagePropId, c.ProcDmg);
+                        if (c.ProcVariance > 0)
+                            wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcArcVariancePropId, c.ProcVariance);
                         applied.Add($"proc arc {arcId} @ {c.ProcRate:0.##} dmg {c.ProcDmg:0}");
                     }
 
@@ -716,6 +719,8 @@ namespace ACE.Server.Command.Handlers
                         wo.SetProperty((PropertyDataId)ZoneLootMutator.ProcSpell2PropId, ringId);
                         wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRate2PropId, c.ProcRate);
                         wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRingDamagePropId, c.ProcDmg);
+                        if (c.ProcVariance > 0)
+                            wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRingVariancePropId, c.ProcVariance);
                         applied.Add($"proc ring {ringId} @ {c.ProcRate:0.##} dmg {c.ProcDmg:0}");
                     }
 
@@ -983,7 +988,7 @@ namespace ACE.Server.Command.Handlers
             "Forges one Weapon Scaling test weapon of the given class (or a full set with 'all').",
             "<class|all> [quality 0-1000, default 500] [element] [tier 10-25, default 11; 10 = T10 loot-table range, unscaled + no wield gate, quality ignored] [cards:key=val,key,...]\n" +
             "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand\n" +
-            "cards: proc (Cast on Strike, BOTH slots) procarc procring (one slot only) procrate=0-1 procdmg=<n> procspellcraft=<n> procaugcap=<n> rend (matching rend imbue)\n" +
+            "cards: proc (Cast on Strike, BOTH slots) procarc procring (one slot only) procrate=0-1 procdmg=<n> procspellcraft=<n> procaugcap=<n> procvariance=0-1 rend (matching rend imbue)\n" +
             "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
             "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 slayer=1.5-10 slayertype=<name>\n" +
             "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)\n" +
