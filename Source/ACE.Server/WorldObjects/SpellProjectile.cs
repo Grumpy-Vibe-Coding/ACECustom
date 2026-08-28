@@ -814,6 +814,14 @@ namespace ACE.Server.WorldObjects
                     resistanceMod *= (float)ServerConfig.void_pvp_modifier.Value;
                 }
 
+                // Cast on Strike: re-derive the crit bonus from the REPLACED base, same reasoning as the
+                // ring path and as the zone monster block below - stock computes it from Spell.MaxDamage
+                // (84 on these spells), so a crit added ~42 to a ~9,440 base and procs could not crit in
+                // any meaningful way. Crushing Blow was dead for the same reason. After the aug term, so
+                // the crit scales with the whole base the hit actually uses.
+                if (isZcProc && criticalHit)
+                    critDamageBonus = (float)(baseDamage * 0.5f * weaponCritDamageMod);
+
                 finalDamage = baseDamage + critDamageBonus + skillBonus;
 
                 finalDamage *= elementalDamageMod * slayerMod * resistanceMod * absorbMod * attribBonus;

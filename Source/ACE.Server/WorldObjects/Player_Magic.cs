@@ -2046,6 +2046,19 @@ namespace ACE.Server.WorldObjects
                     }
 
                     // Damage selection:
+                    // Cast on Strike: re-derive the crit bonus from the REPLACED base. Stock computes it
+                    // from spell.MaxDamage, which for Cassius' Ring of Fire is 84 - so a crit added ~42
+                    // to a ~9,440 base and a proc could not meaningfully crit at all. Crushing Blow was
+                    // dead for the same reason: it feeds weaponCritDamageMod, which multiplied that same
+                    // 84. Measured in game 2026-08-27: a CRIT ring hit landed 0.16 pct above a non-crit
+                    // arc. Mirrors what the zone monster path already does after replacing a base.
+                    //
+                    // Placed AFTER the aug term so the crit scales with the whole base the hit uses, and
+                    // BEFORE preModDamage, which is the only consumer.
+                    if (procBaseDamage > 0 && criticalHit)
+                        critDamageBonus = baseDamage * 0.5f
+                            * GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature);
+
                     var preModDamage = isLifeProjectile
                         ? lifeMagicDamage + critDamageBonus
                         : baseDamage + critDamageBonus + skillBonus;
