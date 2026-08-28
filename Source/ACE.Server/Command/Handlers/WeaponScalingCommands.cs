@@ -735,7 +735,14 @@ namespace ACE.Server.Command.Handlers
             if (c.Rend)
             {
                 var rend = ForgeMatchingRend(wo.W_DamageType);
-                if (rend != ImbuedEffectType.Undef) { wo.ImbuedEffect |= rend; applied.Add(rend.ToString()); }
+                // Underlay too, or the forged weapon reads as rended on appraisal but shows a plain
+                // icon in the pack - the same gap the loot path had.
+                if (rend != ImbuedEffectType.Undef)
+                {
+                    wo.ImbuedEffect |= rend;
+                    ZoneLootMutator.ApplyRendUnderlay(wo, rend);
+                    applied.Add(rend.ToString());
+                }
                 else skipped.Add("rend (no resolvable damage type)");
             }
 

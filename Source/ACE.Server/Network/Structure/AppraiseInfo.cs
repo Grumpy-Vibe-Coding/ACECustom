@@ -1304,15 +1304,19 @@ namespace ACE.Server.Network.Structure
                 {
                     var mod = WorldObject.GetRendingMod(skill);
 
-                    // Zone Control loot: rend power override is a DIRECT vuln bonus (rendingMod = 1 +
-                    // override), mirroring GetWeaponResistanceModifier, so the tooltip shows exactly the
-                    // configured strength (e.g. wire 7.0 -> +700% Dmg).
+                    // Zone Control loot: the rend power override substitutes for the skill formula
+                    // (rendingMod = 1 + override), mirroring GetWeaponResistanceModifier, so the tooltip
+                    // shows exactly the configured strength (e.g. wire 7.0 -> +700% Dmg).
                     var rendOverride = weapon.GetProperty((PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.RendingModOverridePropId);
                     if (rendOverride.HasValue && rendOverride.Value > 0)
                         mod = 1.0f + (float)rendOverride.Value;
 
+                    // NO "(vuln)" SUFFIX (owner 2026-08-27: "Rend is not a vuln, text should not be
+                    // there"). It shared a slot with the vuln multiplier internally - they are MAX'd,
+                    // never stacked - but that is an implementation detail of the resist chain and has
+                    // no business on a player-facing line. A rend is a rend.
                     var bonusPct = (mod - 1.0);
-                    effectDescriptions.Add($"- {type.DisplayName()}: +{bonusPct:P0} Dmg (vuln)");
+                    effectDescriptions.Add($"- {type.DisplayName()}: +{bonusPct:P0} Dmg");
                 }
             }
 

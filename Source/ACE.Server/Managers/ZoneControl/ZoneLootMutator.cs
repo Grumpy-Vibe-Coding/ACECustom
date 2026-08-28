@@ -144,6 +144,23 @@ namespace ACE.Server.Managers.ZoneControl
         /// on the presence of its own min/max pair - and Won() returns FALSE for an UNDEFINED stat:
         /// unset means NEVER, not "0 pct". A zone that authors nothing rolls nothing, as before.
         /// </summary>
+        /// <summary>Stamps the elemental icon underlay that goes with a rend, so a rended drop LOOKS
+        /// rended (owner 2026-08-27: a live-server rend shows a coloured background, our minted drops
+        /// showed none). The real imbue recipes set this via RecipeManager.IconUnderlay; stamping the
+        /// imbue bit without it produced a weapon that read as rended on appraisal but not in the pack.
+        ///
+        /// NetherRending is deliberately absent from RecipeManager's table - the fallback id is the one
+        /// DeveloperCommands already hardcodes for it in two places, so this stays consistent with the
+        /// rest of the codebase rather than inventing a third answer.
+        /// </summary>
+        public static void ApplyRendUnderlay(WorldObject wo, ImbuedEffectType rend)
+        {
+            if (ACE.Server.Managers.RecipeManager.IconUnderlay.TryGetValue(rend, out var underlayId))
+                wo.IconUnderlayId = underlayId;
+            else if (rend == ImbuedEffectType.NetherRending)
+                wo.IconUnderlayId = 0x060067A1;
+        }
+
         private static void StampWeaponCard(WorldObject wo, EvaluatedProfile p,
             ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
         {
@@ -420,7 +437,11 @@ namespace ACE.Server.Managers.ZoneControl
                 var candidates = GetMatchingRends(wo.W_DamageType);
                 candidates.RemoveAll(rend => (wo.GetImbuedEffects() & rend) != 0);
                 if (candidates.Count > 0)
-                    wo.ImbuedEffect |= candidates[ThreadSafeRandom.Next(0, candidates.Count - 1)];
+                {
+                    var rend = candidates[ThreadSafeRandom.Next(0, candidates.Count - 1)];
+                    wo.ImbuedEffect |= rend;
+                    ApplyRendUnderlay(wo, rend);
+                }
             }
 
             // rend power: per-weapon rend strength as a DIRECT vuln bonus, rolled per drop in [min, max]
