@@ -64,6 +64,18 @@ namespace ACE.Server.Managers.ZoneControl
                 if (p.Get(ZoneStat.WeaponUnenchantable, 0) != 0)
                     wo.ResistMagic = 9999;
             }
+            else
+            {
+                // Armor-side twin (2026-08-28): the same three rules for every NON-weapon zone-set
+                // drop - armor, clothing, jewelry, cloaks - the population armor_modifier_chance
+                // already governs. Authored from Loot > Armor > Rules.
+                if (p.Get(ZoneStat.ArmorAttuned, 0) != 0)
+                    wo.Attuned = AttunedStatus.Attuned;
+                if (p.Get(ZoneStat.ArmorBonded, 0) != 0)
+                    wo.Bonded = BondedStatus.Bonded;
+                if (p.Get(ZoneStat.ArmorUnenchantable, 0) != 0)
+                    wo.ResistMagic = 9999;
+            }
 
             // (weapon_workmanship_min/max and value_mult/min/max removed 2026-08-23)
 
@@ -124,7 +136,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// that way since 2026-08-22 - an armour line records a GRADE 0-1000 and the property is a cache
         /// resolved from that grade against the LIVE ladder. The owner's instruction was to make the two
         /// identical ("full parity with weapons and armor"), so this does for a weapon card exactly what
-        /// ZoneCantrips.StampGraded does for an armour line:
+        /// ZoneModifiers.StampGraded does for an armour line:
         ///     roll a grade -> resolve it inside the effective band -> write the property -> RECORD THE GRADE.
         /// The grade is the truth; the property is its projection. RollBanded, which used to be the
         /// number producer, is now only consulted through ZoneStatResolver.WeaponDropBand.
@@ -561,8 +573,8 @@ namespace ACE.Server.Managers.ZoneControl
             // weapon re-resolves, and removing it would erase that player's bonus on their next equip.
 
             // the zone-cantrip LINES on top of whatever the roll produced — the zone's pool only
-            // (prop-based ZoneCantrips catalog; retail cantrips deliberately excluded)
-            TryExtraCantrip(wo, p, isWeapon, forceMax, lootTier);
+            // (prop-based ZoneModifiers catalog; retail cantrips deliberately excluded)
+            TryExtraModifier(wo, p, isWeapon, forceMax, lootTier);
 
             // WEAPON RESOLVE IDENTITY, last, once the record is final (2026-08-25).
             //
@@ -593,31 +605,31 @@ namespace ACE.Server.Managers.ZoneControl
         ///   (b) each slot picks a DISTINCT key from the zone pool, weighted by Def.Class
         ///       (cantrip_weight_trash/mid/chase);
         ///       SlotSpecial defs never enter; the per-line slot rule decides which piece kinds may roll it;
-        ///   (c) bands: the zone override (CustomCantripBands) wins over the catalog, unchanged;
+        ///   (c) bands: the zone override (CustomModifierBands) wins over the catalog, unchanged;
         ///   (d) forceMax (the piece carries the per-kill slot special) = every line at band MAX.
         /// armor_cantrip_chance / weapon_cantrip_chance stay the master on/off gate.
         /// </summary>
-        private static void TryExtraCantrip(WorldObject wo, EvaluatedProfile p, bool isWeapon, bool forceMax, int lootTier = 11)
+        private static void TryExtraModifier(WorldObject wo, EvaluatedProfile p, bool isWeapon, bool forceMax, int lootTier = 11)
         {
-            if (!Won(p, isWeapon ? ZoneStat.WeaponCantripChance : ZoneStat.ArmorCantripChance))
+            if (!Won(p, isWeapon ? ZoneStat.WeaponModifierChance : ZoneStat.ArmorModifierChance))
                 return;
 
-            var pool = p.CustomCantrips;
+            var pool = p.CustomModifiers;
             if (pool == null || pool.Count == 0)
                 return;
 
             // (a) how many lines this piece gets
-            var fb = ZoneCantrips.LinesFallback(lootTier);   // tier-scaled fallback (owner 2026-08-23); authored stats win
-            var linesMin = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMin, fb.Min)), 0, 8);
-            var linesMax = Math.Clamp((int)Math.Round(p.Get(ZoneStat.CantripLinesMax, fb.Max)), linesMin, 8);
+            var fb = ZoneModifiers.LinesFallback(lootTier);   // tier-scaled fallback (owner 2026-08-23); authored stats win
+            var linesMin = Math.Clamp((int)Math.Round(p.Get(ZoneStat.ModifierLinesMin, fb.Min)), 0, 8);
+            var linesMax = Math.Clamp((int)Math.Round(p.Get(ZoneStat.ModifierLinesMax, fb.Max)), linesMin, 8);
             var lines = linesMin;
             for (int slot = 1; lines < linesMax; slot++)
             {
                 var chanceStat = slot switch
                 {
-                    1 => ZoneStat.CantripLinesChance1,
-                    2 => ZoneStat.CantripLinesChance2,
-                    _ => ZoneStat.CantripLinesChance3,
+                    1 => ZoneStat.ModifierLinesChance1,
+                    2 => ZoneStat.ModifierLinesChance2,
+                    _ => ZoneStat.ModifierLinesChance3,
                 };
                 var chance = Math.Clamp(p.Get(chanceStat, slot == 1 ? fb.Chance1 : slot == 2 ? fb.Chance2 : fb.Chance3), 0.0, 1.0);
                 if (chance <= 0 || ThreadSafeRandom.Next(0.0f, 1.0f) >= chance)
@@ -629,26 +641,26 @@ namespace ACE.Server.Managers.ZoneControl
 
             var hasArmor = !isWeapon && wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0;
             // per-line slot rule (owner 2026-08-22): zone / Default override per key, else the catalog's ArmorOnly / JewelryOnly
-            var pieceMask = ZoneCantrips.PieceMask(wo);
+            var pieceMask = ZoneModifiers.PieceMask(wo);
 
             // (b) zone pool -> weighted candidate list (retired / special / armor-only-on-armorless never enter)
-            var weightTrash = Math.Max(0.0, p.Get(ZoneStat.CantripWeightTrash, 10.0));
-            var weightMid = Math.Max(0.0, p.Get(ZoneStat.CantripWeightMid, 6.0));
-            var weightChase = Math.Max(0.0, p.Get(ZoneStat.CantripWeightChase, 1.0));
+            var weightTrash = Math.Max(0.0, p.Get(ZoneStat.ModifierWeightTrash, 10.0));
+            var weightMid = Math.Max(0.0, p.Get(ZoneStat.ModifierWeightMid, 6.0));
+            var weightChase = Math.Max(0.0, p.Get(ZoneStat.ModifierWeightChase, 1.0));
 
-            var candidates = new List<(ZoneCantrips.Def Def, double Weight)>();
+            var candidates = new List<(ZoneModifiers.Def Def, double Weight)>();
             var seen = new HashSet<int>();
             foreach (var key in pool)
             {
-                if (!seen.Add(key) || !ZoneCantrips.TryGet(key, out var def) || def.SlotSpecial)   // unknown keys (retired, removed from the catalog) are skipped
+                if (!seen.Add(key) || !ZoneModifiers.TryGet(key, out var def) || def.SlotSpecial)   // unknown keys (retired, removed from the catalog) are skipped
                     continue;
-                if (!ZoneCantrips.SlotAllowed(ZoneCantrips.EffectiveSlotMask(def, p.CantripSlots), pieceMask))
+                if (!ZoneModifiers.SlotAllowed(ZoneModifiers.EffectiveSlotMask(def, p.ModifierSlots), pieceMask))
                     continue;
                 var weight = def.Class switch   // Crit Chance is a plain Chase line since 2026-08-23 (crit weight removed)
                 {
-                    ZoneCantrips.CantripClass.Trash => weightTrash,
-                    ZoneCantrips.CantripClass.Mid => weightMid,
-                    ZoneCantrips.CantripClass.Chase => weightChase,
+                    ZoneModifiers.ModifierClass.Trash => weightTrash,
+                    ZoneModifiers.ModifierClass.Mid => weightMid,
+                    ZoneModifiers.ModifierClass.Chase => weightChase,
                     _ => 0.0,
                 };
                 if (weight > 0)
@@ -660,8 +672,8 @@ namespace ACE.Server.Managers.ZoneControl
                 var def = PickWeighted(candidates);
                 candidates.RemoveAll(c => c.Def.Key == def.Key);   // distinct per piece
 
-                var (min, max) = p.CantripBands.TryGetValue(def.Key, out var band)
-                    ? (band.Min, band.Max) : ZoneCantrips.CatalogBandAt(def, lootTier);   // hardcoded fallback is tier-scaled (2026-08-23)
+                var (min, max) = p.ModifierBands.TryGetValue(def.Key, out var band)
+                    ? (band.Min, band.Max) : ZoneModifiers.CatalogBandAt(def, lootTier);   // hardcoded fallback is tier-scaled (2026-08-23)
 
                 // insurance against hand-edited store bands - an inverted band must not throw mid-loot
                 if (min > max) (min, max) = (max, min);
@@ -672,12 +684,12 @@ namespace ACE.Server.Managers.ZoneControl
                 // to the plain Stamp inside StampGraded (earned + frozen, never in the record).
                 // Proc-shaped bands are gone from the catalog and from Def entirely (2026-08-24).
                 var grade = ZoneStatResolver.RollGrade(lootTier, forceMax);
-                ZoneCantrips.StampGraded(wo, def, grade, (min, max));
+                ZoneModifiers.StampGraded(wo, def, grade, (min, max));
             }
         }
 
         /// <summary>Weighted pick over a (def, weight) list; weights are arbitrary positive doubles.</summary>
-        private static ZoneCantrips.Def PickWeighted(List<(ZoneCantrips.Def Def, double Weight)> candidates)
+        private static ZoneModifiers.Def PickWeighted(List<(ZoneModifiers.Def Def, double Weight)> candidates)
         {
             var total = 0.0;
             foreach (var c in candidates)

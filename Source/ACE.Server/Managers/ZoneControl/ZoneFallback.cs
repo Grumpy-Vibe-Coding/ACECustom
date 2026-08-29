@@ -43,7 +43,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// line's 50-250 becomes 8-42. PINNED lines (Crit Chance, Max Health Pct, Life on Hit, Reinforced -
         /// the 1-3 bands) do not scale on the ladder either, so they pass through unchanged.
         /// </summary>
-        public static (int Min, int Max) Band(ZoneCantrips.Def def)
+        public static (int Min, int Max) Band(ZoneModifiers.Def def)
         {
             if (def == null)
                 return (0, 0);

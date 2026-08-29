@@ -81,7 +81,7 @@ namespace ACE.Server.Network.Structure
             BuildProperties(wo, examiner);
             BuildSpells(wo);
 
-            // Live Stat Resolution (owner 2026-08-22, plan 3b): a piece with a ZcCantrips record is
+            // Live Stat Resolution (owner 2026-08-22, plan 3b): a piece with a ZcModifiers record is
             // resolved from its grades against the LIVE ladder for the RESPONSE COPY only - wo is
             // never written, never marked dirty (equip is the only re-stamp site: ApplyIfStale).
             var zcResolved = ZoneStatResolver.Compute(wo);
@@ -133,7 +133,7 @@ namespace ACE.Server.Network.Structure
             // Owner 2026-08-22: Zone Cantrip lines belong in the Property Details section, not
             // adrift in the description block. Runs here so downstream LongDesc edits see the same
             // shape they always have (a block already pinned to the top).
-            PromoteZoneCantripLines(zcResolved);
+            PromoteZoneModifierLines(zcResolved);
 
             // TODO: Resolve this issue a better way?
             // Because of the way ACE handles default base values in recipe system (or rather the lack thereof)
@@ -896,12 +896,18 @@ namespace ACE.Server.Network.Structure
             }
         }
 
-        private const string ZoneCantripPrefix = "Zone Cantrip:";
-        private const string CantripSectionHeader = "Cantrips:";
+        // The stored per-line marker. The VALUE is frozen plumbing - NEVER change the string: it is
+        // baked into live items' LongDesc and four readers key on the exact string (this promoter,
+        // the T11 whitelist, ladder diag/migrate). It is stripped before display, so players never
+        // see it. Only the const NAME followed the cantrip -> modifier rename (2026-08-28).
+        private const string LegacyModifierMarker = "Zone Cantrip:";
+        // The section header players DO see. "Cantrips:" -> "Modifiers:" (owner 2026-08-28: the
+        // lines are flat stat bonuses, not cantrips - the retail word was a misnomer).
+        private const string ModifierSectionHeader = "Modifiers:";
         private const string WeaponDetailsHeader = "Property Details:";
 
         /// <summary>
-        /// Cantrip lines are baked into wo.LongDesc at stamp time (ZoneCantrips.Stamp), so on
+        /// Cantrip lines are baked into wo.LongDesc at stamp time (ZoneModifiers.Stamp), so on
         /// armor / clothing / shields / jewelry they render as raw description text - none of those
         /// build a details section, only BuildWeapon does. Owner 2026-08-22: they get their own
         /// "Cantrips:" section. Creature Augmentation used to be lifted in here as a special case
@@ -960,11 +966,11 @@ namespace ACE.Server.Network.Structure
         /// the bullets come from the record (record order, specials and Armor Level included, the core
         /// four excluded - they are ratings, not cantrip lines) plus any baked Reinforced text line
         /// (earned + frozen, never in the record). The baked "Zone Cantrip:" text is stripped either way.</param>
-        private void PromoteZoneCantripLines(ZoneStatResolver.Resolved resolved = null)
+        private void PromoteZoneModifierLines(ZoneStatResolver.Resolved resolved = null)
         {
             if (!PropertiesString.TryGetValue(PropertyString.LongDesc, out var ld) || string.IsNullOrEmpty(ld))
                 return;
-            if (ld.IndexOf(ZoneCantripPrefix, StringComparison.Ordinal) < 0)
+            if (ld.IndexOf(LegacyModifierMarker, StringComparison.Ordinal) < 0)
                 return;
 
             var cantrips = new List<string>();
@@ -973,9 +979,9 @@ namespace ACE.Server.Network.Structure
             foreach (var raw in ld.Split('\n'))
             {
                 var line = raw.Trim();
-                if (line.StartsWith(ZoneCantripPrefix, StringComparison.Ordinal))
+                if (line.StartsWith(LegacyModifierMarker, StringComparison.Ordinal))
                 {
-                    var name = line.Substring(ZoneCantripPrefix.Length).Trim();
+                    var name = line.Substring(LegacyModifierMarker.Length).Trim();
                     if (name.Length == 0)
                         continue;
                     if (resolved == null)
@@ -1008,7 +1014,7 @@ namespace ACE.Server.Network.Structure
                 body = body.Replace("\n\n\n", "\n\n");
             body = body.Trim('\n');
 
-            var block = CantripSectionHeader + "\n" + string.Join("\n", cantrips);
+            var block = ModifierSectionHeader + "\n" + string.Join("\n", cantrips);
 
             if (body.StartsWith(WeaponDetailsHeader, StringComparison.Ordinal))
             {

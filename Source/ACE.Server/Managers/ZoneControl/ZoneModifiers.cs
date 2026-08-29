@@ -17,7 +17,7 @@ namespace ACE.Server.Managers.ZoneControl
     /// Consumers: CreatureAttribute.GetCurrent, CreatureSkill.GetAugBonus_Current, CreatureVital.GearBonus,
     /// Creature_Vitals.VitalHeartBeat (regen augMod), EnchantmentManager/AddEnchantmentResult (spell duration).
     /// </summary>
-    public static class ZoneCantrips
+    public static class ZoneModifiers
     {
         // ── custom PropertyInt ids (ZC cantrip block) ────────────────────────
         public const int PropMin = 50200;
@@ -28,7 +28,7 @@ namespace ACE.Server.Managers.ZoneControl
         public const int FortifyVitalsPct = 50226;    // additive percentage POINTS across pieces - all three vitals (key 41)
         public const int BattleMendChancePct = 50227; // per-PIECE proc chance in % (key 42)
         public const int BattleMendHealAmount = 50228;// per-PIECE heal amount on proc (key 42) - LEGACY, no longer stamped
-        // Armor v2 slot specials (2026-08-21): MAX-wins across worn pieces (Creature.GetZoneCantripMax), never summed
+        // Armor v2 slot specials (2026-08-21): MAX-wins across worn pieces (Creature.GetZoneModifierMax), never summed
         public const int PctHpDamagePct = 50229;      // Gauntlets (key 44): pct of target max HP per hit, in TENTHS of a pct (45 = 4.5 pct)
         public const int CheatDeathFlag = 50230;      // Boots (key 45): stamp 1 - lethal hit -> 1 HP + immunity window
         public const int RegenSpecialMult = 50231;    // Bracers (key 46): FLAT pct of max vital added per natural regen tick (was a multiplier until 2026-08-23)
@@ -41,7 +41,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>
         /// Per-line slot rule (owner 2026-08-22, "a way to specify live in game which slots the cantrip
         /// can drop in"). Bit flags; 0 = Any. The catalog's ArmorOnly / JewelryOnly flags are the
-        /// DEFAULT (DefaultSlotMask); a zone / Default-layer override (ZoneVariantProfile.CustomCantripSlots,
+        /// DEFAULT (DefaultSlotMask); a zone / Default-layer override (ZoneVariantProfile.CustomModifierSlots,
         /// `cantrip <scope> slots <key> ...`) replaces it per key. The mutator and the premade forge both ask
         /// EffectiveSlotMask, so what drops and what /asforge mints agree.
         /// </summary>
@@ -105,7 +105,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>
         /// Where a SLOT SPECIAL lands (owner 2026-08-22: "drop down here, just with single slot"). One id per
         /// drop slot of the T11+ set. The catalog's SpecialSlot (CoverageMask) is the default; a zone / Default
-        /// override in CustomCantripSlots (same dict as the line slot rules - for a special the value is a
+        /// override in CustomModifierSlots (same dict as the line slot rules - for a special the value is a
         /// SpecialSlotId, not a mask) replaces it. Creature_Death matches and spawns by this id.
         /// </summary>
         public enum SpecialSlotId
@@ -219,14 +219,14 @@ namespace ACE.Server.Managers.ZoneControl
             public int Min25, Max25;                       // optional explicit T25 anchor: band lerps linearly T11 (Min/Max) -> T25 (Min25/Max25); 0 = unused
             public bool SetsProtection;                    // key 49 Reinforced - the rolled value is a RANK that SETS every ArmorModVs* on the piece
             public (int PropId, int Value)[] Ints;         // int props stamped on the item; PropId also = banded stamp target
-            public CantripClass Class;                     // Armor v2 pick weight class (Trash/Mid/Chase); None = never in the line pool
+            public ModifierClass Class;                     // Armor v2 pick weight class (Trash/Mid/Chase); None = never in the line pool
             public bool SlotSpecial;                       // Armor v2 slot special: rolls once per KILL outside the line count, MAX-wins when worn
             public CoverageMask SpecialSlot;               // the armor slot a SlotSpecial stamps onto (Head/OuterwearChest/Hands/Feet/OuterwearLowerArms)
         }
 
         /// <summary>Armor v2 random-pool weight class (Cantrip_Band_Ladder v2 section 2). The per-class
         /// weights are zone stats cantrip_weight_trash/mid/chase.</summary>
-        public enum CantripClass
+        public enum ModifierClass
         {
             None = 0,   // retired / specials - never drawn as a line
             Trash,      // 32 Spell Duration, 25 Armor Level
@@ -237,21 +237,21 @@ namespace ACE.Server.Managers.ZoneControl
         private static (int, int)[] P(int propId, int v) => new[] { (propId, v) };
 
         /// <summary>The unique zone cantrip catalog. Keys are stable — they live in saved zone pools.
-        /// Bands (Min/Max/ValFmt) mirror the plugin CantripCatalog, the band authority.</summary>
+        /// Bands (Min/Max/ValFmt) mirror the plugin ModifierCatalog, the band authority.</summary>
         public static readonly SortedDictionary<int, Def> Catalog = new()
         {
             // vitals
-            { 19, new Def { Key = 19, TierScaled = true, Class = CantripClass.Mid, Name = "Max Health", Effect = "+14-69 Max Health", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearMaxHealth, 300) } },
+            { 19, new Def { Key = 19, TierScaled = true, Class = ModifierClass.Mid, Name = "Max Health", Effect = "+14-69 Max Health", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearMaxHealth, 300) } },
             // bulwark (Aegis is the ONLY line that modifies the item, not the player - armor/shield pieces only)
-            { 25, new Def { Key = 25, TierScaled = true, Class = CantripClass.Trash, ArmorOnly = true, Name = "Armor Level", Effect = "+300 Armor Level on this piece", ValFmt = "+{0}", Min = 50, Max = 250 } },
+            { 25, new Def { Key = 25, TierScaled = true, Class = ModifierClass.Trash, ArmorOnly = true, Name = "Armor Level", Effect = "+300 Armor Level on this piece", ValFmt = "+{0}", Min = 50, Max = 250 } },
             // slaughter
-            { 28, new Def { Key = 28, TierScaled = true, Class = CantripClass.Mid, Name = "Damage Rating", Effect = "+14-69 Damage Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearDamage, 25) } },
-            { 29, new Def { Key = 29, TierScaled = true, Class = CantripClass.Mid, Name = "Crit Damage Rating", Effect = "+14-69 Critical Damage Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearCritDamage, 40) } },
+            { 28, new Def { Key = 28, TierScaled = true, Class = ModifierClass.Mid, Name = "Damage Rating", Effect = "+14-69 Damage Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearDamage, 25) } },
+            { 29, new Def { Key = 29, TierScaled = true, Class = ModifierClass.Mid, Name = "Crit Damage Rating", Effect = "+14-69 Critical Damage Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearCritDamage, 40) } },
             // whimsy
-            { 31, new Def { Key = 31, TierScaled = true, Class = CantripClass.Mid, Name = "Healing Boost", Effect = "+14-69 Healing Boost Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearHealingBoost, 40) } },
-            { 32, new Def { Key = 32, Class = CantripClass.Trash, Name = "Spell Duration", Effect = "+100 pct spell duration", ValFmt = "+{0} lvl", Min = 1, Max = 3, Ints = P(SpellDurationLevels, 5) } },
+            { 31, new Def { Key = 31, TierScaled = true, Class = ModifierClass.Mid, Name = "Healing Boost", Effect = "+14-69 Healing Boost Rating", ValFmt = "+{0}", Min = 14, Max = 69, Ints = P((int)PropertyInt.GearHealingBoost, 40) } },
+            { 32, new Def { Key = 32, Class = ModifierClass.Trash, Name = "Spell Duration", Effect = "+100 pct spell duration", ValFmt = "+{0} lvl", Min = 1, Max = 3, Ints = P(SpellDurationLevels, 5) } },
             // ratings (banded-only lines - legacy fixed Value is 0, they never ship via the legacy overload)
-            { 33, new Def { Key = 33, Class = CantripClass.Chase, Name = "Crit Chance", Effect = "+1-3 Crit Rating", ValFmt = "+{0}", Min = 1, Max = 3, Ints = P((int)PropertyInt.GearCrit, 0) } },
+            { 33, new Def { Key = 33, Class = ModifierClass.Chase, Name = "Crit Chance", Effect = "+1-3 Crit Rating", ValFmt = "+{0}", Min = 1, Max = 3, Ints = P((int)PropertyInt.GearCrit, 0) } },
             // 37-40 RETIRED 2026-08-22 (owner): four class-split copies of what Damage Rating (28) already does
             // for every class. They forced a melee/caster premade split and made 3 of 4 dead for any given
             // player. Keys kept (saved pools, old items still read), props 50222-50225 still summed on equip.
@@ -272,17 +272,17 @@ namespace ACE.Server.Managers.ZoneControl
             // ── 2026-08-22 pool additions (owner cantrip walkthrough; design in Cantrip_Pool_Decisions_2026-08-22.md) ──
             // Pct Max Health - chase, pinned 1-3 like Crit Chance, SUMMED across pieces (18 x 3 = 54 pct at BiS),
             // stacks on top of the Helm special Fortify Vitals (max-wins). Read in CreatureVital (MaxHealth only).
-            { 47, new Def { Key = 47, Class = CantripClass.Chase, Name = "Max Health Pct", Effect = "+1-3 pct max health", ValFmt = "+{0}%", Min = 1, Max = 3, Ints = P(PctMaxHealthPct, 0) } },
+            { 47, new Def { Key = 47, Class = ModifierClass.Chase, Name = "Max Health Pct", Effect = "+1-3 pct max health", ValFmt = "+{0}%", Min = 1, Max = 3, Ints = P(PctMaxHealthPct, 0) } },
             // Life on Hit - chase, JEWELRY ONLY (6 slots), 1-3 pct of the wielder's max HP per landed hit, summed,
             // worn cap lifeonhit_cap (25 pct), lifeonhit_cooldown (3 s). Read in Player.ZcTryLifeOnHit from both hit paths.
-            { 48, new Def { Key = 48, Class = CantripClass.Chase, JewelryOnly = true, Name = "Life on Hit", Effect = "heal 1-3 pct max HP per hit", ValFmt = "{0}% HP per hit", Min = 1, Max = 3, Ints = P(LifeOnHitPct, 0) } },
+            { 48, new Def { Key = 48, Class = ModifierClass.Chase, JewelryOnly = true, Name = "Life on Hit", Effect = "heal 1-3 pct max HP per hit", ValFmt = "{0}% HP per hit", Min = 1, Max = 3, Ints = P(LifeOnHitPct, 0) } },
             // Reinforced - mid, ARMOR ONLY, the value is a protection RANK: +1 Superior 1.40 / +2 Excellent 1.60 /
             // +3 Unparalleled 1.80. Stamp SETS every ArmorModVs* on the piece (after EqualizeT11ArmorResists), so it
             // is item data, not an enchantment - hollow mobs cannot strip it. Tier-weighted toward +3 via TierThirds.
-            { 49, new Def { Key = 49, Class = CantripClass.Mid, ArmorOnly = true, SetsProtection = true, Name = "Reinforced", Effect = "+1-3 protection rank (Superior / Excellent / Unparalleled)", ValFmt = "+{0}", Min = 1, Max = 3, Ints = P(ReinforcedRank, 0) } },
+            { 49, new Def { Key = 49, Class = ModifierClass.Mid, ArmorOnly = true, SetsProtection = true, Name = "Reinforced", Effect = "+1-3 protection rank (Superior / Excellent / Unparalleled)", ValFmt = "+{0}", Min = 1, Max = 3, Ints = P(ReinforcedRank, 0) } },
             // ── Armor v2 pool additions ─────────────────────────────────────────────────────────
             // All Attributes - six attrs behind ONE line (keys 1-6 retired); anchor 2500 at T25 = the Dmg/HP per-piece table. AVERAGE class since 2026-08-23 (owner)
-            { 43, new Def { Key = 43, TierScaled = true, Class = CantripClass.Mid, Name = "All Attributes", Effect = "+14-69 to ALL six attributes", ValFmt = "+{0}", Min = 14, Max = 69,
+            { 43, new Def { Key = 43, TierScaled = true, Class = ModifierClass.Mid, Name = "All Attributes", Effect = "+14-69 to ALL six attributes", ValFmt = "+{0}", Min = 14, Max = 69,
                 Ints = new[] { (AttrBonusBase + (int)PropertyAttribute.Strength, 0), (AttrBonusBase + (int)PropertyAttribute.Endurance, 0), (AttrBonusBase + (int)PropertyAttribute.Coordination, 0),
                                (AttrBonusBase + (int)PropertyAttribute.Quickness, 0), (AttrBonusBase + (int)PropertyAttribute.Focus, 0), (AttrBonusBase + (int)PropertyAttribute.Self, 0) } } },
         };
@@ -334,14 +334,14 @@ namespace ACE.Server.Managers.ZoneControl
         // 1.85x crush, 2.10 slayer. Def.Min/Max are ints, and CatalogBandAt returns (int, int).
         // Widening those would drag ValueFor/GradeFor, StampGraded, Stamp, the "[min-max]" LongDesc
         // text (which ZoneControlCommands.TryParseZcLine PARSES BACK for legacy-item migration),
-        // CantripBand (which is BOTH the [[ZC]]/[[ZCD]] wire shape AND the on-disk store JSON), and
+        // ModifierBand (which is BOTH the [[ZC]]/[[ZCD]] wire shape AND the on-disk store JSON), and
         // the plugin's int.Parse of the cantrips= tag - a synchronised server+plugin deploy for six
         // values that never travel the wire in the first place. So: a separate table, double bounds,
         // keyed by the STAT NAME PAIR that already exists.
         //
         // Keying by stat name rather than by a new integer Catalog key is deliberate. Catalog keys
         // are load-bearing forever (see the comment at Catalog and at the retired 37-40 block): they
-        // live in saved zone pools (ZoneVariantProfile.CustomCantrips) and on already-dropped items.
+        // live in saved zone pools (ZoneVariantProfile.CustomModifiers) and on already-dropped items.
         // Minting six of them for weapons would leak weapon keys into the armour line pool and into
         // the "cantrip <scope> band <key>" command surface, where they mean nothing. This table
         // mints none, changes no existing type, and needs ZERO wire or store work.
@@ -582,7 +582,7 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         /// <summary>
-        /// GRADED stamp (live stat resolution, 2026-08-22): records (key, grade) in the piece's ZcCantrips
+        /// GRADED stamp (live stat resolution, 2026-08-22): records (key, grade) in the piece's ZcModifiers
         /// record, SETS the line's props to the value the grade resolves to inside the EFFECTIVE band
         /// (what a later ladder apply will recompute against the live band), and writes the same drop line
         /// text as <see cref="Stamp"/>. SET, not additive - one line per key per piece, the record is the

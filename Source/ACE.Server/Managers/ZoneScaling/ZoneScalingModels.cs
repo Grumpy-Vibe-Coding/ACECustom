@@ -160,6 +160,13 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponAttuned = "weapon_attuned";        // nonzero = rolled weapons drop Attuned (can't be traded/dropped)
         public const string WeaponBonded = "weapon_bonded";          // nonzero = rolled weapons drop Bonded (stay on death)
         public const string WeaponUnenchantable = "weapon_unenchantable"; // nonzero = rolled weapons drop unenchantable (ResistMagic 9999)
+        // Armor-side drop rules (2026-08-28, owner: the Rules tab gets an armor twin so the two
+        // loot branches mirror). Same semantics as the weapon three; they cover every NON-weapon
+        // zone-set drop - armor, clothing, jewelry, cloaks - the population armor_modifier_chance
+        // already governs.
+        public const string ArmorAttuned = "armor_attuned";          // nonzero = rolled non-weapon drops are Attuned
+        public const string ArmorBonded = "armor_bonded";            // nonzero = rolled non-weapon drops are Bonded
+        public const string ArmorUnenchantable = "armor_unenchantable"; // nonzero = rolled non-weapon drops are unenchantable (ResistMagic 9999)
 
         // C3. loot special-property rolls (independent 0..1 chance per eligible dropped item — "fun stuff")
         // Cast on Strike, REWRITTEN 2026-08-27 (owner). The card is now TWO INDEPENDENT slots - an ARC
@@ -203,36 +210,42 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string WeaponProcArcVariance = "weapon_proc_arc_variance";   // 0 = flat, 0.5 = 50-100 pct of base
         public const string WeaponProcRingVariance = "weapon_proc_ring_variance";
         public const string WeaponProcSpellcraft = "weapon_proc_spellcraft";  // stamped ItemSpellcraft
-        // FLAT aug fold-in (owner 2026-08-27, "Flat"). The player's Melee + Missile + War + Void
-        // effective aug counts are SUMMED and added to B, so a proc scales with what the wielder has
-        // actually invested in - including a pure melee character, whose proc read exactly zero augs
-        // before, since the stock path only ever added War/Void.
+        // FLAT aug fold-in - WAR/VOID ONLY, picked by the proc spell's school (owner reversed the
+        // earlier melee/missile-matched build the same night, 2026-08-27: "The procs are spells").
+        // A melee character with no War/Void augs gets B and nothing more, which is intended.
+        // (An older version of this comment claimed all four counts were SUMMED - that build never
+        // shipped; the code below and both damage paths read the one school count.)
         //
-        // THE CAP IS THE WHOLE SAFETY MECHANISM. Each count reaches 10,000 on the live shard, so an
-        // uncapped sum is a 0..40,000 flat addition on top of a 440 base - the same uncontrolled,
-        // wielder-driven spread that B was introduced to remove. UNSET = UNCAPPED; there is no
-        // defensible default to invent here, so it is a knob the owner must set.
-        public const string WeaponProcAugCap = "weapon_proc_aug_cap";        // max TOTAL aug contribution; unset/0 = uncapped
+        // THE CAP IS THE WHOLE SAFETY MECHANISM. War counts reach 10,000 and Void 17,150 on the
+        // live shard, so uncapped is up to a 0..17,150 flat addition on top of a 440 base - the
+        // same uncontrolled, wielder-driven spread that B was introduced to remove. UNSET =
+        // UNCAPPED; there is no defensible default to invent here, so it is a knob the owner must
+        // set. Read by BOTH damage paths since 2026-08-28 (the ring path missed it before).
+        public const string WeaponProcAugCap = "weapon_proc_aug_cap";        // max aug contribution (one school); unset/0 = uncapped
         public const string WeaponImbueChance = "weapon_imbue_chance";   // random imbue (rends / Critical Strike / Crippling Blow / Armor Rending)
         public const string WeaponSlayerChance = "weapon_slayer_chance"; // slayer vs the killed monster's own creature type
         public const string WeaponSlayerMin = "weapon_slayer_min";       // SlayerDamageBonus min (raw multiplier, floor 1.5, cap 10.0)
         public const string WeaponSlayerMax = "weapon_slayer_max";       // SlayerDamageBonus max
-        public const string WeaponCantripChance = "weapon_cantrip_chance"; // one EXTRA cantrip on a rolled weapon, from the zone's custom pool ONLY
-        public const string ArmorCantripChance = "armor_cantrip_chance";   // one EXTRA cantrip on rolled armor/clothing/jewelry, custom pool ONLY
-        // Armor v2 (2026-08-21, Cantrip_Band_Ladder v2; the old per-bucket cantrip_draws_bN keys were
+        // ── MODIFIERS (renamed from "cantrip" 2026-08-28, owner: the lines are flat stat bonuses,
+        // not cantrips - the retail word was a misnomer). The KEY STRINGS are the DB + wire + plugin
+        // contract; ZoneControlManager.UpgradeLegacyStoreKeys aliases the old cantrip_* keys on
+        // load, so any stored blob upgrades itself on its first save. ──
+        public const string WeaponModifierChance = "weapon_modifier_chance"; // one EXTRA modifier line on a rolled weapon, from the zone's custom pool ONLY
+        public const string ArmorModifierChance = "armor_modifier_chance";   // one EXTRA modifier line on rolled armor/clothing/jewelry, custom pool ONLY
+        // Armor v2 (2026-08-21, Cantrip_Band_Ladder v2; the old per-bucket draws_bN keys were
         // removed 2026-08-23). The mutator rolls a
         // per-piece LINE COUNT ladder: lines_min guaranteed, extra slots up to lines_max roll
         // chance_1/2/3 IN ORDER and the first miss stops. Keys fill slots weighted by Def.Class
-        // (trash/mid/chase); key 33 Crit Rating has its own weight. armor_cantrip_chance stays the
+        // (trash/mid/chase); key 33 Crit Rating has its own weight. armor_modifier_chance stays the
         // master on/off gate.
-        public const string CantripLinesMin = "cantrip_lines_min";         // guaranteed lines per piece (default 0)
-        public const string CantripLinesMax = "cantrip_lines_max";         // hard cap per piece (default 2)
-        public const string CantripLinesChance1 = "cantrip_lines_chance_1"; // 0..1 chance for extra slot 1 (default .40)
-        public const string CantripLinesChance2 = "cantrip_lines_chance_2"; // extra slot 2 (default .10)
-        public const string CantripLinesChance3 = "cantrip_lines_chance_3"; // extra slot 3 (default .01)
-        public const string CantripWeightTrash = "cantrip_weight_trash";   // pick weight per Trash-class key (default 10)
-        public const string CantripWeightMid = "cantrip_weight_mid";       // per Mid-class key (default 6)
-        public const string CantripWeightChase = "cantrip_weight_chase";   // per Chase-class key (default 1)
+        public const string ModifierLinesMin = "modifier_lines_min";         // guaranteed lines per piece (default 0)
+        public const string ModifierLinesMax = "modifier_lines_max";         // hard cap per piece (default 2)
+        public const string ModifierLinesChance1 = "modifier_lines_chance_1"; // 0..1 chance for extra slot 1 (default .40)
+        public const string ModifierLinesChance2 = "modifier_lines_chance_2"; // extra slot 2 (default .10)
+        public const string ModifierLinesChance3 = "modifier_lines_chance_3"; // extra slot 3 (default .01)
+        public const string ModifierWeightTrash = "modifier_weight_trash";   // pick weight per Trash-class key (default 10)
+        public const string ModifierWeightMid = "modifier_weight_mid";       // per Mid-class key (default 6)
+        public const string ModifierWeightChase = "modifier_weight_chase";   // per Chase-class key (default 1)
         // Guaranteed core four anchors (SET totals at T25; per piece = anchor/18 x f(t)); see
         // LootGenerationFactory.ApplyT11GearStats
         public const string CoreAnchorDr = "core_anchor_dr";               // Damage Resist worn-set anchor (ladder 1250, authored on Default 11; ZoneFallback.AnchorDr 92 when off)
@@ -254,7 +267,7 @@ namespace ACE.Server.Managers.ZoneScaling
         // so the cap is enforced on the EQUIPPED SUM at read time - equipment term only, never enchantments /
         // augs / enlightenment. Read for PLAYERS via the zone default the player stands in; no zone = the C#
         // default, so the caps apply everywhere. Creature.GetGearCap / GetEquippedItemsRatingSumCapped /
-        // GetZoneCantripBonus are the read sites.
+        // GetZoneModifierBonus are the read sites.
         public const string GearCapDr = "gear_cap_dr";                     // worn Damage Resist sum (ladder ceiling 2500; ZoneFallback.CapDr 92 when zonecontrol_enabled is off)
         public const string GearCapCdr = "gear_cap_cdr";                   // worn CritDmgResist / CritResist / NetherResist sums, EACH (ladder ceiling 1500; ZoneFallback.CapCdr 73 when off)
         public const string GearCapLine = "gear_cap_line";                 // every anchored cantrip line: Dmg / CritDmg / MaxHP / MaxStam / MaxMana / HealBoost / each aug track / each attribute (ladder ceiling 2500; ZoneFallback.CapLine 211 when off)
@@ -405,12 +418,13 @@ namespace ACE.Server.Managers.ZoneScaling
             ArmorVsSlash, ArmorVsPierce, ArmorVsBludgeon, ArmorVsFire, ArmorVsCold, ArmorVsAcid, ArmorVsElectric, ArmorVsNether,
             BonusCurrency,
             WeaponAttuned, WeaponBonded, WeaponUnenchantable,
+            ArmorAttuned, ArmorBonded, ArmorUnenchantable,
             WeaponProcArcChance, WeaponProcArcRate, WeaponProcRingChance, WeaponProcRingRate,
             WeaponProcArcDmgMin, WeaponProcArcDmgMax, WeaponProcRingDmgMin, WeaponProcRingDmgMax,
             WeaponProcArcVariance, WeaponProcRingVariance,
             WeaponProcSpellcraft, WeaponProcAugCap, WeaponImbueChance,
             WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax,
-            WeaponCantripChance, ArmorCantripChance,
+            WeaponModifierChance, ArmorModifierChance,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,
             WeaponSplitChance, WeaponSplitMin, WeaponSplitMax, WeaponSplitRange, WeaponSplitDmg,
             WeaponBiteChance, WeaponBiteMin, WeaponBiteMax,
@@ -432,8 +446,8 @@ namespace ACE.Server.Managers.ZoneScaling
             // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin
             // matches by NAME - adding, reordering or REMOVING an entry mid-list is safe. (The genuinely
             // positional lists are the bare comma payloads combatdefs= / diagdefs= in ZoneControlCommands.)
-            CantripLinesMin, CantripLinesMax, CantripLinesChance1, CantripLinesChance2, CantripLinesChance3,
-            CantripWeightTrash, CantripWeightMid, CantripWeightChase,
+            ModifierLinesMin, ModifierLinesMax, ModifierLinesChance1, ModifierLinesChance2, ModifierLinesChance3,
+            ModifierWeightTrash, ModifierWeightMid, ModifierWeightChase,
             CoreAnchorDr, CoreAnchorCdr,
             SpecialOdds, SpecialBossMult, SpecialLeaderMult,
             BattleMendThreshold, BattleMendCooldown, PctHpCooldown, CheatDeathCooldown, CheatDeathImmunity,
@@ -542,14 +556,14 @@ namespace ACE.Server.Managers.ZoneScaling
     /// both bounds) and, for proc lines, the proc-chance band in percent (0/0 = passive). A band is one
     /// VALUE — layers overwrite it whole per key (like PropInts), never merge its fields.
     /// </summary>
-    public class CantripBand
+    public class ModifierBand
     {
         public int Min { get; set; }
         public int Max { get; set; }
         public int ProcMin { get; set; }
         public int ProcMax { get; set; }
 
-        public CantripBand Clone() => new CantripBand { Min = Min, Max = Max, ProcMin = ProcMin, ProcMax = ProcMax };
+        public ModifierBand Clone() => new ModifierBand { Min = Min, Max = Max, ProcMin = ProcMin, ProcMax = ProcMax };
     }
 
     /// <summary>
@@ -641,18 +655,18 @@ namespace ACE.Server.Managers.ZoneScaling
         public Dictionary<int, ZoneBodyPart> BodyParts { get; set; } = new();
 
         /// <summary>Custom cantrip SpellIds this zone can roll as the EXTRA loot cantrip (alongside the
-        /// retail tables; see ZoneStat.CustomCantripWeight). Owner-authored spell ids — stamped as-is.
+        /// retail tables; see ZoneStat.CustomModifierWeight). Owner-authored spell ids — stamped as-is.
         /// Missing on deserialize of older profiles = empty list (backward compatible).</summary>
-        public List<int> CustomCantrips { get; set; } = new();
+        public List<int> CustomModifiers { get; set; } = new();
 
         /// <summary>Roll-band overrides for zone cantrip keys, keyed by catalog key. A key absent here rolls
         /// the catalog's own band. Missing on deserialize of older profiles = empty dict (backward compatible).</summary>
-        public Dictionary<int, CantripBand> CustomCantripBands { get; set; } = new();
+        public Dictionary<int, ModifierBand> CustomModifierBands { get; set; } = new();
 
-        /// <summary>Per-key SLOT RULE overrides (ZoneCantrips.SlotMask bits; 0 = Any), keyed by catalog key. A key
+        /// <summary>Per-key SLOT RULE overrides (ZoneModifiers.SlotMask bits; 0 = Any), keyed by catalog key. A key
         /// absent here uses the catalog's ArmorOnly / JewelryOnly default. Authored by `cantrip <scope> slots`,
         /// merged OVERWRITE per key like the bands. Missing on deserialize of older profiles = empty dict.</summary>
-        public Dictionary<int, int> CustomCantripSlots { get; set; } = new();
+        public Dictionary<int, int> CustomModifierSlots { get; set; } = new();
 
         /// <summary>Per-SPECIAL on/off (owner 2026-08-23): catalog key -> enabled. A key absent here is ON. Authored by
         /// `cantrip <scope> special <key> on|off`, merged OVERWRITE per key (a zone can re-enable what the Default
@@ -746,21 +760,21 @@ namespace ACE.Server.Managers.ZoneScaling
                     foreach (var kv in layer.PropBools) result.PropBools[kv.Key] = kv.Value;
 
                 // union, deduped by key, most specific wins
-                if (layer.CustomCantrips != null)
-                    foreach (var key in layer.CustomCantrips)
-                        if (!result.CustomCantrips.Contains(key))
-                            result.CustomCantrips.Add(key);
+                if (layer.CustomModifiers != null)
+                    foreach (var key in layer.CustomModifiers)
+                        if (!result.CustomModifiers.Contains(key))
+                            result.CustomModifiers.Add(key);
 
                 // OVERWRITE per key like PropInts: a band is one value, the most specific layer wins it whole
-                if (layer.CustomCantripBands != null)
-                    foreach (var kv in layer.CustomCantripBands)
+                if (layer.CustomModifierBands != null)
+                    foreach (var kv in layer.CustomModifierBands)
                         if (kv.Value != null)
-                            result.CustomCantripBands[kv.Key] = kv.Value.Clone();
+                            result.CustomModifierBands[kv.Key] = kv.Value.Clone();
 
                 // slot rules: same OVERWRITE-per-key semantics
-                if (layer.CustomCantripSlots != null)
-                    foreach (var kv in layer.CustomCantripSlots)
-                        result.CustomCantripSlots[kv.Key] = kv.Value;
+                if (layer.CustomModifierSlots != null)
+                    foreach (var kv in layer.CustomModifierSlots)
+                        result.CustomModifierSlots[kv.Key] = kv.Value;
 
                 if (layer.CustomSpecials != null)
                     foreach (var kv in layer.CustomSpecials)
@@ -803,9 +817,9 @@ namespace ACE.Server.Managers.ZoneScaling
             && (PropInt64s == null || PropInt64s.Count == 0)
             && (PropFloats == null || PropFloats.Count == 0)
             && (PropBools == null || PropBools.Count == 0)
-            && (CustomCantrips == null || CustomCantrips.Count == 0)
-            && (CustomCantripBands == null || CustomCantripBands.Count == 0)
-            && (CustomCantripSlots == null || CustomCantripSlots.Count == 0)
+            && (CustomModifiers == null || CustomModifiers.Count == 0)
+            && (CustomModifierBands == null || CustomModifierBands.Count == 0)
+            && (CustomModifierSlots == null || CustomModifierSlots.Count == 0)
             && (CustomSpecials == null || CustomSpecials.Count == 0)
             && (CustomWeaponCards == null || CustomWeaponCards.Count == 0)
             && (CurrencyDrops == null || CurrencyDrops.Count == 0)
@@ -887,12 +901,12 @@ namespace ACE.Server.Managers.ZoneScaling
             Dictionary<int, ZoneBodyPart> bodyParts = null,
             Dictionary<int, long> propInts = null, Dictionary<int, long> propInt64s = null,
             Dictionary<int, double> propFloats = null, Dictionary<int, bool> propBools = null,
-            List<int> customCantrips = null, List<ZoneCurrencyDrop> currencyDrops = null,
-            List<ZoneSpellRule> spellRules = null, Dictionary<int, CantripBand> cantripBands = null,
-            Dictionary<int, int> cantripSlots = null, Dictionary<int, bool> specialToggles = null,
+            List<int> customModifiers = null, List<ZoneCurrencyDrop> currencyDrops = null,
+            List<ZoneSpellRule> spellRules = null, Dictionary<int, ModifierBand> modifierBands = null,
+            Dictionary<int, int> modifierSlots = null, Dictionary<int, bool> specialToggles = null,
             Dictionary<string, bool> weaponCardToggles = null)
         {
-            CantripSlots = cantripSlots is { Count: > 0 } ? new Dictionary<int, int>(cantripSlots) : EmptyCantripSlots;
+            ModifierSlots = modifierSlots is { Count: > 0 } ? new Dictionary<int, int>(modifierSlots) : EmptyModifierSlots;
             SpecialToggles = specialToggles is { Count: > 0 } ? new Dictionary<int, bool>(specialToggles) : EmptySpecialToggles;
             WeaponCardToggles = weaponCardToggles is { Count: > 0 }
                 ? new Dictionary<string, bool>(weaponCardToggles, StringComparer.OrdinalIgnoreCase)
@@ -906,28 +920,28 @@ namespace ACE.Server.Managers.ZoneScaling
             PropInt64s = propInt64s;
             PropFloats = propFloats;
             PropBools = propBools;
-            CustomCantrips = customCantrips;
+            CustomModifiers = customModifiers;
             CurrencyDrops = currencyDrops;
             SpellRules = spellRules;
 
-            if (cantripBands is { Count: > 0 })
+            if (modifierBands is { Count: > 0 })
             {
-                var bands = new Dictionary<int, (int Min, int Max, int ProcMin, int ProcMax)>(cantripBands.Count);
-                foreach (var kv in cantripBands)
+                var bands = new Dictionary<int, (int Min, int Max, int ProcMin, int ProcMax)>(modifierBands.Count);
+                foreach (var kv in modifierBands)
                     if (kv.Value != null)
                         bands[kv.Key] = (kv.Value.Min, kv.Value.Max, kv.Value.ProcMin, kv.Value.ProcMax);
-                CantripBands = bands;
+                ModifierBands = bands;
             }
             else
-                CantripBands = EmptyCantripBands;
+                ModifierBands = EmptyModifierBands;
         }
 
-        private static readonly IReadOnlyDictionary<int, (int Min, int Max, int ProcMin, int ProcMax)> EmptyCantripBands
+        private static readonly IReadOnlyDictionary<int, (int Min, int Max, int ProcMin, int ProcMax)> EmptyModifierBands
             = new Dictionary<int, (int Min, int Max, int ProcMin, int ProcMax)>();
-        private static readonly IReadOnlyDictionary<int, int> EmptyCantripSlots = new Dictionary<int, int>();
+        private static readonly IReadOnlyDictionary<int, int> EmptyModifierSlots = new Dictionary<int, int>();
 
-        /// <summary>Per-key slot rule overrides (ZoneCantrips.SlotMask bits), merged view. Empty = catalog defaults everywhere.</summary>
-        public IReadOnlyDictionary<int, int> CantripSlots { get; }
+        /// <summary>Per-key slot rule overrides (ZoneModifiers.SlotMask bits), merged view. Empty = catalog defaults everywhere.</summary>
+        public IReadOnlyDictionary<int, int> ModifierSlots { get; }
         private static readonly IReadOnlyDictionary<int, bool> EmptySpecialToggles = new Dictionary<int, bool>();
         /// <summary>Per-special on/off (absent = on). See ZoneVariantProfile.CustomSpecials.</summary>
         public IReadOnlyDictionary<int, bool> SpecialToggles { get; }
@@ -956,11 +970,11 @@ namespace ACE.Server.Managers.ZoneScaling
             => chanceStat == null || !WeaponCardToggles.TryGetValue(chanceStat, out var on) || on;
 
         /// <summary>Custom cantrip SpellIds for the extra-loot-cantrip roll (may be null = none defined).</summary>
-        public IReadOnlyList<int> CustomCantrips { get; }
+        public IReadOnlyList<int> CustomModifiers { get; }
 
         /// <summary>Authored roll-band overrides per zone-cantrip catalog key (never null; EMPTY when none
         /// authored). A key absent here rolls the catalog's own Min/Max/ProcMin/ProcMax.</summary>
-        public IReadOnlyDictionary<int, (int Min, int Max, int ProcMin, int ProcMax)> CantripBands { get; }
+        public IReadOnlyDictionary<int, (int Min, int Max, int ProcMin, int ProcMax)> ModifierBands { get; }
 
         /// <summary>Bonus-currency drop table entries (may be null = none defined).</summary>
         public IReadOnlyList<ZoneCurrencyDrop> CurrencyDrops { get; }

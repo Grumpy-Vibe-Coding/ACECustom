@@ -727,7 +727,7 @@ namespace ACE.Server.WorldObjects
                     var dropped = player.CalculateDeathItems_Olthoi(corpse, hadVitae, killerIsOlthoiPlayer, killerIsPkPlayer);
 
                     foreach (var wo in dropped)
-                        DoCantripLogging(killer, wo);
+                        DoModifierLogging(killer, wo);
 
                     corpse.RecalculateDecayTime(player);
 
@@ -776,7 +776,7 @@ namespace ACE.Server.WorldObjects
                                         foreach (var item in lootItems)
                                         {
                                             corpse.TryAddToInventory(item);
-                                            DoCantripLogging(killer, item);
+                                            DoModifierLogging(killer, item);
                                         }
                                     }
                                 }
@@ -1052,7 +1052,7 @@ namespace ACE.Server.WorldObjects
                 // PERFECT piece: core four + every line at band MAX (forceMax below). The flag is a
                 // LOCAL, never a prop - a 50200+ marker would be summed into the worn cache.
                 WorldObject specialPiece = null;
-                ACE.Server.Managers.ZoneControl.ZoneCantrips.Def specialDef = null;
+                ACE.Server.Managers.ZoneControl.ZoneModifiers.Def specialDef = null;
                 // Zone Control off: no slot special is rolled at all (owner 2026-08-23) - the fallback
                 // is T10 max-rolled gear, which has no such thing.
                 if (zoneLoot != null && ServerConfig.zonecontrol_enabled.Value
@@ -1067,7 +1067,7 @@ namespace ACE.Server.WorldObjects
 
                     if (ACE.Common.ThreadSafeRandom.Next(1, denom) == 1)
                     {
-                        var specials = ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotSpecials();
+                        var specials = ACE.Server.Managers.ZoneControl.ZoneModifiers.SlotSpecials();
                         // per-special on/off (owner 2026-08-23): a special turned off at this scope never rolls;
                         // the odds are unchanged, the remaining specials share the hit
                         specials.RemoveAll(d => !zoneLoot.SpecialEnabled(d.Key));
@@ -1076,33 +1076,33 @@ namespace ACE.Server.WorldObjects
                             specialDef = specials[ACE.Common.ThreadSafeRandom.Next(0, specials.Count - 1)];
                             // the special's home slot: the zone / Default override when authored (`cantrip <scope>
                             // slots <key> helm|...|cloak`, owner 2026-08-22), else the catalog's SpecialSlot
-                            var slotId = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSpecialSlot(specialDef, zoneLoot.CantripSlots);
-                            specialPiece = items.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialPieceMatches(i, slotId));
+                            var slotId = ACE.Server.Managers.ZoneControl.ZoneModifiers.EffectiveSpecialSlot(specialDef, zoneLoot.ModifierSlots);
+                            specialPiece = items.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialPieceMatches(i, slotId));
                             if (specialPiece == null)
                             {
                                 // the set rolled no piece for that slot (zone turned it off) - spawn exactly one
                                 var one = new LootGenerationFactory.ZoneLootSetCounts();
                                 switch (slotId)
                                 {
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Helm: one.Helm = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Chest: one.Chest = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Shoulders: one.Shoulder = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Bracers: one.Bracer = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Gauntlets: one.Glove = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Girth: one.Girth = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Tassets: one.UpperLeg = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Greaves: one.LowerLeg = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Boots: one.Boot = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Shield: one.Shield = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Neck: one.Amulet = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Trinket: one.Trinket = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Ring: one.Ring = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Bracelet: one.Bracelet = 1; break;
-                                    case ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialSlotId.Cloak: one.Cloak = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Helm: one.Helm = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Chest: one.Chest = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Shoulders: one.Shoulder = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Bracers: one.Bracer = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Gauntlets: one.Glove = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Girth: one.Girth = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Tassets: one.UpperLeg = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Greaves: one.LowerLeg = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Boots: one.Boot = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Shield: one.Shield = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Neck: one.Amulet = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Trinket: one.Trinket = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Ring: one.Ring = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Bracelet: one.Bracelet = 1; break;
+                                    case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Cloak: one.Cloak = 1; break;
                                     default: one.Chest = 1; break;
                                 }
                                 var spawned = LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, one);
-                                specialPiece = spawned.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialPieceMatches(i, slotId));
+                                specialPiece = spawned.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialPieceMatches(i, slotId));
                                 items.AddRange(spawned);
                             }
 
@@ -1145,12 +1145,12 @@ namespace ACE.Server.WorldObjects
                     // after the lines so it reads last among the "Zone Cantrip:" lines
                     if (isSpecial && specialDef != null)
                     {
-                        var (sMin, sMax) = zoneLoot.CantripBands.TryGetValue(specialDef.Key, out var sBand)
-                            ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(specialDef, effectiveTreasure.Tier);
+                        var (sMin, sMax) = zoneLoot.ModifierBands.TryGetValue(specialDef.Key, out var sBand)
+                            ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneModifiers.CatalogBandAt(specialDef, effectiveTreasure.Tier);
                         if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
-                        // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcCantrips
+                        // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcModifiers
                         var sGrade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.RollGrade(effectiveTreasure.Tier, false);
-                        ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, specialDef, sGrade, (sMin, sMax));
+                        ACE.Server.Managers.ZoneControl.ZoneModifiers.StampGraded(wo, specialDef, sGrade, (sMin, sMax));
                     }
 
                     // Tier 11+ presentation sweep. Runs LAST so it also covers values that came
@@ -1195,7 +1195,7 @@ namespace ACE.Server.WorldObjects
                     else
                         droppedItems.Add(wo);
 
-                    DoCantripLogging(killer, wo);
+                    DoModifierLogging(killer, wo);
                 }
             }
 
@@ -1443,7 +1443,7 @@ namespace ACE.Server.WorldObjects
                 if (r.ArmorLevel.HasValue && wo.ArmorLevel != r.ArmorLevel.Value)
                     diffs.Add($"ArmorLevel item={(wo.ArmorLevel.HasValue ? wo.ArmorLevel.Value.ToString() : "null")} resolved={r.ArmorLevel.Value}");
                 if (diffs.Count > 0)
-                    log.Warn($"[ZONELOOT] LIVESTAT MISMATCH on {wo.Name} ({wo.WeenieClassId}, tier {r.Tier}, record \"{wo.GetProperty(PropertyString.ZcCantrips)}\"): {string.Join(", ", diffs)}");
+                    log.Warn($"[ZONELOOT] LIVESTAT MISMATCH on {wo.Name} ({wo.WeenieClassId}, tier {r.Tier}, record \"{wo.GetProperty(PropertyString.ZcModifiers)}\"): {string.Join(", ", diffs)}");
             }
             catch (Exception ex)
             {
@@ -1451,7 +1451,7 @@ namespace ACE.Server.WorldObjects
             }
         }
 
-        public void DoCantripLogging(DamageHistoryInfo killer, WorldObject wo)
+        public void DoModifierLogging(DamageHistoryInfo killer, WorldObject wo)
         {
             var epicCantrips = wo.EpicCantrips;
             var legendaryCantrips = wo.LegendaryCantrips;

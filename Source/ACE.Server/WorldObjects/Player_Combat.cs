@@ -49,7 +49,7 @@ namespace ACE.Server.WorldObjects
 
         #region Zone Control slot specials (armor v2, 2026-08-21)
 
-        // Cantrip props the specials are keyed on (ZoneCantrips block 50200-50399; literal ints here so
+        // Cantrip props the specials are keyed on (ZoneModifiers block 50200-50399; literal ints here so
         // this file does not chase the catalog's constant names): 50227/50228 = key 42 Battle Mending
         // (chance / heal - either marks the piece; the magnitude is ignored, the save heals to full),
         // 50229 = key 44 pct-HP damage in TENTHS of a pct, 50230 = key 45 Cheat Death flag (stamp 1),
@@ -126,7 +126,7 @@ namespace ACE.Server.WorldObjects
             if (IsDead || Health.Current <= 0 || amount < Health.Current)
                 return amount;
 
-            if (GetZoneCantripMax(ZcCheatDeathProp) <= 0)
+            if (GetZoneModifierMax(ZcCheatDeathProp) <= 0)
                 return amount;
 
             var now = Time.GetUnixTime();
@@ -172,7 +172,7 @@ namespace ACE.Server.WorldObjects
             if (IsDead || Health.Current <= 0)
                 return;
 
-            if (GetZoneCantripMax(ZcBattleMendHealProp) <= 0 && GetZoneCantripMax(ZcBattleMendChanceProp) <= 0)
+            if (GetZoneModifierMax(ZcBattleMendHealProp) <= 0 && GetZoneModifierMax(ZcBattleMendChanceProp) <= 0)
                 return;
 
             var now = Time.GetUnixTime();
@@ -211,7 +211,7 @@ namespace ACE.Server.WorldObjects
             if (defender == null || defender is Player || defender is CombatPet || defender.IsDead || defender.Health == null)
                 return 0.0f;
 
-            var tenths = GetZoneCantripMax(ZcPctHpDamageProp);
+            var tenths = GetZoneModifierMax(ZcPctHpDamageProp);
             if (tenths <= 0)
                 return 0.0f;
 
@@ -258,7 +258,7 @@ namespace ACE.Server.WorldObjects
             if (defender == null || defender is Player || IsDead || Health == null)
                 return;
 
-            var pct = GetZoneCantripBonus(ZcLifeOnHitProp);
+            var pct = GetZoneModifierBonus(ZcLifeOnHitProp);
             if (pct <= 0)
                 return;
 

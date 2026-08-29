@@ -17,11 +17,11 @@ namespace ACE.Server.Managers.ZoneControl
     /// grades against the LIVE ladder. Weapon scaling already works this way (quality 0-1000); this is the
     /// same model for armor / jewelry lines, the core four, Armor Level and the slot specials.
     ///
-    /// Record format, PropertyString.ZcCantrips: "28:490;19:1000;c1:900;c2:850;c3:900;c4:880;25:500;41:650"
-    ///   - positive key  = ZoneCantrips catalog key (lines AND specials), value = grade 0-1000
+    /// Record format, PropertyString.ZcModifiers: "28:490;19:1000;c1:900;c2:850;c3:900;c4:880;25:500;41:650"
+    ///   - positive key  = ZoneModifiers catalog key (lines AND specials), value = grade 0-1000
     ///   - c1..c4        = the core four (DamageResist / CritDamageResist / CritResist / NetherResist)
     ///   - -11..-30      = the reserved WEAPON block (2026-08-25): the six continuous weapon cards,
-    ///                     which are PropertyFloats and resolve through ZoneCantrips.WeaponBand rather
+    ///                     which are PropertyFloats and resolve through ZoneModifiers.WeaponBand rather
     ///                     than the armour catalog. See the block comment at WeaponBiteKey.
     ///   - Reinforced (49) is NOT recorded: an earned, frozen armor mod (owner ruling 2026-08-22 §8.3)
     /// PropertyInt.ZcTier = the ladder row; PropertyInt.ZcResolvedVersion = the per-tier ladder version the
@@ -65,16 +65,16 @@ namespace ACE.Server.Managers.ZoneControl
 
         // ── weapon-special pseudo keys (2026-08-25, weapon/armour parity) ────────
         //
-        // WHY A RESERVED NEGATIVE BLOCK AND NOT SIX MORE ZoneCantrips.Catalog ROWS
+        // WHY A RESERVED NEGATIVE BLOCK AND NOT SIX MORE ZoneModifiers.Catalog ROWS
         //
         // Catalog keys are load-bearing forever: they live in saved zone pools
-        // (ZoneVariantProfile.CustomCantrips), in the `cantrip <scope> band <key>` command surface,
-        // and in the plugin's mirrored CantripCatalog. Minting six of them for weapons would leak
-        // weapon keys into the ARMOUR line pool (TryExtraCantrip walks the catalog), into the plugin's
+        // (ZoneVariantProfile.CustomModifiers), in the `cantrip <scope> band <key>` command surface,
+        // and in the plugin's mirrored ModifierCatalog. Minting six of them for weapons would leak
+        // weapon keys into the ARMOUR line pool (TryExtraModifier walks the catalog), into the plugin's
         // Cantrips tab, and into the [[ZC]] wire - for six values that never travel the wire at all.
         // That crossing is the thing this design deliberately avoided when the WeaponBand table was
-        // added (see the long comment above ZoneCantrips.WeaponBand). So: a reserved key block that
-        // lives ONLY in the item's own ZcCantrips record, exactly the way the core four do.
+        // added (see the long comment above ZoneModifiers.WeaponBand). So: a reserved key block that
+        // lives ONLY in the item's own ZcModifiers record, exactly the way the core four do.
         //
         // WHY NEGATIVE. The record's key token is parsed by Read(): 'cN' is a core key, anything else
         // goes through int.TryParse with NumberStyles.Integer, which accepts a leading '-'. So "-16:640"
@@ -84,7 +84,7 @@ namespace ACE.Server.Managers.ZoneControl
         //
         // -5..-10 IS A DELIBERATE GAP so the core block can grow (a fifth core rating) without
         // renumbering weapons. -11..-30 is the WEAPON block; only -11..-16 are defined today.
-        // NOTE for anyone touching the record format: a bare '-' in a ZcCantrips string means
+        // NOTE for anyone touching the record format: a bare '-' in a ZcModifiers string means
         // "this record contains a weapon key" and NOTHING else - grades are 0..1000 and never
         // signed. HasWeaponKey below depends on that; keep it true.
         public const int WeaponBiteKey = -11;
@@ -104,7 +104,7 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>
         /// One continuous weapon card as the RECORD sees it: the ladder row it resolves against
-        /// (<see cref="ZoneCantrips.WeaponBand"/>, which owns the T11-&gt;T25 anchors, the authored
+        /// (<see cref="ZoneModifiers.WeaponBand"/>, which owns the T11-&gt;T25 anchors, the authored
         /// stat names and the hard clamp) plus the PropertyFloat the engine actually reads.
         ///
         /// <see cref="DisplayIsMultiplier"/> is the Crushing Blow trap, isolated to one bool: the
@@ -115,7 +115,7 @@ namespace ACE.Server.Managers.ZoneControl
         public sealed class WeaponSpecial
         {
             public int Key;
-            public ZoneCantrips.WeaponBand Band;
+            public ZoneModifiers.WeaponBand Band;
             public PropertyFloat Prop;
             public bool DisplayIsMultiplier;
             public string Name => Band?.Name ?? "?";
@@ -125,33 +125,33 @@ namespace ACE.Server.Managers.ZoneControl
         // into the array below. An index would silently re-point a card at the wrong property the day
         // someone reorders the table, and the only symptom would be Slayer weapons that ignore shields.
         public static readonly WeaponSpecial SpecBite = new WeaponSpecial
-        { Key = WeaponBiteKey, Band = ZoneCantrips.WeaponBite, Prop = PropertyFloat.CriticalFrequency };
+        { Key = WeaponBiteKey, Band = ZoneModifiers.WeaponBite, Prop = PropertyFloat.CriticalFrequency };
 
         public static readonly WeaponSpecial SpecArmorRend = new WeaponSpecial
-        { Key = WeaponArmorRendKey, Band = ZoneCantrips.WeaponArmorRend, Prop = (PropertyFloat)ZoneLootMutator.ArmorRendOverridePropId };
+        { Key = WeaponArmorRendKey, Band = ZoneModifiers.WeaponArmorRend, Prop = (PropertyFloat)ZoneLootMutator.ArmorRendOverridePropId };
 
         public static readonly WeaponSpecial SpecRendPower = new WeaponSpecial
-        { Key = WeaponRendPowerKey, Band = ZoneCantrips.WeaponRendPower, Prop = (PropertyFloat)ZoneLootMutator.RendingModOverridePropId };
+        { Key = WeaponRendPowerKey, Band = ZoneModifiers.WeaponRendPower, Prop = (PropertyFloat)ZoneLootMutator.RendingModOverridePropId };
 
         public static readonly WeaponSpecial SpecSlayer = new WeaponSpecial
-        { Key = WeaponSlayerKey, Band = ZoneCantrips.WeaponSlayer, Prop = PropertyFloat.SlayerDamageBonus };
+        { Key = WeaponSlayerKey, Band = ZoneModifiers.WeaponSlayer, Prop = PropertyFloat.SlayerDamageBonus };
 
         public static readonly WeaponSpecial SpecShieldCleave = new WeaponSpecial
-        { Key = WeaponShieldCleaveKey, Band = ZoneCantrips.WeaponShieldCleave, Prop = PropertyFloat.IgnoreShield };
+        { Key = WeaponShieldCleaveKey, Band = ZoneModifiers.WeaponShieldCleave, Prop = PropertyFloat.IgnoreShield };
 
         /// <summary>The ONLY row with DisplayIsMultiplier - see <see cref="EngineValue"/>.</summary>
         public static readonly WeaponSpecial SpecCrush = new WeaponSpecial
-        { Key = WeaponCrushKey, Band = ZoneCantrips.WeaponCrush, Prop = PropertyFloat.CriticalMultiplier, DisplayIsMultiplier = true };
+        { Key = WeaponCrushKey, Band = ZoneModifiers.WeaponCrush, Prop = PropertyFloat.CriticalMultiplier, DisplayIsMultiplier = true };
 
         /// <summary>The weapon block, in record-key order - for lookup and for the stable fold order
         /// <see cref="WeaponPinFingerprint"/> depends on.</summary>
         /// <summary>Cast on Strike. Unlike the other six this property is not read by the melee damage
         /// pipeline at all - SpellProjectile.CalculateDamage substitutes it for the rolled spell base.</summary>
         public static readonly WeaponSpecial SpecProcArcDamage = new WeaponSpecial
-        { Key = WeaponProcArcDamageKey, Band = ZoneCantrips.WeaponProcArcDamage, Prop = (PropertyFloat)ZoneLootMutator.ProcArcDamagePropId };
+        { Key = WeaponProcArcDamageKey, Band = ZoneModifiers.WeaponProcArcDamage, Prop = (PropertyFloat)ZoneLootMutator.ProcArcDamagePropId };
 
         public static readonly WeaponSpecial SpecProcRingDamage = new WeaponSpecial
-        { Key = WeaponProcRingDamageKey, Band = ZoneCantrips.WeaponProcRingDamage, Prop = (PropertyFloat)ZoneLootMutator.ProcRingDamagePropId };
+        { Key = WeaponProcRingDamageKey, Band = ZoneModifiers.WeaponProcRingDamage, Prop = (PropertyFloat)ZoneLootMutator.ProcRingDamagePropId };
 
         public static readonly WeaponSpecial[] WeaponSpecials =
         {
@@ -221,14 +221,14 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         /// <summary>
-        /// Roll a grade 0-1000 with the tier-weighted third (ZoneCantrips.TierThirds, Option A: T11 uniform,
+        /// Roll a grade 0-1000 with the tier-weighted third (ZoneModifiers.TierThirds, Option A: T11 uniform,
         /// T25 10/30/60). forceMax = 1000. The producers roll THIS and derive the value with
         /// <see cref="ValueFor"/>, so the grade is the truth and the value its projection.
         /// </summary>
         public static int RollGrade(int tier, bool forceMax = false)
         {
             if (forceMax) return GradeMax;
-            var (wLo, wMid, wHi) = ZoneCantrips.TierThirds(tier);
+            var (wLo, wMid, wHi) = ZoneModifiers.TierThirds(tier);
             var pick = ThreadSafeRandom.Next(0, wLo + wMid + wHi - 1);
             if (pick < wLo) return ThreadSafeRandom.Next(0, 333);
             if (pick < wLo + wMid) return ThreadSafeRandom.Next(334, 666);
@@ -239,25 +239,25 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>
         /// The band a catalog key resolves against at a tier: the tier's Default-layer override
-        /// (CustomCantripBands on variation = tier, what real drops there roll from) when authored, else the
-        /// catalog band scaled to the tier (ZoneCantrips.CatalogBandAt). A ZONE's own band override is a drop-time concern only - the piece does not remember
+        /// (CustomModifierBands on variation = tier, what real drops there roll from) when authored, else the
+        /// catalog band scaled to the tier (ZoneModifiers.CatalogBandAt). A ZONE's own band override is a drop-time concern only - the piece does not remember
         /// its zone, and re-resolution only happens after an explicit ladder apply, when the tier's Default
         /// IS the published truth.
         /// </summary>
         public static (int Min, int Max) EffectiveBand(int key, int tier)
         {
-            if (!ZoneCantrips.TryGet(key, out var def))
+            if (!ZoneModifiers.TryGet(key, out var def))
                 return (0, 0);
             // Zone Control off: the shrunk fallback band, and nothing authored is consulted (same rule
             // as CoreWindow). owner 2026-08-23.
             if (!ServerConfig.zonecontrol_enabled.Value)
                 return ZoneFallback.Band(def);
             var vd = ZoneControlManager.GetVariationDefault(tier);
-            if (vd?.Profile?.CustomCantripBands != null
-                && vd.Profile.CustomCantripBands.TryGetValue(key, out var live)
+            if (vd?.Profile?.CustomModifierBands != null
+                && vd.Profile.CustomModifierBands.TryGetValue(key, out var live)
                 && live != null && live.Max > 0)
                 return live.Min <= live.Max ? (live.Min, live.Max) : (live.Max, live.Min);
-            return ZoneCantrips.CatalogBandAt(def, tier);
+            return ZoneModifiers.CatalogBandAt(def, tier);
         }
 
         /// <summary>
@@ -278,7 +278,7 @@ namespace ACE.Server.Managers.ZoneControl
         ///      so it can never produce a number the authored path could not.
         ///   2. The TIER DEFAULT's authored weapon_&lt;card&gt;_min / _max -> that band, including the
         ///      "one box = EXACT value, not a range" rule the drop path has always had.
-        ///   3. Otherwise the ladder: ZoneCantrips.WeaponBandAt(band, tier).
+        ///   3. Otherwise the ladder: ZoneModifiers.WeaponBandAt(band, tier).
         ///
         /// Step 2 reads the TIER DEFAULT, never a zone, for the same reason EffectiveBand does: the piece
         /// does not remember where it dropped, and a re-resolve only ever happens after an explicit ladder
@@ -298,20 +298,20 @@ namespace ACE.Server.Managers.ZoneControl
                 return (0.0, 0.0);
             var b = ws.Band;
             if (!ServerConfig.zonecontrol_enabled.Value)
-                return ZoneCantrips.WeaponBandAt(b, 11);
+                return ZoneModifiers.WeaponBandAt(b, 11);
             if (!statsFetched)
                 stats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
             var pin = PinBand(stats, b);
             if (pin.HasValue)
                 return Clamp(pin.Value.Min, pin.Value.Max, b);
-            return ZoneCantrips.WeaponBandAt(b, tier);
+            return ZoneModifiers.WeaponBandAt(b, tier);
         }
 
         /// <summary>
         /// The band a WEAPON card ROLLS from at drop time: the zone's evaluated profile (which already
         /// has the tier Default merged into it at snapshot-build time) when it authors either box, else
-        /// the ladder. The twin of the (CantripBands ?? CatalogBandAt) pair in
-        /// ZoneLootMutator.TryExtraCantrip - drop reads the ZONE, resolve reads the tier DEFAULT.
+        /// the ladder. The twin of the (ModifierBands ?? CatalogBandAt) pair in
+        /// ZoneLootMutator.TryExtraModifier - drop reads the ZONE, resolve reads the tier DEFAULT.
         /// Identical when the zone adds no pin of its own, which is the normal case.
         /// </summary>
         public static (double Min, double Max) WeaponDropBand(ZoneScaling.EvaluatedProfile p, WeaponSpecial ws, int tier)
@@ -329,13 +329,13 @@ namespace ACE.Server.Managers.ZoneControl
                 var hi = p.Has(b.MaxStat) ? p.Get(b.MaxStat) : lo;
                 return Clamp(lo, hi, b);
             }
-            return ZoneCantrips.WeaponBandAt(b, tier);
+            return ZoneModifiers.WeaponBandAt(b, tier);
         }
 
         /// <summary>The authored pin on a Stats dictionary, or null when neither box is set. Same
         /// one-box rule as <see cref="WeaponDropBand"/>; StatCurve.Evaluate(1) is how every other
         /// Default-layer read in this file spells "the authored number".</summary>
-        private static (double Min, double Max)? PinBand(Dictionary<string, ZoneScaling.StatCurve> stats, ZoneCantrips.WeaponBand b)
+        private static (double Min, double Max)? PinBand(Dictionary<string, ZoneScaling.StatCurve> stats, ZoneModifiers.WeaponBand b)
         {
             if (stats == null || stats.Count == 0)
                 return null;
@@ -351,7 +351,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>Order + clamp a weapon band to the card's own Lo/Hi. Those bounds are copied from
         /// the card's historical RollRange(lo, hi) arguments, so no path - authored, ladder or fallback -
         /// can ever produce a value the old drop-time code could not.</summary>
-        private static (double Min, double Max) Clamp(double lo, double hi, ZoneCantrips.WeaponBand b)
+        private static (double Min, double Max) Clamp(double lo, double hi, ZoneModifiers.WeaponBand b)
         {
             if (lo > hi) (lo, hi) = (hi, lo);
             return (Math.Clamp(lo, b.Lo, b.Hi), Math.Clamp(hi, b.Lo, b.Hi));
@@ -495,7 +495,7 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         public static bool HasRecord(WorldObject wo)
-            => wo != null && !string.IsNullOrEmpty(wo.GetProperty(PropertyString.ZcCantrips));
+            => wo != null && !string.IsNullOrEmpty(wo.GetProperty(PropertyString.ZcModifiers));
 
         /// <summary>
         /// The item's ladder row. ARMOUR, clothing and jewelry carry ZcTier; WEAPONS DO NOT -
@@ -534,7 +534,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// </summary>
         public static bool HasWeaponKey(WorldObject wo)
         {
-            var raw = wo?.GetProperty(PropertyString.ZcCantrips);
+            var raw = wo?.GetProperty(PropertyString.ZcModifiers);
             return !string.IsNullOrEmpty(raw) && raw.IndexOf('-') >= 0;
         }
 
@@ -542,7 +542,7 @@ namespace ACE.Server.Managers.ZoneControl
         public static List<LineRecord> Read(WorldObject wo)
         {
             var list = new List<LineRecord>();
-            var raw = wo?.GetProperty(PropertyString.ZcCantrips);
+            var raw = wo?.GetProperty(PropertyString.ZcModifiers);
             if (string.IsNullOrEmpty(raw))
                 return list;
             foreach (var part in raw.Split(';', StringSplitOptions.RemoveEmptyEntries))
@@ -579,9 +579,9 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (wo == null) return;
             if (lines == null || lines.Count == 0)
-                wo.RemoveProperty(PropertyString.ZcCantrips);
+                wo.RemoveProperty(PropertyString.ZcModifiers);
             else
-                wo.SetProperty(PropertyString.ZcCantrips, Format(lines));
+                wo.SetProperty(PropertyString.ZcModifiers, Format(lines));
         }
 
         /// <summary>Append one grade to the record (a key already present is REPLACED - one line per key per piece).</summary>
@@ -706,7 +706,7 @@ namespace ACE.Server.Managers.ZoneControl
         public class ResolvedLine
         {
             public LineRecord Record;
-            public ZoneCantrips.Def Def;     // null for a core key
+            public ZoneModifiers.Def Def;     // null for a core key
             public int Min, Max, Value;
             public string Name => Def?.Name ?? CoreName(Record.Key);
             /// <summary>The appraisal text for this line, in the stamp format ("Damage Rating +41 [14-69]").</summary>
@@ -796,7 +796,7 @@ namespace ACE.Server.Managers.ZoneControl
                     r.Ints[CoreProp(rec.Key)] = cval;
                     continue;
                 }
-                if (!ZoneCantrips.TryGet(rec.Key, out var def) || def.SetsProtection)
+                if (!ZoneModifiers.TryGet(rec.Key, out var def) || def.SetsProtection)
                     continue;
                 // Zone Control off: slot SPECIALS are disabled outright (owner 2026-08-23). Zero their
                 // props so the effect is inert, and leave them out of r.Lines so the appraisal stops

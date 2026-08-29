@@ -126,16 +126,16 @@ namespace ACE.Server.Tests
         // ── list-valued fields: UNION, most specific wins on collision ──
 
         [TestMethod]
-        public void Merge_Cantrips_UnionAndDeduped()
+        public void Merge_Modifiers_UnionAndDeduped()
         {
             var def = new ZoneVariantProfile();
-            def.CustomCantrips.AddRange(new[] { 1, 2 });
+            def.CustomModifiers.AddRange(new[] { 1, 2 });
             var zone = new ZoneVariantProfile();
-            zone.CustomCantrips.AddRange(new[] { 2, 3 });
+            zone.CustomModifiers.AddRange(new[] { 2, 3 });
 
             var merged = ZoneVariantProfile.Merge(def, zone);
 
-            CollectionAssert.AreEquivalent(new[] { 1, 2, 3 }, merged.CustomCantrips);
+            CollectionAssert.AreEquivalent(new[] { 1, 2, 3 }, merged.CustomModifiers);
         }
 
         [TestMethod]

@@ -146,7 +146,7 @@ namespace ACE.Server.WorldObjects
                 // added to every positive natural tick, MAX-wins across worn pieces (owner 2026-08-23: a
                 // multiplier compounded the shard's x900 buff stack into god-mode; flat reads as "+300 on a
                 // 1,700 tick" and can never compound). Applied after the tuner below (see zcFlatRegen).
-                zcFlatRegenPct = player.GetZoneCantripMax(50231);
+                zcFlatRegenPct = player.GetZoneModifierMax(50231);
 
                 // Zone Control Suppression: recompute the enchantment mod without the Prodigal regen line
                 // (uncached path — the cached mod can't know about zone borders), and pick up the regen tuner.

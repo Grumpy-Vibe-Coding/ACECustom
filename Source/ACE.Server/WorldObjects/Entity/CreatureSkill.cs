@@ -227,9 +227,9 @@ namespace ACE.Server.WorldObjects.Entity
 
             // Zone Control cantrip gear: flat per-skill bonus summed across equipped items,
             // outside all enchantment stacking categories (always applies on top, not scaled by vitae)
-            var zoneCantrip = player.GetZoneCantripBonus(ACE.Server.Managers.ZoneControl.ZoneCantrips.SkillBonusBase + (int)Skill);
-            if (zoneCantrip > 0)
-                total += (uint)zoneCantrip;
+            var zoneModifier = player.GetZoneModifierBonus(ACE.Server.Managers.ZoneControl.ZoneModifiers.SkillBonusBase + (int)Skill);
+            if (zoneModifier > 0)
+                total += (uint)zoneModifier;
 
             return total;
         }

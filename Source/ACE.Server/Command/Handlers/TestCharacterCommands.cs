@@ -796,11 +796,11 @@ namespace ACE.Server.Command.Handlers
         /// catalog's ArmorOnly / JewelryOnly - exactly what a real drop at this tier would obey.</summary>
         private static bool PremadeKeyAllowed(int key, WorldObject wo, int tier)
         {
-            if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(key, out var def) || def.SlotSpecial)
+            if (!ACE.Server.Managers.ZoneControl.ZoneModifiers.TryGet(key, out var def) || def.SlotSpecial)
                 return false;
-            var slotRule = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSlotMask(def,
-                ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile?.CustomCantripSlots);
-            return ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneCantrips.PieceMask(wo));
+            var slotRule = ACE.Server.Managers.ZoneControl.ZoneModifiers.EffectiveSlotMask(def,
+                ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile?.CustomModifierSlots);
+            return ACE.Server.Managers.ZoneControl.ZoneModifiers.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneModifiers.PieceMask(wo));
         }
 
         /// <summary>Test gear is meant to be WORN: SET the minter's wield counters to exactly the tier's gates -
@@ -846,15 +846,15 @@ namespace ACE.Server.Command.Handlers
         private static (double Min, double Max) PremadeBand(int key, int tier)
         {
             var vd = ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier);
-            if (vd?.Profile?.CustomCantripBands != null
-                && vd.Profile.CustomCantripBands.TryGetValue(key, out var live)
+            if (vd?.Profile?.CustomModifierBands != null
+                && vd.Profile.CustomModifierBands.TryGetValue(key, out var live)
                 && live != null && live.Max >= live.Min && live.Max > 0)
                 return (live.Min, live.Max);
 
             // no Default authored: the same tier-scaled hardcoded band real drops fall back to (2026-08-23)
-            if (ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(key, out var cdef))
+            if (ACE.Server.Managers.ZoneControl.ZoneModifiers.TryGet(key, out var cdef))
             {
-                var (cmin, cmax) = ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(cdef, tier);
+                var (cmin, cmax) = ACE.Server.Managers.ZoneControl.ZoneModifiers.CatalogBandAt(cdef, tier);
                 return (cmin, cmax);
             }
             return (1, 1);
@@ -1337,7 +1337,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("asforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges VoD test armor/clothing/jewelry (the /testchar look) at a chosen tier. All pieces Attuned + Bonded.",
             "<piece|suit|jewel|all> [tier 10-25, default 11] [cards:key=val,key,...]\n" +
-            "premade <tier 11-25> <avg|bis> [force] = the 18-piece suit with EXPLICIT cantrip lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted into a 'T<tier> <Avg|BiS> Suit' bag.\n" +
+            "premade <tier 11-25> <avg|bis> [force] = the 18-piece suit with EXPLICIT modifier lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted into a 'T<tier> <Avg|BiS> Suit' bag.\n" +
             "Pieces: helm coat pauldrons bracers gloves girth tassets greaves sollerets shirt pants cloak neck ring bracelet trinket\n" +
             "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
             "ring/bracelet mint the left + right pair.\n" +
@@ -1598,7 +1598,7 @@ namespace ACE.Server.Command.Handlers
         /// <summary>`/asforge premade <tier 11-25> <avg|bis> [force]` (owner 2026-08-21; melee|caster still accepted silently):
         /// the 18-piece roster with the cantrip lines written from the preset tables above instead of
         /// rolled. Same bare-strip pipeline as the main verb (no cards), then the shared gear helper
-        /// (bis = core at cap, avg = core at the window midpoint), then explicit ZoneCantrips.Stamp
+        /// (bis = core at cap, avg = core at the window midpoint), then explicit ZoneModifiers.Stamp
         /// per line, FinalizeT11LongDesc (asforge proper never runs it - the stamps would otherwise
         /// sit under inherited flavor text), then the forge provenance. Minted into a dedicated bag:
         /// 18 items in one frame through the main-pack path is the silent-loss window.</summary>
@@ -1712,7 +1712,7 @@ namespace ACE.Server.Command.Handlers
                     forceMax: bis, p: null, coreFrac: bis ? null : 0.5);
 
                 // the explicit lines - graded (live stat resolution 2026-08-22): bis = grade 1000, avg = 500,
-                // stamped through the ZcCantrips record; each key at most once per piece
+                // stamped through the ZcModifiers record; each key at most once per piece
                 // TRUE BiS (owner 2026-08-23): the first PremadeLineMax(tier) keys THIS PIECE CAN CARRY, not the
                 // first N then skip - armor fills its 7th slot with Reinforced, jewelry with Life on Hit.
                 IEnumerable<int> keys = bis ? bisKeys.Where(k => PremadeKeyAllowed(k, wo, tier)).Take(bisCount) : avgDeal[i];
@@ -1720,7 +1720,7 @@ namespace ACE.Server.Command.Handlers
                 foreach (var k in keys)
                 {
                     if (!stamped.Add(k)) continue;
-                    if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.TryGet(k, out var def) || def.SlotSpecial)
+                    if (!ACE.Server.Managers.ZoneControl.ZoneModifiers.TryGet(k, out var def) || def.SlotSpecial)
                     {
                         Msg($"asforge premade: key {k} is not a live pool line - skipped on {piece}");
                         continue;
@@ -1730,7 +1730,7 @@ namespace ACE.Server.Command.Handlers
                     var (bMin, bMax) = PremadeBand(k, tier);
                     var grade = bis ? ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax
                                     : ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax / 2;
-                    ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, def, grade,
+                    ACE.Server.Managers.ZoneControl.ZoneModifiers.StampGraded(wo, def, grade,
                         ((int)Math.Round(bMin), (int)Math.Round(bMax)));
                     lines++;
                 }
@@ -1740,17 +1740,17 @@ namespace ACE.Server.Command.Handlers
                 if (bis)
                 {
                     var dflt = ACE.Server.Managers.ZoneControl.ZoneControlManager.GetVariationDefault(tier)?.Profile;
-                    foreach (var sdef in ACE.Server.Managers.ZoneControl.ZoneCantrips.SlotSpecials())
+                    foreach (var sdef in ACE.Server.Managers.ZoneControl.ZoneModifiers.SlotSpecials())
                     {
                         if (dflt?.CustomSpecials != null && dflt.CustomSpecials.TryGetValue(sdef.Key, out var on) && !on)
                             continue;
-                        var slotId = ACE.Server.Managers.ZoneControl.ZoneCantrips.EffectiveSpecialSlot(sdef, dflt?.CustomCantripSlots);
-                        if (!ACE.Server.Managers.ZoneControl.ZoneCantrips.SpecialPieceMatches(wo, slotId))
+                        var slotId = ACE.Server.Managers.ZoneControl.ZoneModifiers.EffectiveSpecialSlot(sdef, dflt?.CustomModifierSlots);
+                        if (!ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialPieceMatches(wo, slotId))
                             continue;
-                        var (sMin, sMax) = dflt?.CustomCantripBands != null && dflt.CustomCantripBands.TryGetValue(sdef.Key, out var sBand)
-                            ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneCantrips.CatalogBandAt(sdef, tier);
+                        var (sMin, sMax) = dflt?.CustomModifierBands != null && dflt.CustomModifierBands.TryGetValue(sdef.Key, out var sBand)
+                            ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneModifiers.CatalogBandAt(sdef, tier);
                         if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
-                        ACE.Server.Managers.ZoneControl.ZoneCantrips.StampGraded(wo, sdef,
+                        ACE.Server.Managers.ZoneControl.ZoneModifiers.StampGraded(wo, sdef,
                             ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeMax, (sMin, sMax));
                         lines++;
                     }
@@ -1798,7 +1798,7 @@ namespace ACE.Server.Command.Handlers
 
             EnsureWieldCounters(player, tier, Msg);
             Msg($"Premade {tierLabel} {modeTag} suit: {minted} pieces created"
-                + (lines > 0 ? $", {lines} cantrip lines" : "")
+                + (lines > 0 ? $", {lines} modifier lines" : "")
                 + (failed > 0 ? $", {failed} failed" : "")
                 + (skipped > 0 ? $", {skipped} skipped (already held - add 'force' to re-mint)" : "")
                 + (minted > 0 ? $" - in '{bagName}'." : "."));

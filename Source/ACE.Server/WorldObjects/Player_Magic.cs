@@ -1913,7 +1913,12 @@ namespace ACE.Server.WorldObjects
                     // Resist check — sends the resist message automatically.  A resisted spell still
                     // lands if the caster's Overpower procs, matching SpellProjectile.CalculateDamage,
                     // which only bails on `resisted && !overpower`.
-                    var resisted = TryResistSpell(creature, spell, null, true);
+                    // For a Cast on Strike proc the WEAPON is the itemCaster, so the resist rolls
+                    // against its ItemSpellcraft (the 9999 stamp) exactly as the arc path does via
+                    // resistSource - passing null here rolled the PLAYER's own War/Void skill, the
+                    // precise failure the spellcraft stamp exists to prevent (fixed 2026-08-28, the
+                    // sixth everything-must-be-done-TWICE bug). Hand-cast rings keep null = own skill.
+                    var resisted = TryResistSpell(creature, spell, fromProc && procBaseDamage > 0 ? weapon : null, true);
                     if (resisted && !(Overpower != null && Creature.GetOverpower(this, creature)))
                     {
                         dbgResist++;
@@ -2004,16 +2009,25 @@ namespace ACE.Server.WorldObjects
                         // rings (e.g. Clouded Soul) and dropped their Void pool entirely.
                         //
                         // Effective counts, matching SpellProjectile: gems plus the school's charm.
+                        long ringAugs = 0;
                         if (spell.School == MagicSchool.WarMagic)
-                        {
-                            if (EffectiveWarAugCount >= 1)
-                                baseDamage += EffectiveWarAugCount;
-                        }
+                            ringAugs = EffectiveWarAugCount;
                         else if (spell.School == MagicSchool.VoidMagic)
+                            ringAugs = EffectiveVoidAugCount;
+
+                        // The proc aug cap (prop 9061), mirroring SpellProjectile.CalculateDamage:
+                        // clamps the aug term for a Cast on Strike proc ONLY - a hand-cast ring is
+                        // deliberately untouched. The ring path never read the cap before 2026-08-28
+                        // (the fifth everything-must-be-done-TWICE bug on this card), so a capped
+                        // weapon still delivered the full 0..17,150 term on every ring hit.
+                        if (ringAugs > 0 && fromProc && procBaseDamage > 0)
                         {
-                            if (EffectiveVoidAugCount >= 1)
-                                baseDamage += EffectiveVoidAugCount;
+                            var ringAugCap = weapon?.GetProperty((ACE.Entity.Enum.Properties.PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcAugCapPropId);
+                            if (ringAugCap.HasValue && ringAugCap.Value > 0)
+                                ringAugs = Math.Min(ringAugs, (long)Math.Round(ringAugCap.Value));
                         }
+                        if (ringAugs > 0)
+                            baseDamage += ringAugs;
                     }
 
                     // Elemental modifier (wand element vs target).

@@ -33,6 +33,37 @@ namespace ACE.Server.Managers.ZoneControl
 
         private const string StoreKey = "zonecontrol_data";
 
+        /// <summary>The cantrip -> MODIFIER stat-key rename (2026-08-28). Stat keys are plain JSON
+        /// dictionary keys inside the blob, so a stored blob written before the rename still carries
+        /// cantrip_* keys; alias them to the modifier_* names before deserializing. The next save
+        /// writes the new names and this becomes a no-op. Quoted-token replaces only - the exact
+        /// old key in quotes - so nothing else in the blob can match.
+        ///
+        /// ALSO aliases the SERIALIZED PROFILE MEMBER names renamed in the identifier sweep
+        /// (ZoneVariantProfile.CustomModifiers / CustomModifierBands / CustomModifierSlots, formerly
+        /// CustomCantrip*): those C# property names ARE the blob's JSON keys, so without the alias a
+        /// pre-rename blob's zone pools would silently deserialize to empty.</summary>
+        private static string UpgradeLegacyStoreKeys(string json)
+        {
+            if (json.IndexOf("cantrip", StringComparison.OrdinalIgnoreCase) < 0)
+                return json;
+            return json
+                .Replace("\"weapon_cantrip_chance\"", "\"weapon_modifier_chance\"")
+                .Replace("\"armor_cantrip_chance\"", "\"armor_modifier_chance\"")
+                .Replace("\"cantrip_lines_min\"", "\"modifier_lines_min\"")
+                .Replace("\"cantrip_lines_max\"", "\"modifier_lines_max\"")
+                .Replace("\"cantrip_lines_chance_1\"", "\"modifier_lines_chance_1\"")
+                .Replace("\"cantrip_lines_chance_2\"", "\"modifier_lines_chance_2\"")
+                .Replace("\"cantrip_lines_chance_3\"", "\"modifier_lines_chance_3\"")
+                .Replace("\"cantrip_weight_trash\"", "\"modifier_weight_trash\"")
+                .Replace("\"cantrip_weight_mid\"", "\"modifier_weight_mid\"")
+                .Replace("\"cantrip_weight_chase\"", "\"modifier_weight_chase\"")
+                // serialized ZoneVariantProfile member renames (2026-08-28 identifier sweep)
+                .Replace("\"CustomCantrips\"", "\"CustomModifiers\"")
+                .Replace("\"CustomCantripBands\"", "\"CustomModifierBands\"")
+                .Replace("\"CustomCantripSlots\"", "\"CustomModifierSlots\"");
+        }
+
         /// <summary>Variant instances begin at variation 11 (0 = normal world, 1..10 = retail layers).
         /// Bounded zones (player boundaries) are only allowed at variant instances — Zone Control's own
         /// constant, independent of any other system's tiering.
@@ -182,6 +213,9 @@ namespace ACE.Server.Managers.ZoneControl
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
                 json = DatabaseManager.ShardConfig.GetString(StoreKey)?.Value;
 
+            if (!string.IsNullOrWhiteSpace(json))
+                json = UpgradeLegacyStoreKeys(json);
+
             var store = string.IsNullOrWhiteSpace(json)
                 ? new Store()
                 : (JsonConvert.DeserializeObject<Store>(json) ?? new Store());
@@ -293,9 +327,9 @@ namespace ACE.Server.Managers.ZoneControl
                 && (vp.PropInt64s == null || vp.PropInt64s.Count == 0)
                 && (vp.PropFloats == null || vp.PropFloats.Count == 0)
                 && (vp.PropBools == null || vp.PropBools.Count == 0)
-                && (vp.CustomCantrips == null || vp.CustomCantrips.Count == 0)
-                && (vp.CustomCantripBands == null || vp.CustomCantripBands.Count == 0)
-                && (vp.CustomCantripSlots == null || vp.CustomCantripSlots.Count == 0)
+                && (vp.CustomModifiers == null || vp.CustomModifiers.Count == 0)
+                && (vp.CustomModifierBands == null || vp.CustomModifierBands.Count == 0)
+                && (vp.CustomModifierSlots == null || vp.CustomModifierSlots.Count == 0)
                 && (vp.CustomSpecials == null || vp.CustomSpecials.Count == 0)
                 && (vp.CustomWeaponCards == null || vp.CustomWeaponCards.Count == 0)
                 && (vp.CurrencyDrops == null || vp.CurrencyDrops.Count == 0)
@@ -511,8 +545,8 @@ namespace ACE.Server.Managers.ZoneControl
             Dictionary<int, long> propInts = null, propInt64s = null;
             Dictionary<int, double> propFloats = null;
             Dictionary<int, bool> propBools = null;
-            List<int> customCantrips = null;
-            Dictionary<int, CantripBand> cantripBands = null;
+            List<int> customModifiers = null;
+            Dictionary<int, ModifierBand> modifierBands = null;
             List<ZoneCurrencyDrop> currencyDrops = null;
             List<ZoneSpellRule> spellRules = null;
 
@@ -533,14 +567,14 @@ namespace ACE.Server.Managers.ZoneControl
                 if (variantProfile.PropInt64s is { Count: > 0 }) propInt64s = new Dictionary<int, long>(variantProfile.PropInt64s);
                 if (variantProfile.PropFloats is { Count: > 0 }) propFloats = new Dictionary<int, double>(variantProfile.PropFloats);
                 if (variantProfile.PropBools is { Count: > 0 }) propBools = new Dictionary<int, bool>(variantProfile.PropBools);
-                if (variantProfile.CustomCantrips is { Count: > 0 }) customCantrips = new List<int>(variantProfile.CustomCantrips);
+                if (variantProfile.CustomModifiers is { Count: > 0 }) customModifiers = new List<int>(variantProfile.CustomModifiers);
 
-                if (variantProfile.CustomCantripBands is { Count: > 0 })
+                if (variantProfile.CustomModifierBands is { Count: > 0 })
                 {
-                    cantripBands = new Dictionary<int, CantripBand>(variantProfile.CustomCantripBands.Count);
-                    foreach (var kvp in variantProfile.CustomCantripBands)
+                    modifierBands = new Dictionary<int, ModifierBand>(variantProfile.CustomModifierBands.Count);
+                    foreach (var kvp in variantProfile.CustomModifierBands)
                         if (kvp.Value != null)
-                            cantripBands[kvp.Key] = kvp.Value.Clone();
+                            modifierBands[kvp.Key] = kvp.Value.Clone();
                 }
 
                 if (variantProfile.CurrencyDrops is { Count: > 0 })
@@ -560,8 +594,8 @@ namespace ACE.Server.Managers.ZoneControl
                 }
             }
 
-            return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customCantrips, currencyDrops, spellRules, cantripBands,
-                variantProfile?.CustomCantripSlots, variantProfile?.CustomSpecials, variantProfile?.CustomWeaponCards);
+            return new EvaluatedProfile(zoneName, 1, ZoneVariant.Minion, values, bodyParts, propInts, propInt64s, propFloats, propBools, customModifiers, currencyDrops, spellRules, modifierBands,
+                variantProfile?.CustomModifierSlots, variantProfile?.CustomSpecials, variantProfile?.CustomWeaponCards);
         }
 
         // CopyEffects removed 2026-07-30 — ZoneEffects.Merge(default, zone) both layers AND clones.

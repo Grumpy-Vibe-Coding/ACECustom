@@ -42,7 +42,7 @@ namespace ACE.Server.WorldObjects
                 ACE.Server.Managers.ZoneControl.ZoneStatResolver.ApplyIfStale(worldObject);
 
                 AddItemToEquippedItemsRatingCache(worldObject);
-                UpdateZoneCantripCache(worldObject, +1);
+                UpdateZoneModifierCache(worldObject, +1);
 
                 EncumbranceVal += (worldObject.EncumbranceVal ?? 0);
             }
@@ -273,10 +273,10 @@ namespace ACE.Server.WorldObjects
 
         /// <summary>
         /// Zone Control cantrip gear: per-creature sums of the custom cantrip props (block 50200-50399,
-        /// see ZoneCantrips) across equipped items. Maintained on equip/dequip alongside the rating cache;
+        /// see ZoneModifiers) across equipped items. Maintained on equip/dequip alongside the rating cache;
         /// null until the first cantripped item is worn, so non-cantrip creatures pay nothing.
         /// </summary>
-        private Dictionary<int, int> zoneCantripCache;
+        private Dictionary<int, int> zoneModifierCache;
 
         /// <summary>
         /// Live stat resolution, `ladder apply` online path (owner 2026-08-23): re-resolve every WORN piece
@@ -292,16 +292,16 @@ namespace ACE.Server.WorldObjects
                 if (!ACE.Server.Managers.ZoneControl.ZoneStatResolver.HasRecord(wo))
                     continue;
                 RemoveItemFromEquippedItemsRatingCache(wo);
-                UpdateZoneCantripCache(wo, -1);
+                UpdateZoneModifierCache(wo, -1);
                 if (ACE.Server.Managers.ZoneControl.ZoneStatResolver.ApplyIfStale(wo))
                     changed++;
                 AddItemToEquippedItemsRatingCache(wo);
-                UpdateZoneCantripCache(wo, +1);
+                UpdateZoneModifierCache(wo, +1);
             }
             return changed;
         }
 
-        private void UpdateZoneCantripCache(WorldObject wo, int sign)
+        private void UpdateZoneModifierCache(WorldObject wo, int sign)
         {
             wo.BiotaDatabaseLock.EnterReadLock();
             try
@@ -312,12 +312,12 @@ namespace ACE.Server.WorldObjects
                 foreach (var kv in wo.Biota.PropertiesInt)
                 {
                     var id = (int)kv.Key;
-                    if (id < ACE.Server.Managers.ZoneControl.ZoneCantrips.PropMin || id > ACE.Server.Managers.ZoneControl.ZoneCantrips.PropMax)
+                    if (id < ACE.Server.Managers.ZoneControl.ZoneModifiers.PropMin || id > ACE.Server.Managers.ZoneControl.ZoneModifiers.PropMax)
                         continue;
 
-                    zoneCantripCache ??= new Dictionary<int, int>();
-                    zoneCantripCache.TryGetValue(id, out var cur);
-                    zoneCantripCache[id] = cur + sign * kv.Value;
+                    zoneModifierCache ??= new Dictionary<int, int>();
+                    zoneModifierCache.TryGetValue(id, out var cur);
+                    zoneModifierCache[id] = cur + sign * kv.Value;
                 }
             }
             finally
@@ -334,11 +334,11 @@ namespace ACE.Server.WorldObjects
         /// specials) is uncapped. Creature_Rating clamps the retail-prop lines (Dmg / CritDmg / MaxHP /
         /// HealBoost) the same way on the rating cache.
         /// </summary>
-        public int GetZoneCantripBonus(int propId)
+        public int GetZoneModifierBonus(int propId)
         {
-            if (zoneCantripCache == null)
+            if (zoneModifierCache == null)
                 return 0;
-            if (!zoneCantripCache.TryGetValue(propId, out var v))
+            if (!zoneModifierCache.TryGetValue(propId, out var v))
                 return 0;
             if (v > 0 && IsGearCapLineProp(propId))
                 v = Math.Min(v, GetGearCap(ACE.Server.Managers.ZoneScaling.ZoneStat.GearCapLine, 2500));
@@ -348,8 +348,8 @@ namespace ACE.Server.WorldObjects
         /// <summary>The 50200-block props that are anchored SET lines and read under gear_cap_line.</summary>
         private static bool IsGearCapLineProp(int propId)
         {
-            const int attrLo = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 1;     // 50201 Strength
-            const int attrHi = ACE.Server.Managers.ZoneControl.ZoneCantrips.AttrBonusBase + 6;     // 50206 Self
+            const int attrLo = ACE.Server.Managers.ZoneControl.ZoneModifiers.AttrBonusBase + 1;     // 50201 Strength
+            const int attrHi = ACE.Server.Managers.ZoneControl.ZoneModifiers.AttrBonusBase + 6;     // 50206 Self
             return propId >= attrLo && propId <= attrHi;
         }
 
@@ -395,9 +395,9 @@ namespace ACE.Server.WorldObjects
         /// read (the cache only holds sums); bails on the cache so creatures wearing nothing cantripped
         /// pay nothing. 0 when no equipped item carries the prop.
         /// </summary>
-        public int GetZoneCantripMax(int propId)
+        public int GetZoneModifierMax(int propId)
         {
-            if (zoneCantripCache == null || !zoneCantripCache.ContainsKey(propId))
+            if (zoneModifierCache == null || !zoneModifierCache.ContainsKey(propId))
                 return 0;
 
             var max = 0;
@@ -475,7 +475,7 @@ namespace ACE.Server.WorldObjects
             ACE.Server.Managers.ZoneControl.ZoneStatResolver.ApplyIfStale(worldObject);
 
             AddItemToEquippedItemsRatingCache(worldObject);
-            UpdateZoneCantripCache(worldObject, +1);
+            UpdateZoneModifierCache(worldObject, +1);
 
             EncumbranceVal += (worldObject.EncumbranceVal ?? 0);
             Value += (worldObject.Value ?? 0);
@@ -535,7 +535,7 @@ namespace ACE.Server.WorldObjects
             }
 
             RemoveItemFromEquippedItemsRatingCache(worldObject);
-            UpdateZoneCantripCache(worldObject, -1);
+            UpdateZoneModifierCache(worldObject, -1);
 
             wieldedLocation = worldObject.CurrentWieldedLocation ?? EquipMask.None;
 
