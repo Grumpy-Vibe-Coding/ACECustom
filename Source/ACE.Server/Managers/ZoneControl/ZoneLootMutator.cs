@@ -110,15 +110,51 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>Per-hit spread, per slot. Applied to the WHOLE base (B + augs) at hit time.</summary>
         public const int ProcArcVariancePropId = 9062;
         public const int ProcRingVariancePropId = 9063;
+        /// <summary>The RING's own aug cap (owner 2026-08-29: the shared stamp is retired - each proc
+        /// is its own thing). Prop 9061 is now the ARC's cap alone; the ring damage path reads this
+        /// first and falls back to 9061 so the pre-split test daggers keep their cap.</summary>
+        public const int ProcRingAugCapPropId = 9064;
 
         /// <summary>
         /// Card amount pairs: min only / max only = exact value, both = uniform roll in the range each
         /// drop, reversed bounds auto-swap, everything clamped to [lo, hi]. Neither set = def.
         /// </summary>
-        private static double RollRange(EvaluatedProfile p, string minStat, string maxStat, double def, double lo, double hi)
+        private static double RollRange(EvaluatedProfile p, string minStat, string maxStat, double def, double lo, double hi, int tier)
+            => RollRangeBand(p, minStat, maxStat, def, def, lo, hi, tier);
+
+        /// <summary>The Cast on Strike aug-cap fallback (owner 2026-08-30: "cap the cast on
+        /// strike... the same caps as the tier", then "we can have the floor at five hundred"):
+        /// each proc's aug cap ROLLS uniform between 500 and the drop tier's LIVE weapon-scaling
+        /// aug cap (2,500 at T11, +500/tier by default; read from the tunable config so a
+        /// tier-cap retune carries to new procs automatically). With base B a token 1-2, this
+        /// roll IS the drop's damage quality. forceMax (/wsforge) takes the ceiling. An authored
+        /// weapon_proc_*_aug_cap stat overrides with its exact value. A proc can no longer stamp
+        /// UNCAPPED by accident.</summary>
+        private static double ProcAugCapRoll(int tier, bool forceMax)
         {
-            var a = p.Has(minStat) ? p.Get(minStat) : (p.Has(maxStat) ? p.Get(maxStat) : def);
-            var b = p.Has(maxStat) ? p.Get(maxStat) : a;
+            var t = WeaponScaling.WeaponScalingManager.GetTier(tier);
+            var cap = t != null && t.Cap > 0 ? t.Cap : 2500 + 500 * (Math.Clamp(tier, 11, 25) - 11);
+            if (cap <= 500)
+                return cap;
+            return forceMax ? cap : ThreadSafeRandom.Next(500f, (float)cap);
+        }
+
+        /// <summary>The Cleave / Split Arrows fallback band (owner 2026-08-29: "T11 floor +1 -
+        /// T25 max +10"): (1-2) at T11 lerping to (8-10) at T25.</summary>
+        private static (double Lo, double Hi) CleaveSplitBandAt(int tier)
+        {
+            var t = Math.Clamp((tier - 11) / 14.0, 0.0, 1.0);
+            return (1 + 7 * t, 2 + 8 * t);
+        }
+
+        private static double RollRangeBand(EvaluatedProfile p, string minStat, string maxStat, double defLo, double defHi, double lo, double hi, int tier)
+        {
+            // ANCHORED (2026-08-29): each end reads through GetT, so an authored _t25 twin walks the
+            // pair up the tier line. Historical one-box rule preserved: ONE authored box = that
+            // exact value; NEITHER authored = the (defLo, defHi) fallback band rolls.
+            var a = p.Has(minStat) ? p.GetT(minStat, defLo, tier) : (p.Has(maxStat) ? p.GetT(maxStat, defLo, tier) : defLo);
+            var b = p.Has(maxStat) ? p.GetT(maxStat, a, tier)
+                  : p.Has(minStat) ? a : defHi;
             if (b < a)
                 (a, b) = (b, a);
             a = Math.Clamp(a, lo, hi);
@@ -350,6 +386,60 @@ namespace ACE.Server.Managers.ZoneControl
             var isMissile = wo is MissileLauncher;
             var isWeapon = isMelee || isMissile || wo is Caster;
 
+            // ── PHASE 1 - ELIGIBILITY, then CHANCE ROLLS, all decided up front (2026-08-30, the
+            // modifier cap; eligibility split onto its own flags later that day for the FLOOR).
+            // Stamping used to happen inline with each roll; the cap needs the full winner list
+            // before anything writes, and the floor additionally needs to know which cards were
+            // ELIGIBLE BUT LOST their roll (its top-up pool), so eligibility computes separately
+            // from the roll. Eligibility rules are UNCHANGED and stay documented on each card's
+            // stamp block. A card that wins its roll but fails eligibility is NOT a winner and
+            // spends no cap slot (empty rend pool, invalid slayer creature type).
+            uint procArcId = 0, procRingId = 0;
+            var hasProcSlots = isWeapon && wo.ProcSpell == null && TryGetProcSpells(wo.W_DamageType, out procArcId, out procRingId);
+
+            // The rend pool computes whenever the drop is a weapon (it used to hide behind the
+            // chance roll) - the floor's top-up pool has to know rend eligibility even on a drop
+            // whose rend roll lost, and the pool is two cheap list ops.
+            var rendCandidates = isWeapon ? GetMatchingRends(wo.W_DamageType) : null;
+            rendCandidates?.RemoveAll(rend => (wo.GetImbuedEffects() & rend) != 0);
+            var eligRend = rendCandidates != null && rendCandidates.Count > 0;
+            var eligSlayer = isWeapon && wo.SlayerCreatureType == null && killed?.CreatureType != null &&
+                killed.CreatureType != ACE.Entity.Enum.CreatureType.Invalid;
+
+            var gotArc = hasProcSlots && WonT(p, ZoneStat.WeaponProcArcChance, lootTier);
+            var gotRing = hasProcSlots && WonT(p, ZoneStat.WeaponProcRingChance, lootTier);
+            var gotRend = eligRend && WonT(p, ZoneStat.WeaponImbueChance, lootTier);
+            var gotCleave = isMelee && WonT(p, ZoneStat.WeaponCleaveChance, lootTier);
+            var gotSplit = isMissile && WonT(p, ZoneStat.WeaponSplitChance, lootTier);
+            var gotBite = isWeapon && WonT(p, ZoneStat.WeaponBiteChance, lootTier);
+            var gotCrush = isWeapon && WonT(p, ZoneStat.WeaponCrushChance, lootTier);
+            var gotArmorRend = (isMelee || isMissile) && WonT(p, ZoneStat.WeaponArmorRendChance, lootTier);
+            var gotShieldCleave = isWeapon && WonT(p, ZoneStat.WeaponShieldCleaveChance, lootTier);
+            var gotSlayer = eligSlayer && WonT(p, ZoneStat.WeaponSlayerChance, lootTier);
+
+            // ── PHASE 2 - THE BOUNDS (cap: owner 2026-08-30, "combo impossible at T11"; floor:
+            // same day, "need a hard min floor and max"). weapon_modifier_cap (anchored, unset =
+            // uncapped) is the max cards this drop carries; winners at >= 100 pct effective chance
+            // are ALWAYS INCLUDED (they skip the trim but spend their slots first), the rest trim
+            // at RANDOM - so junk cards genuinely dilute god-rolls, which is intended.
+            // weapon_modifier_min (anchored, unset = no floor) then tops a short drop up at random
+            // from the eligible losers - COUNT guaranteed, identity random.
+            var won = new[] { gotRend, gotSlayer, gotBite, gotCrush, gotArmorRend, gotShieldCleave, gotCleave, gotSplit, gotArc, gotRing };
+            var eligible = new[]
+            {
+                eligRend, eligSlayer, isWeapon, isWeapon, isMelee || isMissile, isWeapon,
+                isMelee, isMissile, hasProcSlots, hasProcSlots,
+            };
+            ApplyModifierBounds(p, ZoneStat.WeaponModifierMin, ZoneStat.WeaponModifierCap, lootTier, won, eligible, new[]
+            {
+                ZoneStat.WeaponImbueChance, ZoneStat.WeaponSlayerChance, ZoneStat.WeaponBiteChance,
+                ZoneStat.WeaponCrushChance, ZoneStat.WeaponArmorRendChance, ZoneStat.WeaponShieldCleaveChance,
+                ZoneStat.WeaponCleaveChance, ZoneStat.WeaponSplitChance,
+                ZoneStat.WeaponProcArcChance, ZoneStat.WeaponProcRingChance,
+            });
+            gotRend = won[0]; gotSlayer = won[1]; gotBite = won[2]; gotCrush = won[3]; gotArmorRend = won[4];
+            gotShieldCleave = won[5]; gotCleave = won[6]; gotSplit = won[7]; gotArc = won[8]; gotRing = won[9];
+
             // Cast on Strike (melee/missile — procs fire from the swing path; never clobber an existing proc)
             // CASTERS INCLUDED since 2026-08-25 (owner). The old condition was (isMelee || isMissile)
             // and the comment on the card said procs "fire from the swing path, so casters never roll
@@ -371,51 +461,59 @@ namespace ACE.Server.Managers.ZoneControl
             // THE `wo.ProcSpell == null` GUARD STAYS and now gates BOTH slots: a weapon that already
             // carries a proc is a player's Ring Glyph craft, and this card leaves it alone entirely
             // rather than stacking a second spell onto someone else's work.
-            if (isWeapon && wo.ProcSpell == null && TryGetProcSpells(wo.W_DamageType, out var arcId, out var ringId))
+            if (gotArc || gotRing)
             {
-                var gotArc = Won(p, ZoneStat.WeaponProcArcChance);
-                var gotRing = Won(p, ZoneStat.WeaponProcRingChance);
-
+                // PER-SLOT knobs throughout (owner 2026-08-29: the shared spellcraft / aug cap stamps
+                // are retired - "each of those procs is its own thing"). Caps are stamped on the item
+                // rather than read from the zone at hit time, like every other card value.
                 if (gotArc)
                 {
-                    wo.ProcSpell = arcId;
-                    wo.ProcSpellRate = Math.Clamp(p.Get(ZoneStat.WeaponProcArcRate, 0.05), 0.0, 1.0);
+                    wo.ProcSpell = procArcId;
+                    wo.ProcSpellRate = Math.Clamp(p.GetT(ZoneStat.WeaponProcArcRate, 0.05, lootTier), 0.0, 1.0);
                     wo.ProcSpellSelfTargeted = false;
                     StampWeaponCard(wo, p, ZoneStatResolver.SpecProcArcDamage, lootTier, forceMax);
-                    var arcVar = Math.Clamp(p.Get(ZoneStat.WeaponProcArcVariance, 0), 0.0, 1.0);
+                    var arcVar = Math.Clamp(p.GetT(ZoneStat.WeaponProcArcVariance, 0, lootTier), 0.0, 1.0);
                     if (arcVar > 0)
                         wo.SetProperty((PropertyFloat)ProcArcVariancePropId, arcVar);
+                    var arcCap = p.Has(ZoneStat.WeaponProcArcAugCap)
+                        ? p.GetT(ZoneStat.WeaponProcArcAugCap, 0, lootTier)
+                        : ProcAugCapRoll(lootTier, forceMax);
+                    if (arcCap > 0)
+                        wo.SetProperty((PropertyFloat)ProcAugCapPropId, arcCap);
                 }
 
                 if (gotRing)
                 {
-                    wo.SetProperty((PropertyDataId)ProcSpell2PropId, ringId);
+                    wo.SetProperty((PropertyDataId)ProcSpell2PropId, procRingId);
                     wo.SetProperty((PropertyFloat)ProcRate2PropId,
-                        Math.Clamp(p.Get(ZoneStat.WeaponProcRingRate, 0.05), 0.0, 1.0));
+                        Math.Clamp(p.GetT(ZoneStat.WeaponProcRingRate, 0.05, lootTier), 0.0, 1.0));
                     StampWeaponCard(wo, p, ZoneStatResolver.SpecProcRingDamage, lootTier, forceMax);
-                    var ringVar = Math.Clamp(p.Get(ZoneStat.WeaponProcRingVariance, 0), 0.0, 1.0);
+                    var ringVar = Math.Clamp(p.GetT(ZoneStat.WeaponProcRingVariance, 0, lootTier), 0.0, 1.0);
                     if (ringVar > 0)
                         wo.SetProperty((PropertyFloat)ProcRingVariancePropId, ringVar);
+                    var ringCap = p.Has(ZoneStat.WeaponProcRingAugCap)
+                        ? p.GetT(ZoneStat.WeaponProcRingAugCap, 0, lootTier)
+                        : ProcAugCapRoll(lootTier, forceMax);
+                    if (ringCap > 0)
+                        wo.SetProperty((PropertyFloat)ProcRingAugCapPropId, ringCap);
                 }
 
                 if (gotArc || gotRing)
                 {
-
                     // WITHOUT THIS THE CARD DOES NOTHING ON A MELEE CHARACTER. TryResistSpell:140-161
                     // uses the weapon's ItemSpellcraft if set, else the WIELDER's skill in the spell's
                     // school - and untrained War Magic (~600) against a T11 mob's authored
                     // magic_defense of 1100 is resisted essentially every time. Authored, not a
                     // literal: nothing on this shard is tuned yet, so it is a knob.
-                    var craft = (int)Math.Round(p.Get(ZoneStat.WeaponProcSpellcraft, 9999));
-                    if (craft > 0)
-                        wo.ItemSpellcraft = craft;
-
-                    // Stamped on the item rather than read from the zone at hit time, like every other
-                    // card value - so a weapon keeps the cap it dropped with and a retune reaches only
-                    // new drops, which is the same contract the damage bands have.
-                    var augCap = p.Get(ZoneStat.WeaponProcAugCap, 0);
-                    if (augCap > 0)
-                        wo.SetProperty((PropertyFloat)ProcAugCapPropId, augCap);
+                    // ItemSpellcraft is ONE property, so a weapon that rolled BOTH slots stamps the
+                    // HIGHER of the two per-slot spellcrafts; true per-slot resist is adjust-after.
+                    var craft = 0.0;
+                    if (gotArc)
+                        craft = Math.Max(craft, p.GetT(ZoneStat.WeaponProcArcSpellcraft, 9999, lootTier));
+                    if (gotRing)
+                        craft = Math.Max(craft, p.GetT(ZoneStat.WeaponProcRingSpellcraft, 9999, lootTier));
+                    if ((int)Math.Round(craft) > 0)
+                        wo.ItemSpellcraft = (int)Math.Round(craft);
                 }
             }
 
@@ -453,69 +551,52 @@ namespace ACE.Server.Managers.ZoneControl
             // The Won(...) chance roll STAYS. The owner drives "always" by setting weapon_imbue_chance to
             // 1.0 in the store; that is a tuning value, not a code constant, and Won() still treats an
             // undefined stat as NEVER so a zone that authors nothing keeps rolling nothing.
-            if (isWeapon && Won(p, ZoneStat.WeaponImbueChance))
+            // RENDING + REND POWER ARE ONE MODIFIER (owner 2026-08-29: "we ended up with Rending and
+            // Rend Power two separate things. It's 1"). One gate - weapon_imbue_chance - and every
+            // rend the CARD stamps also rolls its power from the band (grade recorded, so a band
+            // retune still reaches it at re-resolve). weapon_rend_power_chance is RETIRED.
+            //
+            // NATURAL RENDS STAY VANILLA (owner ruling, same day): the old separate Rend Power roll
+            // could land on a rend the ordinary loot roll produced; that path is deliberately gone.
+            // Only card-stamped rends carry prop 9056, so making big rends rarer is now the Rending
+            // chance itself - the original "big rends rare without rends rare" knob folded into one.
+            if (gotRend)
             {
-                var candidates = GetMatchingRends(wo.W_DamageType);
-                candidates.RemoveAll(rend => (wo.GetImbuedEffects() & rend) != 0);
-                if (candidates.Count > 0)
-                {
-                    var rend = candidates[ThreadSafeRandom.Next(0, candidates.Count - 1)];
-                    wo.ImbuedEffect |= rend;
-                    ApplyRendUnderlay(wo, rend);
-                }
+                var rend = rendCandidates[ThreadSafeRandom.Next(0, rendCandidates.Count - 1)];
+                wo.ImbuedEffect |= rend;
+                ApplyRendUnderlay(wo, rend);
+                StampWeaponCard(wo, p, ZoneStatResolver.SpecRendPower, lootTier, forceMax);
             }
 
-            // rend power: per-weapon rend strength as a DIRECT vuln bonus, rolled per drop in [min, max]
-            // on any rend-carrying weapon in the zone (whether from our roll above or the natural loot
-            // roll). Wire value = vuln fraction (150% = 1.5 = the normal rend cap/floor, up to 1000% =
-            // 10.0); the engine sets rendingMod = 1 + this, replacing the skill formula (and its 2.5 cap).
-            //
-            // THE GATE (changed 2026-08-25, second pass): this card used to be the ONE special with no
-            // chance stat of its own - the gate was a PRESENCE test on the min/max pair. That is what
-            // made its T11 -> T25 ladder unreachable, and the reason is worth keeping written down:
-            // the presence test and ZoneStatResolver.WeaponDropBand's "is a pin authored?" test were
-            // the SAME condition, so the gate could only open when a pin existed, and a pin always
-            // wins over the ladder. The band below the gate was therefore dead code by construction.
-            // It now gates on weapon_rend_power_chance, exactly like the other five, so an UNPINNED
-            // Rend Power resolves through the ladder (WeaponDropBand at drop, WeaponResolveBand on
-            // every equip) and a band retune reaches weapons already in the world.
-            //
-            // KNOWN AND ACCEPTED CONSEQUENCE (owner ruling 2026-08-25, no migration): Won() treats an
-            // UNDEFINED stat as NEVER, not as "0 pct", so a zone that authors only min/max and no
-            // chance now rolls Rend Power on nothing. Re-author the chance on those zones. There is
-            // deliberately no default-to-1.0 shim - a shim would resurrect the exact coupling between
-            // "a pin exists" and "the card fires" that this change exists to break.
-            //
-            // The rend requirement is NOT part of the chance and must stay ANDed on: prop 9056 only
-            // means anything on a weapon that actually carries a rend imbue, so a chance of 1.0 still
-            // skips every non-rending weapon in the zone.
-            if (isWeapon && Won(p, ZoneStat.WeaponRendPowerChance)
-                && (wo.GetImbuedEffects() & AllRends) != 0)
-                StampWeaponCard(wo, p, ZoneStatResolver.SpecRendPower, lootTier, forceMax);
-
-            // Cleaving (melee): swing hits extra targets in a 180-degree arc
-            if (isMelee && Won(p, ZoneStat.WeaponCleaveChance))
+            // Cleaving (melee): swing hits extra targets in a 180-degree arc.
+            // DECIDED 2026-08-29 (owner "T11 floor +1 - T25 max +10"): the unauthored fallback is
+            // a real tier band now, (1-2) at T11 -> (8-10) at T25, lerped like every other ladder.
+            // Authored stats (incl. _t25 anchors) still override per end via RollRange's GetT reads.
+            if (gotCleave)
             {
-                var targets = (int)Math.Round(RollRange(p, ZoneStat.WeaponCleaveMin, ZoneStat.WeaponCleaveMax, 1, 1, 10));
+                var (defLo, defHi) = CleaveSplitBandAt(lootTier);
+                var targets = (int)Math.Round(RollRangeBand(p, ZoneStat.WeaponCleaveMin, ZoneStat.WeaponCleaveMax, defLo, defHi, 1, 10, lootTier));
                 wo.SetProperty(PropertyInt.Cleaving, targets + 1); // engine: CleaveTargets = Cleaving - 1
             }
 
-            // Split Arrows (bows): shots fork to hit extra targets (the custom bowstring system)
-            if (isMissile && Won(p, ZoneStat.WeaponSplitChance))
+            // Split Arrows (bows): shots fork to hit extra targets (the custom bowstring system).
+            // Same owner-ruled band as Cleave - the two are the melee/bow twins of one design.
+            if (gotSplit)
             {
-                var count = (int)Math.Round(RollRange(p, ZoneStat.WeaponSplitMin, ZoneStat.WeaponSplitMax, 1, 1, 10));
+                var (defLo, defHi) = CleaveSplitBandAt(lootTier);
+                var count = (int)Math.Round(RollRangeBand(p, ZoneStat.WeaponSplitMin, ZoneStat.WeaponSplitMax, defLo, defHi, 1, 10, lootTier));
                 wo.SetProperty((PropertyBool)SplitArrowsBoolId, true);
                 wo.SetProperty((PropertyInt)SplitArrowCountIntId, count);
                 wo.SetProperty((PropertyFloat)SplitArrowRangeFloatId,
-                    Math.Clamp(p.Get(ZoneStat.WeaponSplitRange, 8.0), 0.0, 50.0));
+                    Math.Clamp(p.GetT(ZoneStat.WeaponSplitRange, 8.0, lootTier), 0.0, 50.0));
                 wo.SetProperty((PropertyFloat)SplitArrowDmgFloatId,
-                    Math.Clamp(p.Get(ZoneStat.WeaponSplitDmg, 1.0), 0.0, 1.0));
+                    Math.Clamp(p.GetT(ZoneStat.WeaponSplitDmg, 1.0, lootTier), 0.0, 1.0));
             }
 
             // Biting Strike: crit chance override (base 0.1). Unauthored magnitude follows the
             // T11 -> T25 ladder (0.58-0.65 -> 0.78-0.88); the value is now the projection of a
             // recorded grade, so a band retune reaches weapons already in the world.
-            if (isWeapon && Won(p, ZoneStat.WeaponBiteChance))
+            if (gotBite)
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecBite, lootTier, forceMax);
 
             // Crushing Blow: the card value IS the final crit damage multiplier (2 = 2x, the floor),
@@ -528,7 +609,7 @@ namespace ACE.Server.Managers.ZoneControl
             // The one and only conversion lives in ZoneStatResolver.EngineValue, which both this
             // write site (via StampWeaponCard) and the resolver call. The band table stays in display
             // space; do not bake the offset into it either.
-            if (isWeapon && Won(p, ZoneStat.WeaponCrushChance))
+            if (gotCrush)
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecCrush, lootTier, forceMax);
 
             // Armor Rend: stamps the REAL ArmorRending imbue (shows with the rend family on the item) plus
@@ -536,14 +617,14 @@ namespace ACE.Server.Managers.ZoneControl
             // (which caps at 0.6) at hit time. OR'd in so it coexists with an elemental rend from above.
             // MELEE/MISSILE ONLY: armor rending is a physical-armor effect and does nothing for magic, so
             // casters (wands/orbs/staves) never roll it, regardless of the card's chance.
-            if ((isMelee || isMissile) && Won(p, ZoneStat.WeaponArmorRendChance))
+            if (gotArmorRend)
             {
                 wo.ImbuedEffect |= ImbuedEffectType.ArmorRending;
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecArmorRend, lootTier, forceMax);
             }
 
             // Shield Cleaving: fraction of shield AL ignored (engine reads the value directly)
-            if (isWeapon && Won(p, ZoneStat.WeaponShieldCleaveChance))
+            if (gotShieldCleave)
                 StampWeaponCard(wo, p, ZoneStatResolver.SpecShieldCleave, lootTier, forceMax);
 
             // REMOVED 2026-08-25 (owner): the Phantom ("hollow") loot card. It stamped PropertyBool
@@ -553,8 +634,7 @@ namespace ACE.Server.Managers.ZoneControl
             // appraisal line - the ~830 existing hollow weapons still work and still read as hollow.
 
             // slayer attuned against the killed monster's own kind
-            if (isWeapon && wo.SlayerCreatureType == null && killed?.CreatureType != null &&
-                killed.CreatureType != ACE.Entity.Enum.CreatureType.Invalid && Won(p, ZoneStat.WeaponSlayerChance))
+            if (gotSlayer)
             {
                 wo.SlayerCreatureType = killed.CreatureType;
                 // damage multiplier vs that creature type, rolled per drop; floor 1.5x (a normal slayer),
@@ -599,78 +679,63 @@ namespace ACE.Server.Managers.ZoneControl
         }
 
         /// <summary>
-        /// Armor v2 line roll (Cantrip_Band_Ladder v2, 2026-08-21). Replaces the per-bucket draws:
-        ///   (a) line COUNT = cantrip_lines_min guaranteed, then extra slots up to cantrip_lines_max roll
-        ///       cantrip_lines_chance_1/2/3 IN ORDER - the first miss stops (slots past 3 reuse chance_3);
-        ///   (b) each slot picks a DISTINCT key from the zone pool, weighted by Def.Class
-        ///       (cantrip_weight_trash/mid/chase);
-        ///       SlotSpecial defs never enter; the per-line slot rule decides which piece kinds may roll it;
-        ///   (c) bands: the zone override (CustomModifierBands) wins over the catalog, unchanged;
-        ///   (d) forceMax (the piece carries the per-kill slot special) = every line at band MAX.
-        /// armor_cantrip_chance / weapon_cantrip_chance stay the master on/off gate.
+        /// Armor line roll, one-row-per-Modifier model (owner 2026-08-29, ModifiersBandsMerge_Plan
+        /// REV 2 - armor's version of the Rending merge). Every non-special catalog LINE rolls its
+        /// OWN anchored chance (modifier_chance_&lt;key&gt; / _t25) independently on every eligible
+        /// piece. RETIRED with this: the armor_/weapon_modifier_chance master gates, the line-count
+        /// ladder (modifier_lines_*), the class weights (modifier_weight_*), the zone pool as the
+        /// membership test, and lines on WEAPONS entirely.
+        ///
+        /// CONSEQUENCES, accepted (owner: "we will adjust after"): no lines-per-piece guarantee - a
+        /// piece can roll zero lines or in principle every line whose chance hits; rarity lives in
+        /// each line's own chance now, not in a shared weight draw. Distinct-per-piece still holds
+        /// (each line rolls at most once - StampGraded replaces, never duplicates).
+        ///
+        /// Bands are unchanged: the zone's authored override (CustomModifierBands) wins over the
+        /// tier-scaled catalog band, the roll is a recorded GRADE, and forceMax (the piece carries
+        /// the per-kill slot special) stamps every line it rolls at band MAX.
         /// </summary>
         private static void TryExtraModifier(WorldObject wo, EvaluatedProfile p, bool isWeapon, bool forceMax, int lootTier = 11)
         {
-            if (!Won(p, isWeapon ? ZoneStat.WeaponModifierChance : ZoneStat.ArmorModifierChance))
-                return;
+            if (isWeapon)
+                return;   // weapon drops no longer roll armor-style lines (weapon_modifier_chance retired 2026-08-29)
 
-            var pool = p.CustomModifiers;
-            if (pool == null || pool.Count == 0)
-                return;
-
-            // (a) how many lines this piece gets
-            var fb = ZoneModifiers.LinesFallback(lootTier);   // tier-scaled fallback (owner 2026-08-23); authored stats win
-            var linesMin = Math.Clamp((int)Math.Round(p.Get(ZoneStat.ModifierLinesMin, fb.Min)), 0, 8);
-            var linesMax = Math.Clamp((int)Math.Round(p.Get(ZoneStat.ModifierLinesMax, fb.Max)), linesMin, 8);
-            var lines = linesMin;
-            for (int slot = 1; lines < linesMax; slot++)
-            {
-                var chanceStat = slot switch
-                {
-                    1 => ZoneStat.ModifierLinesChance1,
-                    2 => ZoneStat.ModifierLinesChance2,
-                    _ => ZoneStat.ModifierLinesChance3,
-                };
-                var chance = Math.Clamp(p.Get(chanceStat, slot == 1 ? fb.Chance1 : slot == 2 ? fb.Chance2 : fb.Chance3), 0.0, 1.0);
-                if (chance <= 0 || ThreadSafeRandom.Next(0.0f, 1.0f) >= chance)
-                    break;
-                lines++;
-            }
-            if (lines <= 0)
-                return;
-
-            var hasArmor = !isWeapon && wo.ArmorLevel.HasValue && wo.ArmorLevel.Value > 0;
-            // per-line slot rule (owner 2026-08-22): zone / Default override per key, else the catalog's ArmorOnly / JewelryOnly
+            // PHASE 1 (2026-08-30, the modifier cap): decide every line's chance roll first, so the
+            // cap can trim the full winner list before anything stamps - same shape as the weapon
+            // cards in TrySpecialRolls. The list holds every SLOT-ELIGIBLE line, winner or not
+            // (2026-08-30 late, the modifier floor: the losers are the floor's top-up pool).
             var pieceMask = ZoneModifiers.PieceMask(wo);
-
-            // (b) zone pool -> weighted candidate list (retired / special / armor-only-on-armorless never enter)
-            var weightTrash = Math.Max(0.0, p.Get(ZoneStat.ModifierWeightTrash, 10.0));
-            var weightMid = Math.Max(0.0, p.Get(ZoneStat.ModifierWeightMid, 6.0));
-            var weightChase = Math.Max(0.0, p.Get(ZoneStat.ModifierWeightChase, 1.0));
-
-            var candidates = new List<(ZoneModifiers.Def Def, double Weight)>();
-            var seen = new HashSet<int>();
-            foreach (var key in pool)
+            var lineDefs = new List<ZoneModifiers.Def>();
+            foreach (var def in ZoneModifiers.AllDefs)
             {
-                if (!seen.Add(key) || !ZoneModifiers.TryGet(key, out var def) || def.SlotSpecial)   // unknown keys (retired, removed from the catalog) are skipped
+                if (def.SlotSpecial)
                     continue;
+                // per-line slot rule (owner 2026-08-22): zone / Default override per key, else the catalog's ArmorOnly / JewelryOnly
                 if (!ZoneModifiers.SlotAllowed(ZoneModifiers.EffectiveSlotMask(def, p.ModifierSlots), pieceMask))
                     continue;
-                var weight = def.Class switch   // Crit Chance is a plain Chase line since 2026-08-23 (crit weight removed)
-                {
-                    ZoneModifiers.ModifierClass.Trash => weightTrash,
-                    ZoneModifiers.ModifierClass.Mid => weightMid,
-                    ZoneModifiers.ModifierClass.Chase => weightChase,
-                    _ => 0.0,
-                };
-                if (weight > 0)
-                    candidates.Add((def, weight));
+                lineDefs.Add(def);
             }
 
-            for (int n = 0; n < lines && candidates.Count > 0; n++)
+            // PHASE 2: armor_modifier_min / armor_modifier_cap (anchored, unset = no floor /
+            // uncapped) - lines at >= 100 pct effective chance are always included and spend their
+            // slots first, the rest trim at random; a short piece then tops up at random from the
+            // eligible losers. Same rules as the weapon cards.
+            var lineWon = new bool[lineDefs.Count];
+            var lineElig = new bool[lineDefs.Count];
+            var lineChances = new string[lineDefs.Count];
+            for (int i = 0; i < lineDefs.Count; i++)
             {
-                var def = PickWeighted(candidates);
-                candidates.RemoveAll(c => c.Def.Key == def.Key);   // distinct per piece
+                lineElig[i] = true;                       // slot-filtered above - every entry is eligible
+                lineChances[i] = ZoneModifiers.LineChanceStat(lineDefs[i].Key);
+                lineWon[i] = WonT(p, lineChances[i], lootTier);
+            }
+            ApplyModifierBounds(p, ZoneStat.ArmorModifierMin, ZoneStat.ArmorModifierCap, lootTier, lineWon, lineElig, lineChances);
+
+            for (int i = 0; i < lineDefs.Count; i++)
+            {
+                if (!lineWon[i])
+                    continue;
+                var def = lineDefs[i];
 
                 var (min, max) = p.ModifierBands.TryGetValue(def.Key, out var band)
                     ? (band.Min, band.Max) : ZoneModifiers.CatalogBandAt(def, lootTier);   // hardcoded fallback is tier-scaled (2026-08-23)
@@ -682,27 +747,9 @@ namespace ACE.Server.Managers.ZoneControl
                 // Option A: T11 uniform, climbing to 10/30/60 at T25) and stamp it through the record;
                 // the prop value is ValueFor(grade) inside the effective band. Key 49 Reinforced routes
                 // to the plain Stamp inside StampGraded (earned + frozen, never in the record).
-                // Proc-shaped bands are gone from the catalog and from Def entirely (2026-08-24).
                 var grade = ZoneStatResolver.RollGrade(lootTier, forceMax);
                 ZoneModifiers.StampGraded(wo, def, grade, (min, max));
             }
-        }
-
-        /// <summary>Weighted pick over a (def, weight) list; weights are arbitrary positive doubles.</summary>
-        private static ZoneModifiers.Def PickWeighted(List<(ZoneModifiers.Def Def, double Weight)> candidates)
-        {
-            var total = 0.0;
-            foreach (var c in candidates)
-                total += c.Weight;
-            var roll = ThreadSafeRandom.Next(0.0f, (float)total);
-            var sum = 0.0;
-            foreach (var c in candidates)
-            {
-                sum += c.Weight;
-                if (roll < sum)
-                    return c.Def;
-            }
-            return candidates[candidates.Count - 1].Def;
         }
 
         /// <summary>
@@ -729,7 +776,7 @@ namespace ACE.Server.Managers.ZoneControl
         /// toggle map (ZoneStat.IsWeaponCardChance rejects it at authoring time, and the map is the only
         /// writer), so WeaponCardEnabled misses the lookup and returns true: armour is untouched.
         /// </summary>
-        private static bool Won(EvaluatedProfile p, string chanceStat)
+        private static bool WonT(EvaluatedProfile p, string chanceStat, int tier)
         {
             // Off beats everything, including an inherited chance - checked BEFORE Has() so it reads as
             // the master switch it is, and so it costs one dictionary miss on the overwhelmingly common
@@ -738,9 +785,109 @@ namespace ACE.Server.Managers.ZoneControl
                 return false;
             if (!p.Has(chanceStat))
                 return false;
-            var chance = Math.Clamp(p.Get(chanceStat), 0.0, 1.0);
+            // ANCHORED (2026-08-29): the base stat is the T11 anchor and "<stat>_t25" the T25 anchor;
+            // tiers between roll the chance on the line. No _t25 = the old flat behaviour exactly.
+            var chance = Math.Clamp(p.GetT(chanceStat, 0.0, tier), 0.0, 1.0);
             return chance > 0 && ThreadSafeRandom.Next(0.0f, 1.0f) < chance;
         }
+
+        /// <summary>
+        /// The MODIFIER BOUNDS pass - the CAP trim (owner 2026-08-30, "the full combo must be
+        /// impossible at T11") followed by the FLOOR top-up (owner 2026-08-30 late, "need a hard
+        /// min floor and max"). Callers roll every card/line first (phase 1), hand the winner and
+        /// eligibility flags here, and stamp only what survives.
+        ///
+        /// CAP rules, all owner-ruled 2026-08-30:
+        ///   - capStat unset = UNCAPPED, the pre-cap behaviour exactly (Has() test, like Won's).
+        ///   - The cap is anchored (base = T11, _t25 twin = T25) and derived tiers ROUND the lerp.
+        ///   - PINNED winners - effective chance >= 100 pct at this tier - are "always included":
+        ///     they never trim, but they SPEND their cap slots FIRST (the cap is the player-legible
+        ///     total on the item, and a guarantee spends budget rather than adding to it). Rend at
+        ///     its authored 1.0 is the design case; there is no separate "always" flag on purpose.
+        ///   - The rest trim at RANDOM until the remaining slots fit - so junk cards genuinely
+        ///     dilute god-rolls (intended: more rarity, more variance).
+        ///   - More pinned winners than cap = all of them still stamp (the cap floors at the pinned
+        ///     count); only rolled cards are ever trimmed.
+        ///
+        /// FLOOR rules (why a floor when pins exist: a pin guarantees a NAMED modifier, the floor
+        /// guarantees a NUMBER of them with identity left random - "5 to 8 of the 10" is not
+        /// expressible with pins):
+        ///   - minStat unset = NO FLOOR, the pre-floor behaviour exactly. Anchored + rounded like
+        ///     the cap.
+        ///   - When fewer winners survive than the floor demands, the drop TOPS UP at random from
+        ///     the lines that were ELIGIBLE but lost their chance roll AND could have won it -
+        ///     enabled, chance authored, chance above zero (CouldWinT). A disabled or unauthored
+        ///     line can never be forced on, and an OFF toggle keeps meaning off.
+        ///   - The cap stays HARD: a floor above the cap clamps down to it.
+        ///   - Pool smaller than the deficit = stamp everything poolable and stop; no error.
+        ///   - Trim and top-up are mutually exclusive on one drop (with floor &lt;= cap, too many
+        ///     winners can't also be too few), so order is moot - trim runs first regardless.
+        /// </summary>
+        private static void ApplyModifierBounds(EvaluatedProfile p, string minStat, string capStat, int tier,
+            bool[] won, bool[] eligible, string[] chanceStats)
+        {
+            var cap = int.MaxValue;
+            if (p.Has(capStat))
+            {
+                // AwayFromZero so the half-steps climb early (3->6 anchors: 4 at T14, 5 at T18, 6 at
+                // T23) instead of banker's rounding pushing them a tier later.
+                cap = Math.Max(0, (int)Math.Round(p.GetT(capStat, 0.0, tier), MidpointRounding.AwayFromZero));
+                var rolled = new List<int>();
+                var pinned = 0;
+                for (int i = 0; i < won.Length; i++)
+                {
+                    if (!won[i])
+                        continue;
+                    if (PinnedT(p, chanceStats[i], tier))
+                        pinned++;
+                    else
+                        rolled.Add(i);
+                }
+                var slots = Math.Max(0, cap - pinned);
+                while (rolled.Count > slots)
+                {
+                    var k = ThreadSafeRandom.Next(0, rolled.Count - 1);
+                    won[rolled[k]] = false;
+                    rolled.RemoveAt(k);
+                }
+            }
+
+            if (!p.Has(minStat))
+                return;                                                   // unset = no floor
+            var min = Math.Max(0, (int)Math.Round(p.GetT(minStat, 0.0, tier), MidpointRounding.AwayFromZero));
+            if (min > cap)
+                min = cap;                                                // the cap is hard
+            var winners = 0;
+            for (int i = 0; i < won.Length; i++)
+                if (won[i]) winners++;
+            if (winners >= min)
+                return;
+            var pool = new List<int>();
+            for (int i = 0; i < won.Length; i++)
+                if (eligible[i] && !won[i] && CouldWinT(p, chanceStats[i], tier))
+                    pool.Add(i);
+            while (winners < min && pool.Count > 0)
+            {
+                var k = ThreadSafeRandom.Next(0, pool.Count - 1);
+                won[pool[k]] = true;
+                pool.RemoveAt(k);
+                winners++;
+            }
+        }
+
+        /// <summary>The floor's top-up gate: every WonT condition EXCEPT the random roll - the
+        /// card is enabled, its chance is authored, and the effective chance at this tier is above
+        /// zero. Forcing on a line that could never have won on its own would turn the floor into
+        /// a silent enable switch.</summary>
+        private static bool CouldWinT(EvaluatedProfile p, string chanceStat, int tier)
+            => p.WeaponCardEnabled(chanceStat) && p.Has(chanceStat)
+                && Math.Clamp(p.GetT(chanceStat, 0.0, tier), 0.0, 1.0) > 0;
+
+        /// <summary>True when the stat's effective chance at this tier is >= 100 pct - the "always
+        /// included" test. Only ever called on a winner, so the enabled/off checks already passed
+        /// in WonT and are not repeated here.</summary>
+        private static bool PinnedT(EvaluatedProfile p, string chanceStat, int tier)
+            => p.Has(chanceStat) && p.GetT(chanceStat, 0.0, tier) >= 1.0;
 
         /// <summary>Weighted 1-based index roll over a weight table summing to 100.</summary>
         private static int RollWeighted(int[] weights)

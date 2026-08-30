@@ -1945,7 +1945,8 @@ namespace ACE.Server.WorldObjects
                     // on such spells.  Mirrors SpellProjectile.CalculateDamage's LifeProjectile branch.
                     var lifeMagicDamage = isLifeProjectile ? lifeProjectileDamage * spell.DamageRatio : 0.0f;
 
-                    // Crit chance — 5% base + player crit rating, mitigated by target resist rating.
+                    // Crit chance — 10% base since 2026-08-29 (unified with melee/missile) + player
+                    // crit rating, mitigated by target resist rating.
                     var critChance = GetWeaponMagicCritFrequency(weapon, this as Creature, attackSkill, creature);
                     if (ThreadSafeRandom.Next(0.0f, 1.0f) < critChance)
                     {
@@ -1961,12 +1962,14 @@ namespace ACE.Server.WorldObjects
                         if (!critDefended)
                         {
                             criticalHit = true;
-                            // Life: +50% of the drained damage (pre-aug, matching SpellProjectile).
-                            // War/Void — PvE: +50% of MaxDamage.  PvP: +50% of MinDamage.
-                            critDamageBonus  = isLifeProjectile
-                                ? lifeMagicDamage * 0.5f
-                                : (isPvP ? spell.MinDamage * 0.5f : spell.MaxDamage * 0.5f);
-                            critDamageBonus *= GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature);
+                            // UNIFIED CRIT MODEL (owner 2026-08-29, matching SpellProjectile): PvE
+                            // crit = CritX x the fully composed base, computed AFTER the aug term
+                            // below. Life: CritX x the drained base (0.5 coefficient gone). PvP
+                            // keeps the retail halved-min rule.
+                            var earlyMod = GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature);
+                            critDamageBonus = isLifeProjectile
+                                ? lifeMagicDamage * earlyMod
+                                : (isPvP ? spell.MinDamage * 0.5f * earlyMod : 0f);
                         }
                     }
 
@@ -2002,7 +2005,10 @@ namespace ACE.Server.WorldObjects
                         // ignored - which is what the first in-game test was actually measuring.
                         baseDamage = procBaseDamage > 0
                             ? (long)Math.Round(procBaseDamage)
-                            : ThreadSafeRandom.Next(spell.MinDamage, spell.MaxDamage);
+                            // unified crit: a PvE crit uses the MAX roll, matching SpellProjectile
+                            : (criticalHit && !isPvP
+                                ? spell.MaxDamage
+                                : ThreadSafeRandom.Next(spell.MinDamage, spell.MaxDamage));
 
                         // Luminance augment — the pool MUST match the spell's school.  This previously
                         // added the War count unconditionally, which fed a caster's War pool into Void
@@ -2022,7 +2028,10 @@ namespace ACE.Server.WorldObjects
                         // weapon still delivered the full 0..17,150 term on every ring hit.
                         if (ringAugs > 0 && fromProc && procBaseDamage > 0)
                         {
-                            var ringAugCap = weapon?.GetProperty((ACE.Entity.Enum.Properties.PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcAugCapPropId);
+                            // PER-SLOT since 2026-08-29: the ring reads its OWN cap (prop 9064), falling
+                            // back to the old shared 9061 so pre-split test daggers keep theirs.
+                            var ringAugCap = weapon?.GetProperty((ACE.Entity.Enum.Properties.PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcRingAugCapPropId)
+                                ?? weapon?.GetProperty((ACE.Entity.Enum.Properties.PropertyFloat)ACE.Server.Managers.ZoneControl.ZoneLootMutator.ProcAugCapPropId);
                             if (ringAugCap.HasValue && ringAugCap.Value > 0)
                                 ringAugs = Math.Min(ringAugs, (long)Math.Round(ringAugCap.Value));
                         }
@@ -2078,8 +2087,12 @@ namespace ACE.Server.WorldObjects
                     //
                     // Placed AFTER the aug term so the crit scales with the whole base the hit uses, and
                     // BEFORE preModDamage, which is the only consumer.
-                    if (procBaseDamage > 0 && criticalHit)
-                        critDamageBonus = baseDamage * 0.5f
+                    // ══ UNIFIED CRIT (owner 2026-08-29): PvE war/void crit = CritX x the fully
+                    // composed base (max roll or ring B, plus the aug term, post-variance/cap) -
+                    // one formula for hand-casts and ring procs alike, replacing the 0.5f
+                    // proc-only re-derive. mod = CritX - 1 (default 1.0 = retail's 2x).
+                    if (criticalHit && !isLifeProjectile && !isPvP)
+                        critDamageBonus = (baseDamage + skillBonus)
                             * GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature);
 
                     var preModDamage = isLifeProjectile

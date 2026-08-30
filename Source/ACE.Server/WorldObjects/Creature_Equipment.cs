@@ -217,40 +217,64 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         private Dictionary<PropertyInt, int> equippedItemsRatingCache;
 
+        /// <summary>The ZC-ITEM PORTION of equippedItemsRatingCache (owner 2026-08-30, the armor
+        /// zone lock): every value a ZcTier 11+ item contributed, maintained by the same
+        /// add/remove pair so the two can never drift. When the lock suppresses this wearer,
+        /// reads return total minus this - retail cloaks/aetheria keep contributing, ZC lines go
+        /// dormant. Null until the first ZC rated item is worn.</summary>
+        private Dictionary<PropertyInt, int> equippedItemsZcRatingCache;
+
+        private static readonly PropertyInt[] RatingCacheProps =
+        {
+            PropertyInt.GearDamage, PropertyInt.GearDamageResist, PropertyInt.GearCritDamage,
+            PropertyInt.GearCritDamageResist, PropertyInt.GearHealingBoost, PropertyInt.GearMaxHealth,
+            PropertyInt.GearPKDamageRating, PropertyInt.GearPKDamageResistRating, PropertyInt.GearCrit,
+            PropertyInt.GearCritResist, PropertyInt.GearNetherResist,
+        };
+
+        private static int RatingOf(WorldObject wo, PropertyInt rating)
+            => rating switch
+            {
+                PropertyInt.GearDamage => wo.GearDamage ?? 0,
+                PropertyInt.GearDamageResist => wo.GearDamageResist ?? 0,
+                PropertyInt.GearCritDamage => wo.GearCritDamage ?? 0,
+                PropertyInt.GearCritDamageResist => wo.GearCritDamageResist ?? 0,
+                PropertyInt.GearHealingBoost => wo.GearHealingBoost ?? 0,
+                PropertyInt.GearMaxHealth => wo.GearMaxHealth ?? 0,
+                PropertyInt.GearPKDamageRating => wo.GearPKDamageRating ?? 0,
+                PropertyInt.GearPKDamageResistRating => wo.GearPKDamageResistRating ?? 0,
+                PropertyInt.GearCrit => wo.GearCrit ?? 0,
+                PropertyInt.GearCritResist => wo.GearCritResist ?? 0,
+                PropertyInt.GearNetherResist => wo.GearNetherResistRating ?? 0,
+                _ => 0,
+            };
+
+        private static Dictionary<PropertyInt, int> NewRatingCache()
+        {
+            var cache = new Dictionary<PropertyInt, int>();
+            foreach (var p in RatingCacheProps)
+                cache[p] = 0;
+            return cache;
+        }
+
         private void AddItemToEquippedItemsRatingCache(WorldObject wo)
         {
-            if ((wo.GearDamage ?? 0) == 0 && (wo.GearDamageResist ?? 0) == 0 && (wo.GearCritDamage ?? 0) == 0 && (wo.GearCritDamageResist ?? 0) == 0 && (wo.GearHealingBoost ?? 0) == 0 && (wo.GearMaxHealth ?? 0) == 0 && (wo.GearPKDamageRating ?? 0) == 0 && (wo.GearPKDamageResistRating ?? 0) == 0 && (wo.GearCrit ?? 0) == 0 && (wo.GearCritResist ?? 0) == 0 && (wo.GearNetherResistRating ?? 0) == 0)
+            var any = false;
+            foreach (var p in RatingCacheProps)
+                if (RatingOf(wo, p) != 0) { any = true; break; }
+            if (!any)
                 return;
 
-            if (equippedItemsRatingCache == null)
-            {
-                equippedItemsRatingCache = new Dictionary<PropertyInt, int>
-                {
-                    { PropertyInt.GearDamage, 0 },
-                    { PropertyInt.GearDamageResist, 0 },
-                    { PropertyInt.GearCritDamage, 0 },
-                    { PropertyInt.GearCritDamageResist, 0 },
-                    { PropertyInt.GearHealingBoost, 0 },
-                    { PropertyInt.GearMaxHealth, 0 },
-                    { PropertyInt.GearPKDamageRating, 0 },
-                    { PropertyInt.GearPKDamageResistRating, 0 },
-                    { PropertyInt.GearCrit, 0 },
-                    { PropertyInt.GearCritResist, 0 },
-                    { PropertyInt.GearNetherResist, 0 }
-                };
-            }
+            equippedItemsRatingCache ??= NewRatingCache();
+            foreach (var p in RatingCacheProps)
+                equippedItemsRatingCache[p] += RatingOf(wo, p);
 
-            equippedItemsRatingCache[PropertyInt.GearDamage] += (wo.GearDamage ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearDamageResist] += (wo.GearDamageResist ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCritDamage] += (wo.GearCritDamage ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCritDamageResist] += (wo.GearCritDamageResist ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearHealingBoost] += (wo.GearHealingBoost ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearMaxHealth] += (wo.GearMaxHealth ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearPKDamageRating] += (wo.GearPKDamageRating ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearPKDamageResistRating] += (wo.GearPKDamageResistRating ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCrit] += (wo.GearCrit ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCritResist] += (wo.GearCritResist ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearNetherResist] += (wo.GearNetherResistRating ?? 0);
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.IsZcGear(wo))
+            {
+                equippedItemsZcRatingCache ??= NewRatingCache();
+                foreach (var p in RatingCacheProps)
+                    equippedItemsZcRatingCache[p] += RatingOf(wo, p);
+            }
         }
 
         private void RemoveItemFromEquippedItemsRatingCache(WorldObject wo)
@@ -258,17 +282,12 @@ namespace ACE.Server.WorldObjects
             if (equippedItemsRatingCache == null)
                 return;
 
-            equippedItemsRatingCache[PropertyInt.GearDamage] -= (wo.GearDamage ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearDamageResist] -= (wo.GearDamageResist ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCritDamage] -= (wo.GearCritDamage ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCritDamageResist] -= (wo.GearCritDamageResist ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearHealingBoost] -= (wo.GearHealingBoost ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearMaxHealth] -= (wo.GearMaxHealth ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearPKDamageRating] -= (wo.GearPKDamageRating ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearPKDamageResistRating] -= (wo.GearPKDamageResistRating ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCrit] -= (wo.GearCrit ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearCritResist] -= (wo.GearCritResist ?? 0);
-            equippedItemsRatingCache[PropertyInt.GearNetherResist] -= (wo.GearNetherResistRating ?? 0);
+            foreach (var p in RatingCacheProps)
+                equippedItemsRatingCache[p] -= RatingOf(wo, p);
+
+            if (equippedItemsZcRatingCache != null && ACE.Server.Managers.ZoneControl.ZoneControlManager.IsZcGear(wo))
+                foreach (var p in RatingCacheProps)
+                    equippedItemsZcRatingCache[p] -= RatingOf(wo, p);
         }
 
         /// <summary>
@@ -338,6 +357,10 @@ namespace ACE.Server.WorldObjects
         {
             if (zoneModifierCache == null)
                 return 0;
+            // armor zone lock: the whole 50200 block is ZC-line-only (retail items never carry
+            // these props), so outside authored areas the worn lines contribute nothing at all
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.WornPowerSuppressed(this))
+                return 0;
             if (!zoneModifierCache.TryGetValue(propId, out var v))
                 return 0;
             if (v > 0 && IsGearCapLineProp(propId))
@@ -400,6 +423,11 @@ namespace ACE.Server.WorldObjects
             if (zoneModifierCache == null || !zoneModifierCache.ContainsKey(propId))
                 return 0;
 
+            // armor zone lock: the slot specials (Cheat Death, Battle Mending, Fortify, pct-HP,
+            // Regen) go dormant with the rest of the lines
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.WornPowerSuppressed(this))
+                return 0;
+
             var max = 0;
             foreach (var item in EquippedObjects.Values)
             {
@@ -416,7 +444,15 @@ namespace ACE.Server.WorldObjects
                 return 0;
 
             if (equippedItemsRatingCache.TryGetValue(rating, out var value))
+            {
+                // armor zone lock: subtract exactly what the worn ZC pieces contributed - retail
+                // cloaks / aetheria keep counting, the ZC lines go dormant outside authored areas
+                if (value != 0 && equippedItemsZcRatingCache != null
+                    && ACE.Server.Managers.ZoneControl.ZoneControlManager.WornPowerSuppressed(this)
+                    && equippedItemsZcRatingCache.TryGetValue(rating, out var zcPortion))
+                    value -= zcPortion;
                 return value;
+            }
 
             log.Error($"Creature_Equipment.GetEquippedItemsRatingsSum() does not support {rating}");
             return 0;

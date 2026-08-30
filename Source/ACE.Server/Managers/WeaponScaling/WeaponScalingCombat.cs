@@ -166,7 +166,8 @@ namespace ACE.Server.Managers.WeaponScaling
         /// auto-rebalances its flat term, so wilder families never fall behind steady ones —
         /// families all author the SAME k and stay equal in total expected damage at the
         /// CB+CS reference build (p = 0.5 crit chance from the 400-skill imbue cap, M = 3.0
-        /// = player_crit_damage_cap): m = [(1-p)+pM] / [(1-p)(1-v_eff/2)+pM] = 2/(2-0.25v).
+        /// = 3.0, historically the player_crit_damage_cap, which was deleted 2026-08-29 - M stays
+        /// as this normalization's own constant): m = [(1-p)+pM] / [(1-p)(1-v_eff/2)+pM] = 2/(2-0.25v).
         /// 1.0 for zero-variance weapons (launchers/casters/legacy) = exact old behavior.</summary>
         private static float EvNormalization(WorldObject weapon)
         {

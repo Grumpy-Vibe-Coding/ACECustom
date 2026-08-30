@@ -250,10 +250,16 @@ namespace ACE.Server.WorldObjects
                 {
                     var minionXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion);
                     double zoneXp;
+                    // FIX 2026-08-29 (release audit blocker 1): a mob explicitly flagged MINION now
+                    // pays xp_minion. The old branch fell through to xp_default for minion-flagged
+                    // mobs, making IsZcMinion dead and inverting the documented contract - xp_minion
+                    // is the MASTER key; xp_default covers only UNRANKED spawns (else minion).
                     if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true)
                         zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpBoss, minionXp);
                     else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true)
                         zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpLeader, minionXp);
+                    else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcMinion) == true)
+                        zoneXp = minionXp;
                     else
                         zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpDefault, minionXp);   // unranked: xp_default, else Minion
                     baseXp = (long)Math.Round(zoneXp);

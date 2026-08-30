@@ -209,7 +209,11 @@ namespace ACE.Server.Managers.ZoneScaling
         // rolled value, so the band stays the ceiling.
         public const string WeaponProcArcVariance = "weapon_proc_arc_variance";   // 0 = flat, 0.5 = 50-100 pct of base
         public const string WeaponProcRingVariance = "weapon_proc_ring_variance";
-        public const string WeaponProcSpellcraft = "weapon_proc_spellcraft";  // stamped ItemSpellcraft
+        // PER-SLOT since 2026-08-29 (owner: "each of those procs is its own thing") - the shared
+        // weapon_proc_spellcraft / weapon_proc_aug_cap stamps are RETIRED. A weapon carrying BOTH
+        // procs stamps ItemSpellcraft with the HIGHER of the two spellcrafts (one resist prop on the
+        // item; true per-slot resist is an adjust-after item).
+        public const string WeaponProcArcSpellcraft = "weapon_proc_arc_spellcraft";   // stamped ItemSpellcraft (arc)
         // FLAT aug fold-in - WAR/VOID ONLY, picked by the proc spell's school (owner reversed the
         // earlier melee/missile-matched build the same night, 2026-08-27: "The procs are spells").
         // A melee character with no War/Void augs gets B and nothing more, which is intended.
@@ -221,7 +225,9 @@ namespace ACE.Server.Managers.ZoneScaling
         // same uncontrolled, wielder-driven spread that B was introduced to remove. UNSET =
         // UNCAPPED; there is no defensible default to invent here, so it is a knob the owner must
         // set. Read by BOTH damage paths since 2026-08-28 (the ring path missed it before).
-        public const string WeaponProcAugCap = "weapon_proc_aug_cap";        // max aug contribution (one school); unset/0 = uncapped
+        public const string WeaponProcRingSpellcraft = "weapon_proc_ring_spellcraft"; // stamped ItemSpellcraft (ring)
+        public const string WeaponProcArcAugCap = "weapon_proc_arc_aug_cap";   // arc: max aug contribution (one school); unset/0 = uncapped
+        public const string WeaponProcRingAugCap = "weapon_proc_ring_aug_cap"; // ring: same, its OWN stamp (prop 9064)
         public const string WeaponImbueChance = "weapon_imbue_chance";   // random imbue (rends / Critical Strike / Crippling Blow / Armor Rending)
         public const string WeaponSlayerChance = "weapon_slayer_chance"; // slayer vs the killed monster's own creature type
         public const string WeaponSlayerMin = "weapon_slayer_min";       // SlayerDamageBonus min (raw multiplier, floor 1.5, cap 10.0)
@@ -230,22 +236,13 @@ namespace ACE.Server.Managers.ZoneScaling
         // not cantrips - the retail word was a misnomer). The KEY STRINGS are the DB + wire + plugin
         // contract; ZoneControlManager.UpgradeLegacyStoreKeys aliases the old cantrip_* keys on
         // load, so any stored blob upgrades itself on its first save. ──
-        public const string WeaponModifierChance = "weapon_modifier_chance"; // one EXTRA modifier line on a rolled weapon, from the zone's custom pool ONLY
-        public const string ArmorModifierChance = "armor_modifier_chance";   // one EXTRA modifier line on rolled armor/clothing/jewelry, custom pool ONLY
-        // Armor v2 (2026-08-21, Cantrip_Band_Ladder v2; the old per-bucket draws_bN keys were
-        // removed 2026-08-23). The mutator rolls a
-        // per-piece LINE COUNT ladder: lines_min guaranteed, extra slots up to lines_max roll
-        // chance_1/2/3 IN ORDER and the first miss stops. Keys fill slots weighted by Def.Class
-        // (trash/mid/chase); key 33 Crit Rating has its own weight. armor_modifier_chance stays the
-        // master on/off gate.
-        public const string ModifierLinesMin = "modifier_lines_min";         // guaranteed lines per piece (default 0)
-        public const string ModifierLinesMax = "modifier_lines_max";         // hard cap per piece (default 2)
-        public const string ModifierLinesChance1 = "modifier_lines_chance_1"; // 0..1 chance for extra slot 1 (default .40)
-        public const string ModifierLinesChance2 = "modifier_lines_chance_2"; // extra slot 2 (default .10)
-        public const string ModifierLinesChance3 = "modifier_lines_chance_3"; // extra slot 3 (default .01)
-        public const string ModifierWeightTrash = "modifier_weight_trash";   // pick weight per Trash-class key (default 10)
-        public const string ModifierWeightMid = "modifier_weight_mid";       // per Mid-class key (default 6)
-        public const string ModifierWeightChase = "modifier_weight_chase";   // per Chase-class key (default 1)
+        // ── RETIRED 2026-08-29 (owner, ModifiersBandsMerge_Plan REV 2): weapon_modifier_chance /
+        // armor_modifier_chance (the master line gates), modifier_lines_min/_max/_chance_1/2/3 (the
+        // line-count ladder) and modifier_weight_trash/mid/chase (the class-weight draw). Every
+        // catalog LINE now rolls its OWN anchored chance per eligible piece - see
+        // ZoneModifiers.LineChanceStat + ZoneLootMutator.TryExtraModifier. Weapons no longer roll
+        // armor-style lines at all. Zones that authored the old keys keep dead store rows until
+        // cleared with `/zonecontrol default <var> clearstat <key>`. ──
         // Guaranteed core four anchors (SET totals at T25; per piece = anchor/18 x f(t)); see
         // LootGenerationFactory.ApplyT11GearStats
         public const string CoreAnchorDr = "core_anchor_dr";               // Damage Resist worn-set anchor (ladder 1250, authored on Default 11; ZoneFallback.AnchorDr 92 when off)
@@ -321,7 +318,10 @@ namespace ACE.Server.Managers.ZoneScaling
         // Consequence, accepted by the owner: a zone that authors only min/max and no chance no longer
         // rolls Rend Power at all, because Won() treats an UNDEFINED stat as NEVER (not as "0 pct").
         // Re-author those zones with a chance; there is deliberately no back-compat shim.
-        public const string WeaponRendPowerChance = "weapon_rend_power_chance"; // Rend Power: per-drop odds on a rend-carrying weapon
+        // weapon_rend_power_chance RETIRED 2026-08-29 (owner: "Rending and Rend Power - it's 1").
+        // The Rending card (weapon_imbue_chance) is now the ONE gate: every rend the CARD stamps also
+        // rolls its power from the band below. Natural loot rends stay at the vanilla 150 (owner
+        // ruling, same day) - the old separate chance could boost those too, and no longer exists.
         public const string WeaponRendPowerMin = "weapon_rend_power_min";  // rend strength as a DIRECT vuln bonus, rolled per drop; wire 1.5..10.0 = +150%..+1000% (rendingMod = 1 + this)
         public const string WeaponRendPowerMax = "weapon_rend_power_max";
 
@@ -401,6 +401,31 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string ArmorProtBase = "armor_prot_base";         // value written into every ArmorModVs* the weenie left absent (default 1.0 = the Average band)
         public const string ArmorProtEqualize = "armor_prot_equalize"; // nonzero (default) = average the present elements and write the mean back; 0 = elements keep what they rolled, so Poor and Unparalleled both survive
 
+        // ── MODIFIER CAPS (owner 2026-08-30, "the full combo must be IMPOSSIBLE at T11"): max
+        // modifier CARDS per weapon drop / LINES per armor piece, anchored T11/_t25 like every
+        // other knob (derived tiers ROUND the lerp to an integer). UNSET = UNCAPPED - the pre-cap
+        // behaviour exactly. DROP stage only: cards are stamped at drop and never re-rolled, so a
+        // cap change binds new drops; Force Re-tune re-prices values but never adds/removes cards.
+        // ALWAYS-INCLUDED RULE: a winner whose effective chance at the drop tier is >= 100 pct is
+        // pinned - it skips the random trim but still SPENDS a cap slot first (Rend at its
+        // authored 1.0 is the design case; there is deliberately NO separate "always" flag - the
+        // chance box is the one source of truth). A pinned card that fails ELIGIBILITY (a plain
+        // bow's Rend) stamps nothing and frees its slot back to the rolled cards.
+        // /wsforge is untouched: the forge's cards clause stamps directly and never rolls chances.
+        public const string WeaponModifierCap = "weapon_modifier_cap";
+        public const string ArmorModifierCap = "armor_modifier_cap";
+
+        // ── MODIFIER FLOORS (owner 2026-08-30, "need a hard min floor and max"): the guaranteed
+        // MINIMUM modifier count per drop, the cap's twin. UNSET = NO FLOOR - the pre-floor
+        // behaviour exactly. When fewer winners survive the chance rolls than the floor demands,
+        // the drop is TOPPED UP at random from the lines that were ELIGIBLE but lost their roll
+        // (enabled, chance authored above zero, item can take them) - so identity stays random
+        // while the COUNT is guaranteed, which is the whole point: pins guarantee a NAMED
+        // modifier, the floor guarantees a NUMBER of them. Pinned winners count toward the
+        // floor like any other. The cap stays hard: a floor above the cap clamps to it.
+        public const string WeaponModifierMin = "weapon_modifier_min";
+        public const string ArmorModifierMin = "armor_modifier_min";
+
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
@@ -422,16 +447,16 @@ namespace ACE.Server.Managers.ZoneScaling
             WeaponProcArcChance, WeaponProcArcRate, WeaponProcRingChance, WeaponProcRingRate,
             WeaponProcArcDmgMin, WeaponProcArcDmgMax, WeaponProcRingDmgMin, WeaponProcRingDmgMax,
             WeaponProcArcVariance, WeaponProcRingVariance,
-            WeaponProcSpellcraft, WeaponProcAugCap, WeaponImbueChance,
+            WeaponProcArcSpellcraft, WeaponProcRingSpellcraft, WeaponProcArcAugCap, WeaponProcRingAugCap,
+            WeaponImbueChance,
             WeaponSlayerChance, WeaponSlayerMin, WeaponSlayerMax,
-            WeaponModifierChance, ArmorModifierChance,
             WeaponCleaveChance, WeaponCleaveMin, WeaponCleaveMax,
             WeaponSplitChance, WeaponSplitMin, WeaponSplitMax, WeaponSplitRange, WeaponSplitDmg,
             WeaponBiteChance, WeaponBiteMin, WeaponBiteMax,
             WeaponCrushChance, WeaponCrushMin, WeaponCrushMax,
             WeaponArmorRendChance, WeaponArmorRendMin, WeaponArmorRendMax,
             WeaponShieldCleaveChance, WeaponShieldCleaveMin, WeaponShieldCleaveMax,
-            WeaponRendPowerChance, WeaponRendPowerMin, WeaponRendPowerMax,
+            WeaponRendPowerMin, WeaponRendPowerMax,
             LootSlotWeapons,
             LootSlotHelm, LootSlotChest, LootSlotShoulder, LootSlotBracer, LootSlotGlove,
             LootSlotGirth, LootSlotUpperLeg, LootSlotLowerLeg, LootSlotBoot,
@@ -446,8 +471,6 @@ namespace ACE.Server.Managers.ZoneScaling
             // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin
             // matches by NAME - adding, reordering or REMOVING an entry mid-list is safe. (The genuinely
             // positional lists are the bare comma payloads combatdefs= / diagdefs= in ZoneControlCommands.)
-            ModifierLinesMin, ModifierLinesMax, ModifierLinesChance1, ModifierLinesChance2, ModifierLinesChance3,
-            ModifierWeightTrash, ModifierWeightMid, ModifierWeightChase,
             CoreAnchorDr, CoreAnchorCdr,
             SpecialOdds, SpecialBossMult, SpecialLeaderMult,
             BattleMendThreshold, BattleMendCooldown, PctHpCooldown, CheatDeathCooldown, CheatDeathImmunity,
@@ -458,6 +481,53 @@ namespace ACE.Server.Managers.ZoneScaling
             // Armor base values (2026-08-24) - APPEND-ONLY, added at the END. The wire matches by NAME
             // (see the note above), so appending is safe for an older plugin / older server.
             ArmorBaseLevel, ArmorProtBase, ArmorProtEqualize,
+            // ── ANCHORED TIER MODEL (owner 2026-08-29, ModifiersBandsMerge_Plan REV 2) - APPEND-ONLY.
+            // Convention: every "<stat>_t25" is the T25 anchor for its base stat; the base stat is the
+            // T11 anchor. Both authored = tiers 12-24 sit on the straight line between them
+            // (EvaluatedProfile.GetT). _t25 absent = FLAT, the T11 value at every tier - exactly the
+            // pre-anchor behaviour, so nothing changes for a zone that never authors a _t25 key.
+            // A _t25 key with NO base key is ignored (the base is what turns a knob on). ──
+            "weapon_proc_arc_chance_t25", "weapon_proc_ring_chance_t25", "weapon_imbue_chance_t25",
+            "weapon_slayer_chance_t25", "weapon_armor_rend_chance_t25", "weapon_bite_chance_t25",
+            "weapon_crush_chance_t25", "weapon_shield_cleave_chance_t25",
+            "weapon_cleave_chance_t25", "weapon_split_chance_t25",
+            "weapon_proc_arc_rate_t25", "weapon_proc_ring_rate_t25",
+            "weapon_proc_arc_variance_t25", "weapon_proc_ring_variance_t25",
+            "weapon_proc_arc_spellcraft_t25", "weapon_proc_ring_spellcraft_t25",
+            "weapon_proc_arc_aug_cap_t25", "weapon_proc_ring_aug_cap_t25",
+            "weapon_split_range_t25", "weapon_split_dmg_t25",
+            "weapon_bite_min_t25", "weapon_bite_max_t25",
+            "weapon_crush_min_t25", "weapon_crush_max_t25",
+            "weapon_armor_rend_min_t25", "weapon_armor_rend_max_t25",
+            "weapon_rend_power_min_t25", "weapon_rend_power_max_t25",
+            "weapon_slayer_min_t25", "weapon_slayer_max_t25",
+            "weapon_shield_cleave_min_t25", "weapon_shield_cleave_max_t25",
+            "weapon_proc_arc_dmg_min_t25", "weapon_proc_arc_dmg_max_t25",
+            "weapon_proc_ring_dmg_min_t25", "weapon_proc_ring_dmg_max_t25",
+            "weapon_cleave_min_t25", "weapon_cleave_max_t25",
+            "weapon_split_min_t25", "weapon_split_max_t25",
+            // Armor per-LINE anchored chances (one per non-special ZoneModifiers catalog key - the
+            // catalog is the registry, keys are STABLE ints). Base = T11 anchor, _t25 = T25 anchor.
+            // Unset = the line NEVER rolls (Won semantics), which replaces pool membership.
+            "modifier_chance_19", "modifier_chance_19_t25",   // Max Health
+            "modifier_chance_25", "modifier_chance_25_t25",   // Armor Level
+            "modifier_chance_28", "modifier_chance_28_t25",   // Damage Rating
+            "modifier_chance_29", "modifier_chance_29_t25",   // Crit Damage Rating
+            "modifier_chance_31", "modifier_chance_31_t25",   // Healing Boost
+            "modifier_chance_32", "modifier_chance_32_t25",   // Spell Duration
+            "modifier_chance_33", "modifier_chance_33_t25",   // Crit Chance
+            "modifier_chance_43", "modifier_chance_43_t25",   // All Attributes
+            "modifier_chance_47", "modifier_chance_47_t25",   // Max Health Pct
+            "modifier_chance_48", "modifier_chance_48_t25",   // Life on Hit
+            "modifier_chance_49", "modifier_chance_49_t25",   // Reinforced
+            // Modifier caps (2026-08-30) - APPEND-ONLY, name-matched wire as above. Anchored pair;
+            // unset = uncapped. (Not weapon_*_chance shaped, so BuildWeaponCardChances skips them.)
+            WeaponModifierCap, "weapon_modifier_cap_t25",
+            ArmorModifierCap, "armor_modifier_cap_t25",
+            // Modifier floors (2026-08-30) - APPEND-ONLY, the caps' Min twins. Anchored pair;
+            // unset = no floor. (Not weapon_*_chance shaped, so BuildWeaponCardChances skips them.)
+            WeaponModifierMin, "weapon_modifier_min_t25",
+            ArmorModifierMin, "armor_modifier_min_t25",
         };
 
         /// <summary>
@@ -497,6 +567,13 @@ namespace ACE.Server.Managers.ZoneScaling
         /// identifier for the `weaponcard` verb and for the CustomWeaponCards map.</summary>
         public static bool IsWeaponCardChance(string statKey)
             => statKey != null && WeaponCardChanceSet.Contains(statKey);
+
+        private static readonly HashSet<string> AllSet = new HashSet<string>(All, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>True when <paramref name="statKey"/> is a registered stat - the legal identifier
+        /// space of `/zonecontrol togglestat` and the StatToggles map (2026-08-29).</summary>
+        public static bool IsKnownStat(string statKey)
+            => statKey != null && AllSet.Contains(statKey);
     }
 
     /// <summary>
@@ -696,6 +773,18 @@ namespace ACE.Server.Managers.ZoneScaling
         /// </summary>
         public Dictionary<string, bool> CustomWeaponCards { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Per-STAT on/off (2026-08-29, release audit blocker 3 - the CustomWeaponCards fix
+        /// generalized to every stat). Stat key -> enabled; a key absent here is ON. Authored by
+        /// `/zonecontrol togglestat`, merged OVERWRITE per key. An explicit FALSE at a nearer
+        /// scope makes the stat evaluate as ABSENT (never/unset semantics everywhere - Has()
+        /// misses, consumers fall back to the weenie), which is the only way a zone or a single
+        /// WCID can EXEMPT itself from a stat its tier Default authors: clearing the key merely
+        /// inherits. The authored value underneath is never touched, so off/on is lossless.
+        /// Missing on older profiles = empty dict.
+        /// </summary>
+        public Dictionary<string, bool> StatToggles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Bonus-currency drop table: each entry rolls independently on every governed kill and
         /// injects a stack onto the corpse. Missing on deserialize of older profiles = empty list.</summary>
         public List<ZoneCurrencyDrop> CurrencyDrops { get; set; } = new();
@@ -739,7 +828,20 @@ namespace ACE.Server.Managers.ZoneScaling
 
                 if (layer.Stats != null)
                     foreach (var kv in layer.Stats)
+                    {
                         result.Stats[kv.Key] = kv.Value;
+                        // THE SHADOW RULE (owner 2026-08-30, per-tier authoring): a layer that
+                        // authors a BASE stat WITHOUT its "_t25" twin means "this value, FLAT" -
+                        // an inherited twin from a lower layer must not keep bending it onto the
+                        // lower layer's ladder (a v14 Default's flat 40 would otherwise lerp
+                        // toward the v11 anchor board's T25 value). Drop the inherited twin.
+                        // A layer authoring both keeps both (guard below); order inside the layer
+                        // is irrelevant for the same reason. A twin alone still overlays - GetT
+                        // ignores a twin with no base, so it stays harmless until a base exists.
+                        if (!kv.Key.EndsWith("_t25", StringComparison.OrdinalIgnoreCase)
+                            && !layer.Stats.ContainsKey(kv.Key + "_t25"))
+                            result.Stats.Remove(kv.Key + "_t25");
+                    }
 
                 if (layer.BodyParts != null)
                     foreach (var kv in layer.BodyParts)
@@ -787,6 +889,11 @@ namespace ACE.Server.Managers.ZoneScaling
                     foreach (var kv in layer.CustomWeaponCards)
                         result.CustomWeaponCards[kv.Key] = kv.Value;
 
+                // stat on/off (2026-08-29): identical semantics, for every stat
+                if (layer.StatToggles != null)
+                    foreach (var kv in layer.StatToggles)
+                        result.StatToggles[kv.Key] = kv.Value;
+
                 if (layer.CurrencyDrops != null)
                     foreach (var drop in layer.CurrencyDrops)
                     {
@@ -822,6 +929,7 @@ namespace ACE.Server.Managers.ZoneScaling
             && (CustomModifierSlots == null || CustomModifierSlots.Count == 0)
             && (CustomSpecials == null || CustomSpecials.Count == 0)
             && (CustomWeaponCards == null || CustomWeaponCards.Count == 0)
+            && (StatToggles == null || StatToggles.Count == 0)
             && (CurrencyDrops == null || CurrencyDrops.Count == 0)
             && (SpellRules == null || SpellRules.Count == 0);
     }
@@ -1000,6 +1108,22 @@ namespace ACE.Server.Managers.ZoneScaling
 
         public double Get(string statKey, double fallback = 0.0)
             => _values.TryGetValue(statKey, out var v) ? v : fallback;
+
+        /// <summary>
+        /// ANCHORED read (owner 2026-08-29): the base stat is the T11 anchor, "&lt;stat&gt;_t25" the
+        /// T25 anchor; tiers 12-24 sit on the straight line between them. _t25 absent = FLAT (the
+        /// base value at every tier - the pre-anchor behaviour). _t25 without the base is ignored:
+        /// the base stat is what turns a knob on, so fallback still rules when it is unset.
+        /// </summary>
+        public double GetT(string statKey, double fallback, int tier)
+        {
+            if (!_values.TryGetValue(statKey, out var t11))
+                return fallback;
+            if (!_values.TryGetValue(statKey + "_t25", out var t25))
+                return t11;
+            var t = Math.Clamp((tier - 11) / 14.0, 0.0, 1.0);
+            return t11 + (t25 - t11) * t;
+        }
 
         public IReadOnlyDictionary<string, double> Values => _values;
     }

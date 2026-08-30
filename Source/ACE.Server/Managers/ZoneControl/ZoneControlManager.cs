@@ -502,7 +502,9 @@ namespace ACE.Server.Managers.ZoneControl
         private static ZoneRef BuildZoneRef(ControlledArea area)
         {
             var def = DefaultFor(area.Variation);
-            var defProfile = def?.Profile;
+            // stats read through the anchor stack (v11 anchors under the tier's own Default);
+            // Effects/Appearance below stay on the variation's own Default
+            var defProfile = AnchoredDefaultProfileFor(area.Variation);
 
             // zone layer = variation Default + the zone's own stats
             var zoneMerged = ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
@@ -555,6 +557,15 @@ namespace ACE.Server.Managers.ZoneControl
                 foreach (var kvp in variantProfile.Stats)
                     values[kvp.Key] = kvp.Value.Evaluate(1);
 
+                // STAT OFF-FLAGS (2026-08-29): a merged toggle of FALSE makes the stat evaluate as
+                // ABSENT - Has() misses, every consumer falls back - which is what lets a zone or a
+                // single WCID exempt itself from a stat its tier Default authors. Applied here, once,
+                // so all three published shapes (zone default, per-wcid, display) agree.
+                if (variantProfile.StatToggles is { Count: > 0 })
+                    foreach (var kvp in variantProfile.StatToggles)
+                        if (!kvp.Value)
+                            values.Remove(kvp.Key);
+
                 if (variantProfile.BodyParts is { Count: > 0 })
                 {
                     bodyParts = new Dictionary<int, ZoneBodyPart>(variantProfile.BodyParts.Count);
@@ -605,6 +616,31 @@ namespace ACE.Server.Managers.ZoneControl
         /// _lock, or from RebuildIndexes which already holds it.</summary>
         private static VariationDefault DefaultFor(int variation)
             => _variationDefaults.TryGetValue(variation, out var d) ? d : null;
+
+        /// <summary>
+        /// The Default STAT layer stack for a variation (owner 2026-08-30, the per-tier authoring
+        /// toggle): for endgame variations ABOVE 11, the v11 Default is the ANCHOR LAYER
+        /// underneath the variation's own Default. v11 holds the whole T11/T25 anchor board
+        /// (GetT lerps its base/_t25 pairs by tier), and a per-tier Default's flat values SHADOW
+        /// the lerp per stat (ZoneVariantProfile.Merge's shadow rule). Before this, a T12+ zone
+        /// merged DefaultFor(itsOwnVariation) alone - null in practice - so the anchors authored
+        /// on v11 never reached it at all (the gap found 2026-08-30: the anchored model only ever
+        /// worked at v11). v11 itself and retail variations (10 and below) are unchanged: one
+        /// layer, no anchor underlay. STATS ONLY - Effects/Appearance keep reading the
+        /// variation's own Default.
+        /// </summary>
+        private static ZoneVariantProfile AnchoredDefaultProfileFor(int variation)
+        {
+            var own = DefaultFor(variation)?.Profile;
+            if (variation <= 11)
+                return own;
+            var anchor = DefaultFor(11)?.Profile;
+            if (anchor == null)
+                return own;
+            if (own == null)
+                return anchor;
+            return ZoneVariantProfile.Merge(anchor, own);
+        }
 
         #endregion
 
@@ -681,10 +717,12 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>
         /// Resolves the winning zone's DEFAULT stat profile for a creature, ignoring any per-WCID
-        /// override bucket. Used by the v11 relief curves: the relief_* anchors are zone-level
-        /// player-progression policy, and a per-WCID stat override REPLACES the whole default profile —
-        /// resolving the curves here keeps them applying to override mobs (bosses) without every
-        /// override having to carry the nine anchor stats.
+        /// override bucket. 🔴 STALE-RATIONALE WARNING (2026-08-29): the old justification — "a
+        /// per-WCID override REPLACES the whole default profile" — has been wrong since the merge
+        /// went PER-STAT on 2026-07-30, and reading zone-policy knobs through here silently ignores
+        /// per-WCID authoring (that bug bit the relief curves; they read ResolveForCreature now).
+        /// Remaining caller: Player_Combat.ZcSpecialKnob, where zone-level-only IS the intent
+        /// (player-gear special knobs found via the opposing monster).
         /// </summary>
         public static EvaluatedProfile ResolveZoneDefaultForCreature(Creature creature)
         {
@@ -740,6 +778,71 @@ namespace ACE.Server.Managers.ZoneControl
 
             return best?.Default;
         }
+
+        /// <summary>
+        /// THE WEAPON ZONE LOCK (owner 2026-08-30, "only allow T11-T25 weapons to work in specific
+        /// zones ... an 'allow anywhere' then flip to 'Only in Authored areas'"): true when this
+        /// weapon's CUSTOM power - aug-scaling terms, modifier cards, procs - must be suppressed
+        /// for this swing. Option A was ruled: the weapon still swings and lands at its BASE T11
+        /// stats (the authored fallback), it just loses everything Zone Control stamped on top.
+        ///
+        /// The gate: server toggle ON (zc_weapon_zone_lock, default OFF = allow anywhere, live
+        /// flip) + wielder is a PLAYER (monsters are never gated) + the weapon is ZC-stamped
+        /// (ZcTier 11+; retail items never carry the stamp, so they can never be suppressed) +
+        /// the player is NOT inside an enabled authored area at their effective variation
+        /// (ResolveZoneDefaultForPlayer == null - lock-free snapshot read, rating-hot-path safe).
+        ///
+        /// Read at every card/scaling COMBAT site; appraisal deliberately stays ungated - the
+        /// panel describes the item, the lock describes the location.
+        /// </summary>
+        public static bool WeaponPowerSuppressed(WorldObject weapon, Creature wielder)
+        {
+            if (!(wielder is Player player))
+                return false;
+            if (weapon == null || (weapon.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.ZcTier) ?? 0) < 11)
+                return false;
+            // MASTER SWITCH (owner 2026-08-30, "weapons need same treatment"): Zone Control OFF
+            // suppresses every ZC weapon's custom power EVERYWHERE - armor already dropped to its
+            // T10 fallback pricing on this toggle via live stat resolution, but weapon cards and
+            // scaling never had a fallback ladder, so the toggle silently skipped them. Base
+            // weapon stats are the fallback, same as the zone lock.
+            if (!ServerConfig.zonecontrol_enabled.Value)
+                return true;
+            if (!ServerConfig.zc_weapon_zone_lock.Value)
+                return false;
+            return ResolveZoneDefaultForPlayer(player) == null;
+        }
+
+        /// <summary>
+        /// THE ARMOR ZONE LOCK (owner 2026-08-30, "do the same for armor"): true when this
+        /// PLAYER's worn ZC gear must stop contributing its Modifier LINES - the 50200-block
+        /// props (attributes, vitals pct, life on hit, spell duration, the slot specials) and
+        /// the ZC portion of the Gear* rating sums. Base armor stats (AL, protections,
+        /// Reinforced rank - frozen into the piece at drop) stay, mirroring the weapon rule's
+        /// base-stats fallback. Per-WEARER, not per-item: the caches isolate the ZC portion at
+        /// equip time (only ZcTier 11+ items feed it), so the read-time test needs no item.
+        /// NOTE: the master zonecontrol_enabled toggle is NOT part of this gate - armor already
+        /// re-prices onto the T10 fallback ladder when that is off (live stat resolution), and
+        /// zeroing lines on top would double-punish.
+        /// </summary>
+        public static bool WornPowerSuppressed(Creature wearer)
+        {
+            if (!ServerConfig.zc_armor_zone_lock.Value)
+                return false;
+            if (!(wearer is Player player))
+                return false;
+            return ResolveZoneDefaultForPlayer(player) == null;
+        }
+
+        /// <summary>Is this item ZC-stamped gear (ZcTier 11+) - the cache-build test that feeds
+        /// the ZC-only rating portion the armor zone lock subtracts.</summary>
+        public static bool IsZcGear(WorldObject wo)
+            => (wo?.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.ZcTier) ?? 0) >= 11;
+
+        /// <summary>The appraisal line both weapon and armor panels pin while their power is
+        /// suppressed for the examiner (wording owner-approved 2026-08-30). ONE constant so the
+        /// two panels can never drift.</summary>
+        public const string ZoneLockedAppraisalLine = "- Zone Locked (Power Reduced)";
 
         /// <summary>Resolves a creature's COSMETIC appearance from the governing zone: the zone default overlaid by
         /// this monster's per-WCID entry (per-WCID non-null fields win). Returns null when no enabled zone governs
@@ -1025,8 +1128,8 @@ namespace ACE.Server.Managers.ZoneControl
                     return cached;
 
                 // Same layering the combat snapshot uses, so the GUI/command readout matches what a mob
-                // actually gets: VariationDefault -> zone -> wcid, merged per stat.
-                var defProfile = DefaultFor(area.Variation)?.Profile;
+                // actually gets: v11 anchors -> VariationDefault -> zone -> wcid, merged per stat.
+                var defProfile = AnchoredDefaultProfileFor(area.Variation);
                 var variantProfile = hasWcidOverride
                     ? ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, area.Profile.WcidOverrides[wcid.Value])
                     : ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
@@ -1052,7 +1155,7 @@ namespace ACE.Server.Managers.ZoneControl
                 if (area == null)
                     return null;
 
-                var defProfile = DefaultFor(area.Variation)?.Profile;
+                var defProfile = AnchoredDefaultProfileFor(area.Variation);
                 if (wcid.HasValue && area.Profile.WcidOverrides.TryGetValue(wcid.Value, out var bucket))
                     return ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, bucket);
 
@@ -1082,6 +1185,14 @@ namespace ACE.Server.Managers.ZoneControl
                 var def = DefaultFor(area.Variation);
                 if (def?.Profile?.Stats != null && def.Profile.Stats.ContainsKey(stat))
                     return "default v" + area.Variation;
+
+                // the v11 anchor layer rides under every 12+ Default (AnchoredDefaultProfileFor)
+                if (area.Variation > 11)
+                {
+                    var anchor = DefaultFor(11);
+                    if (anchor?.Profile?.Stats != null && anchor.Profile.Stats.ContainsKey(stat))
+                        return "default v11 (anchor)";
+                }
 
                 return null;
             }

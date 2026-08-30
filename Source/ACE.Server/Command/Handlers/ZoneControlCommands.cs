@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
@@ -22,7 +22,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ACE.Server.Command.Handlers
 {
     /// <summary>
-    /// /zonecontrol — author + toggle controlled ZONES (Developer). A zone is a named set of landblocks
+    /// /zonecontrol â€” author + toggle controlled ZONES (Developer). A zone is a named set of landblocks
     /// governing one world Variation (0 = normal world, 11+ = variants), with an on/off switch, a DEFAULT
     /// stat set for all its monsters, and optional per-monster (WCID) overrides. No prestige/tier/boss concepts.
     /// Disable reverts monsters to baseline (live stats instantly, HP on respawn).
@@ -46,7 +46,7 @@ namespace ACE.Server.Command.Handlers
         private const double SyncKeepaliveSeconds = 15.0;
 
         /// <summary>Called from WorldManager.UpdateGameWorld() every frame; rate-limited to once per 2s.
-        /// Pushes [[ZC]] to registered plugin sessions — but only when the payload actually CHANGED since
+        /// Pushes [[ZC]] to registered plugin sessions â€” but only when the payload actually CHANGED since
         /// that session's last push (movement, live target values, any zone edit), or the keepalive is due.
         /// An idle GUI session generates ~one line per 15s instead of one per 2s.</summary>
         public static void PushTick()
@@ -108,7 +108,7 @@ namespace ACE.Server.Command.Handlers
             + "part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>] | clearpart <name> <part> [field] [--wcid <id>] | "
             + "prop <name> <int|int64|float|bool> <idOrName> <value> [--wcid <id>] | clearprop <name> <type> <idOrName> [--wcid <id>] | "
             + "appearance <name> <palette|shade|scale|translucency|shiny|setup|clothing|palettebase|motion|sound|icon> <value> [--wcid <id>] | clearappearance <name> [field] [--wcid <id>] | copylook <name> <donorWcid> [--wcid <id>] | draftslot <name> [release] | copydraft <name> <destWcid> | becomemob <donorWcid> --wcid <id> | seticon <wcid> <iconDid|clear> [layer] | "
-            + "modifier <name> <add|remove|list|catalog|band|slots|special|lines|weight> [args] [--wcid <id>] | "
+            + "modifier <name> <add|remove|list|catalog|band|slots|special|chance> [args] [--wcid <id>] | "
             + "currency <name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>] | "
             + "boundary <name> <on|off|show> | survey <name> [lbHex] | quests <name> | terrain <name> <hex> <type|clear> | "
             + "mobinfo <wcid> | geninfo <wcid> | genlist [zone] | genedit <wcid> delay|radius|stagger|init|max <value> | "
@@ -120,7 +120,7 @@ namespace ACE.Server.Command.Handlers
 
             if (parameters.Length == 0 || parameters[0].Equals("help", StringComparison.OrdinalIgnoreCase))
             {
-                Msg("Zone Control commands (zones — any world area):");
+                Msg("Zone Control commands (zones â€” any world area):");
                 Msg("  /zonecontrol list | here | reload");
                 Msg("  /zonecontrol create <name...> <variation|here> [here|<hex>]   variation: 0 = normal world, 11+ = variants");
                 Msg("      multi-word names work unquoted (create Tou Tou here); quote names containing number words (create \"Zone 2\" 11)");
@@ -149,10 +149,10 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol appearance <name> animpart <index> <gfxObjHex> [--wcid <id>]   (swap ONE body part, e.g. animpart 16 = head; clear with clearappearance <name> animpart <index>)");
                 Msg("  /zonecontrol modifier <name> <add|remove|list|catalog> [key] [--wcid <id>]   (custom Modifier pool for the extra-loot-modifier roll; Retired keys are rejected)");
                 Msg("  /zonecontrol modifier <name> band <key> <min> <max> [procMin procMax]   (override a key's roll band; 'band <key> clear' drops the override; 'modifier default <var> band ...' authors the variation Default)");
-                Msg("  /zonecontrol modifier <name> lines <min> <max> [c1] [c2] [c3]   (Armor v2 line ladder: min guaranteed, extra slots up to max roll c1/c2/c3 in order, first miss stops; writes modifier_lines_*)");
-                Msg("  /zonecontrol modifier <name> weight <filler|average|chase> <n>   (key pick weight per class; writes modifier_weight_*)");
+                Msg("  /zonecontrol modifier <name> chance <catalog key> <t11> [t25]   (per-LINE anchored drop chance, 0..1; t25 optional = T25 anchor, absent = flat)");
                 Msg("  /zonecontrol modifier <name> special <key> <on|off|clear>   (per-special on/off for the per-kill slot-special roll; clear = drop the override)");
                 Msg("  /zonecontrol weaponcard <name> <chance_stat> <on|off|clear> | weaponcard <name> list   [--wcid <id>]   (explicit per-card on/off; OFF beats an inherited chance, and the tuned chance value survives an off/on cycle)");
+                Msg("  /zonecontrol togglestat <name> <stat> <on|off|clear> | togglestat <name> list   [--wcid <id>]   (per-STAT on/off for ANY stat; OFF = treated as Not Set at this scope even when a lower layer authors it - the only way to exempt a zone/monster from an inherited Default. Tier form: default <var> togglestat ...)");
                 Msg("  /zonecontrol default <var> weaponcard <chance_stat> <on|off|clear> | list   (the same switch on the tier Default; a zone can override it either way)");
                 Msg("  /zonecontrol currency <name> add <itemWcid> <amount> [chance 0..1] [direct|corpse] | remove <itemWcid> | list   [--wcid <id>]   (per-kill bonus-currency drop table; direct = into the killer's inventory)");
                 Msg("  /zonecontrol boundary <name> <on|off|show>   (bounded: players at the zone's variation may only roam bounded-zone landblocks; variation 11+ only)");
@@ -184,15 +184,15 @@ namespace ACE.Server.Command.Handlers
             var sub = args[0].ToLowerInvariant();
 
             // Unquoted multi-word zone names: for any subcommand whose <name> is args[1], collapse the
-            // LONGEST token-join that names an EXISTING zone into one arg — "enable Tou Tou" and
+            // LONGEST token-join that names an EXISTING zone into one arg â€” "enable Tou Tou" and
             // "set Tou Tou max_health 5000" work without quotes. create scans for its variation token
             // instead (the zone doesn't exist yet); sync's name sits at args[2].
             if (sub == "sync")
                 CollapseZoneNameTokens(args, 2);
             else if (sub != "create" && sub != "default" && sub != "ladder" && sub != "craft")
-                // 'default' takes a VARIATION at args[1], not a zone name — collapsing would mangle it.
+                // 'default' takes a VARIATION at args[1], not a zone name â€” collapsing would mangle it.
                 // 'ladder' takes a verb / tier / player name, never a zone.
-                // 'craft' takes a MATERIAL NAME at args[1] (possibly two words, "Black Opal") — never a zone.
+                // 'craft' takes a MATERIAL NAME at args[1] (possibly two words, "Black Opal") â€” never a zone.
                 CollapseZoneNameTokens(args, 1);
 
             try
@@ -299,7 +299,7 @@ namespace ACE.Server.Command.Handlers
 
                     case "sync":
                     {
-                        // Machine handshake from the plugin — stay SILENT (no chat confirmation) so the periodic
+                        // Machine handshake from the plugin â€” stay SILENT (no chat confirmation) so the periodic
                         // live-feed handshake never spams the player's chat window. Only a mistyped manual command
                         // gets the usage hint below.
                         if (args.Count >= 2 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase))
@@ -356,7 +356,7 @@ namespace ACE.Server.Command.Handlers
                         else
                         {
                             var here = session.Player?.Location?.LandblockId.Landblock;
-                            if (here == null) { Msg("No location — pass a hex landblock."); return; }
+                            if (here == null) { Msg("No location â€” pass a hex landblock."); return; }
                             lb = here.Value;
                         }
 
@@ -365,7 +365,7 @@ namespace ACE.Server.Command.Handlers
                             Name = name, Variation = variation, Enabled = false,
                             Landblocks = new HashSet<ushort> { lb },
                         });
-                        Msg($"Created zone '{name}' (v{variation}) with lb {lb:X4} — DISABLED. Use 'set' then 'enable'.");
+                        Msg($"Created zone '{name}' (v{variation}) with lb {lb:X4} â€” DISABLED. Use 'set' then 'enable'.");
                         return;
                     }
 
@@ -420,12 +420,12 @@ namespace ACE.Server.Command.Handlers
                         { Msg("variation must be a number >= 0 (or 'here')."); return; }
                         if (!ZoneControlManager.SetVariation(name, variation)) { Msg($"No zone '{name}'."); return; }
                         Msg($"'{name}' Variation set to v{variation}. Now governs monsters/effects at that variation.");
-                        // A boundary can't live on a retail variation — moving a bounded zone to <= 10 drops it.
+                        // A boundary can't live on a retail variation â€” moving a bounded zone to <= 10 drops it.
                         var moved = ZoneControlManager.GetArea(name);
                         if (moved != null && moved.Bounded && variation < ZoneControlManager.MinBoundedVariation)
                         {
                             ZoneControlManager.SetBounded(name, false);
-                            Msg($"'{name}' was BOUNDED — boundary removed (boundaries need variation 11+).");
+                            Msg($"'{name}' was BOUNDED â€” boundary removed (boundaries need variation 11+).");
                         }
                         return;
                     }
@@ -538,7 +538,7 @@ namespace ACE.Server.Command.Handlers
                         if (ACE.Database.DatabaseManager.World.GetCachedWeenie(genWcid) == null)
                         { Msg($"No weenie {genWcid}."); return; }
 
-                        // parsed-numeric interpolation only — nothing user-typed reaches the SQL as text
+                        // parsed-numeric interpolation only â€” nothing user-typed reaches the SQL as text
                         var sqls = new List<string>();
                         var vs = genVal.ToString("0.####", CultureInfo.InvariantCulture);
                         switch (genField)
@@ -636,9 +636,9 @@ namespace ACE.Server.Command.Handlers
                     {
                         // Custom modifier pool + banded rolls for the extra-loot-modifier roll
                         // (weapon/armor_modifier_chance). Scope is a zone (+ optional --wcid), or
-                        // 'modifier default <var> ...' = the variation Default layer (band/slots/special/lines/weight only —
+                        // 'modifier default <var> ...' = the variation Default layer (band/slots/special/lines/weight only â€”
                         // the pool itself stays zone-scope).
-                        if (args.Count < 3) { Msg("Usage: modifier <name> <add|remove|list|catalog|band|slots|special|lines|weight> [args] [--wcid <id>]"); return; }
+                        if (args.Count < 3) { Msg("Usage: modifier <name> <add|remove|list|catalog|band|slots|special|chance> [args] [--wcid <id>]"); return; }
 
                         var isDefaultScope = args[1].Equals("default", StringComparison.OrdinalIgnoreCase);
                         var defaultVar = -1;
@@ -647,7 +647,7 @@ namespace ACE.Server.Command.Handlers
                         if (isDefaultScope)
                         {
                             if (args.Count < 4 || !int.TryParse(args[2].TrimStart('v', 'V'), out defaultVar) || defaultVar < 0)
-                            { Msg("Usage: modifier default <variation> <band|slots|special|lines|weight> ..."); return; }
+                            { Msg("Usage: modifier default <variation> <band|slots|special|chance> ..."); return; }
                             opIdx = 3;
                         }
                         else
@@ -680,7 +680,7 @@ namespace ACE.Server.Command.Handlers
 
                         if (op == "band")
                         {
-                            // modifier <scope> band <key> clear — drop the override, back to the catalog band.
+                            // modifier <scope> band <key> clear â€” drop the override, back to the catalog band.
                             if (args.Count >= opIdx + 3 && int.TryParse(args[opIdx + 1], out var clearKey)
                                 && args[opIdx + 2].Equals("clear", StringComparison.OrdinalIgnoreCase))
                             {
@@ -694,7 +694,7 @@ namespace ACE.Server.Command.Handlers
                                 return;
                             }
 
-                            // modifier <scope> band <key> <min> <max> — override the roll band.
+                            // modifier <scope> band <key> <min> <max> â€” override the roll band.
                             if (args.Count < opIdx + 4
                                 || !int.TryParse(args[opIdx + 1], out var bandKey)
                                 || !int.TryParse(args[opIdx + 2], out var bandMin)
@@ -775,58 +775,36 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        // Armor v2 (2026-08-21): the line-count ladder, class weights and special odds are plain
-                        // stats on the scope - same StatCurve write as 'default <var> set'.
+                        // Plain StatCurve write on the scope - same shape as 'default <var> set'.
                         void SetStat(string stat, double value)
                             => MutateScope(vp => vp.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false });
 
-                        if (op == "lines")
+                        // `lines` and `weight` REMOVED 2026-08-29 (owner, one-row-per-Modifier design):
+                        // the line-count ladder and class weights are retired - every line rolls its own
+                        // anchored chance now. Author those with `chance` below or the generic stat set.
+                        if (op == "chance")
                         {
-                            // modifier <scope> lines <min> <max> [c1] [c2] [c3]
+                            // modifier <scope> chance <key> <t11> [t25]   (0..1; t25 = the T25 anchor)
                             if (args.Count < opIdx + 3
-                                || !int.TryParse(args[opIdx + 1], out var linesMin)
-                                || !int.TryParse(args[opIdx + 2], out var linesMax))
-                            { Msg("Usage: modifier <name> lines <min> <max> [c1] [c2] [c3]   (min/max 0-8; c1..c3 = 0..1 chance per extra slot)"); return; }
-                            if (linesMin < 0 || linesMax > 8 || linesMin > linesMax) { Msg("lines: need 0 <= min <= max <= 8."); return; }
-                            var chances = new double?[3];
-                            for (int ci = 0; ci < 3; ci++)
+                                || !int.TryParse(args[opIdx + 1], out var lineKey)
+                                || !ZoneModifiers.TryGet(lineKey, out var lineDef) || lineDef.SlotSpecial
+                                || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var c11) || c11 < 0 || c11 > 1)
+                            { Msg("Usage: modifier <name> chance <catalog key> <t11 chance 0..1> [t25 chance 0..1]"); return; }
+                            SetStat(ZoneModifiers.LineChanceStat(lineKey), c11);
+                            if (args.Count > opIdx + 3
+                                && double.TryParse(args[opIdx + 3], NumberStyles.Float, CultureInfo.InvariantCulture, out var c25)
+                                && c25 >= 0 && c25 <= 1)
                             {
-                                if (args.Count <= opIdx + 3 + ci) break;
-                                if (!double.TryParse(args[opIdx + 3 + ci], NumberStyles.Float, CultureInfo.InvariantCulture, out var c) || c < 0 || c > 1)
-                                { Msg($"c{ci + 1} must be a chance in 0..1."); return; }
-                                chances[ci] = c;
+                                SetStat(ZoneModifiers.LineChanceStat(lineKey) + "_t25", c25);
+                                Msg($"{scopeTag} {lineDef.Name} chance: {c11:0.###} at T11 -> {c25:0.###} at T25.");
                             }
-                            SetStat(ZoneStat.ModifierLinesMin, linesMin);
-                            SetStat(ZoneStat.ModifierLinesMax, linesMax);
-                            if (chances[0].HasValue) SetStat(ZoneStat.ModifierLinesChance1, chances[0].Value);
-                            if (chances[1].HasValue) SetStat(ZoneStat.ModifierLinesChance2, chances[1].Value);
-                            if (chances[2].HasValue) SetStat(ZoneStat.ModifierLinesChance3, chances[2].Value);
-                            Msg($"{scopeTag} modifier lines: {linesMin} guaranteed, up to {linesMax}"
-                                + (chances[0].HasValue ? $", extra slot chances {string.Join(" / ", chances.Where(c => c.HasValue).Select(c => c.Value.ToString("0.###", CultureInfo.InvariantCulture)))}" : " (slot chances unchanged)") + ".");
-                            return;
-                        }
-
-                        if (op == "weight")
-                        {
-                            // modifier <scope> weight <filler|average|chase> <n>   (old words trash / mid still accepted)
-                            if (args.Count < opIdx + 3
-                                || !double.TryParse(args[opIdx + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out var weight) || weight < 0)
-                            { Msg("Usage: modifier <name> weight <filler|average|chase> <n>   (n >= 0)"); return; }
-                            var weightStat = args[opIdx + 1].ToLowerInvariant() switch
-                            {
-                                "filler" or "trash" => ZoneStat.ModifierWeightTrash,
-                                "average" or "mid" => ZoneStat.ModifierWeightMid,
-                                "chase" => ZoneStat.ModifierWeightChase,
-                                _ => null,
-                            };
-                            if (weightStat == null) { Msg("Class must be filler, average or chase."); return; }
-                            SetStat(weightStat, weight);
-                            Msg($"{scopeTag} {weightStat} = {weight.ToString("0.###", CultureInfo.InvariantCulture)}.");
+                            else
+                                Msg($"{scopeTag} {lineDef.Name} chance: {c11:0.###} (flat, every tier).");
                             return;
                         }
 
                         if (isDefaultScope)
-                        { Msg("Default scope supports band | slots | lines | weight | special only (the pool add | remove | list are zone-scope)."); return; }
+                        { Msg("Default scope supports band | slots | chance | special only (the pool add | remove | list are zone-scope)."); return; }
 
                         if (op == "list")
                         {
@@ -864,7 +842,7 @@ namespace ACE.Server.Command.Handlers
                             Msg(removed ? $"'{name}' modifier removed: {(ZoneModifiers.TryGet(modifierKey, out var rdef) ? rdef.Name : "key " + modifierKey)}." : "That line wasn't in the pool.");
                         }
                         else
-                            Msg("op must be add | remove | list | catalog | band | slots | special | lines | weight");
+                            Msg("op must be add | remove | list | catalog | band | slots | special | chance");
                         return;
                     }
 
@@ -961,6 +939,30 @@ namespace ACE.Server.Command.Handlers
                         }
                     }
 
+                    case "togglestat":
+                    {
+                        // ZONE-scope stat on/off (2026-08-29, release audit blocker 3): the weaponcard
+                        // three-state generalized to EVERY stat. off = the stat evaluates as ABSENT at
+                        // this scope even when a lower layer authors it (never/unset semantics); on =
+                        // cancel an inherited off; clear = this scope stops deciding. The authored value
+                        // underneath is never touched. Tier-Default form: `default <var> togglestat ...`.
+                        if (args.Count < 3)
+                        { Msg("Usage: togglestat <name> <stat> <on|off|clear> | togglestat <name> list   [--wcid <id>]"); return; }
+                        var tsName = args[1];
+                        var tsArea = ZoneControlManager.GetArea(tsName);
+                        if (tsArea == null) { Msg($"No zone '{tsName}' (create it first)."); return; }
+                        var tsScopeTag = $"'{tsName}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")}";
+
+                        HandleStatToggle(args, 2, tsScopeTag,
+                            "Usage: togglestat <name> <stat> <on|off|clear> | togglestat <name> list",
+                            wcid.HasValue ? tsArea.Profile.VariantForWcid(wcid.Value) : tsArea.Profile.Minion,
+                            ZoneControlManager.ResolveProfileForDisplay(tsName, wcid),
+                            edit => ZoneControlManager.MutateArea(tsName, a =>
+                                edit(wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion)),
+                            Msg);
+                        return;
+                    }
+
                     case "weaponcard":
                     {
                         // ZONE-scope weapon-card on/off (owner 2026-08-25). The tier-Default form lives under
@@ -1029,7 +1031,7 @@ namespace ACE.Server.Command.Handlers
                             { Msg("amount must be a positive integer."); return; }
 
                             // Safeguard: the spawn path delivers ONE stack, so cap the count at the item's own
-                            // max stack size (1 for non-stackables) — a typo like 5000000 can't be stored.
+                            // max stack size (1 for non-stackables) â€” a typo like 5000000 can't be stored.
                             var maxStack = 1;
                             if (weenie.PropertiesInt != null && weenie.PropertiesInt.TryGetValue(PropertyInt.MaxStackSize, out var ms) && ms > 1)
                                 maxStack = ms;
@@ -2090,7 +2092,7 @@ namespace ACE.Server.Command.Handlers
                         if (op == "show")
                         {
                             Msg($"'{name}' v{area.Variation}: {(area.Bounded ? "BOUNDED" : "free roam")} " +
-                                $"({area.Landblocks.Count} landblock(s), {(area.Enabled ? "ENABLED" : "disabled — stats off; the boundary enforces regardless")}).");
+                                $"({area.Landblocks.Count} landblock(s), {(area.Enabled ? "ENABLED" : "disabled â€” stats off; the boundary enforces regardless")}).");
                             if (area.Bounded)
                             {
                                 var sharing = ZoneControlManager.BoundedZoneNamesAt(area.Variation).Where(n => !n.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -2106,7 +2108,7 @@ namespace ACE.Server.Command.Handlers
 
                         if (bounded && area.Variation < ZoneControlManager.MinBoundedVariation)
                         {
-                            Msg($"Boundaries need variation 11+ — '{name}' is on v{area.Variation}. " +
+                            Msg($"Boundaries need variation 11+ â€” '{name}' is on v{area.Variation}. " +
                                 "A bounded zone on a retail variation would confine every player there.");
                             return;
                         }
@@ -2234,7 +2236,7 @@ namespace ACE.Server.Command.Handlers
                     {
                         // Per-variation Default layer (2026-07-30). Every zone at <var> inherits these, per
                         // stat; a zone or per-WCID value overrides just that stat. Progression across v11-v25
-                        // is 15 of these, all explicitly authored — the server never derives one.
+                        // is 15 of these, all explicitly authored â€” the server never derives one.
                         if (args.Count < 2)
                         {
                             Msg("Usage: default <variation> <show|set|clearstat|copyfrom|clear|list>");
@@ -2351,7 +2353,19 @@ namespace ACE.Server.Command.Handlers
                             return;
                         }
 
-                        Msg("op must be show | set | clearstat | copyfrom | clear | list | weaponcard");
+                        if (dop == "togglestat")
+                        {
+                            // TIER-DEFAULT stat on/off (2026-08-29) - same shape as weaponcard above.
+                            var dprof = ZoneControlManager.GetVariationDefault(dvar)?.Profile;
+                            HandleStatToggle(args, 3, $"Default v{dvar}",
+                                "Usage: default <var> togglestat <stat> <on|off|clear> | default <var> togglestat list",
+                                dprof, dprof,
+                                edit => ZoneControlManager.MutateVariationDefault(dvar, d => edit(d.Profile)),
+                                Msg);
+                            return;
+                        }
+
+                        Msg("op must be show | set | clearstat | copyfrom | clear | list | weaponcard | togglestat");
                         return;
                     }
 
@@ -2472,7 +2486,7 @@ namespace ACE.Server.Command.Handlers
         /// <summary>"[[ZCD]]var=..|found=..|&lt;stat&gt;=defined,value|.." - one variation Default's stats,
         /// in the same wire shape as [[ZC]] so the plugin's grid parser is shared. Stats only: a Default
         /// also carries Effects/Appearance, which the editor does not author (owner 2026-08-11).</summary>
-        /// <summary>"|sess=..." — session-state flags for the GM Tools On/Off highlight, server truth.
+        /// <summary>"|sess=..." â€” session-state flags for the GM Tools On/Off highlight, server truth.
         /// Fixed order: adminvision, attackable, unkillable, cloak (any cloaked state), portal bypass.
         /// Shared by the zone payload and the session-only payload so the two can never drift.</summary>
         private static void AppendSessionState(StringBuilder sb, Session session)
@@ -2486,17 +2500,20 @@ namespace ACE.Server.Command.Handlers
                   .Append(sp.IgnorePortalRestrictions ? 1 : 0);
         }
 
-        /// <summary>"|combatdefs=..." — live combat-rule bool states so the plugin's GM Tools toggles
-        /// show truth. Fixed order: missile_power_bar, zonecontrol_enabled. APPEND-ONLY: the plugin
-        /// indexes positionally.</summary>
+        /// <summary>"|combatdefs=..." â€” live combat-rule bool states so the plugin's GM Tools toggles
+        /// show truth. Fixed order: missile_power_bar, zonecontrol_enabled, zc_weapon_zone_lock,
+        /// zc_pertier_authoring, zc_armor_zone_lock. APPEND-ONLY: the plugin indexes positionally.</summary>
         private static void AppendCombatDefs(StringBuilder sb)
         {
             sb.Append("|combatdefs=")
               .Append(ServerConfig.missile_power_bar.Value ? '1' : '0').Append(',')
-              .Append(ServerConfig.zonecontrol_enabled.Value ? '1' : '0');
+              .Append(ServerConfig.zonecontrol_enabled.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.zc_weapon_zone_lock.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.zc_pertier_authoring.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.zc_armor_zone_lock.Value ? '1' : '0');
         }
 
-        /// <summary>"[[ZCSESS]]|sess=..|combatdefs=.." — the GM Tools state alone, for a bare
+        /// <summary>"[[ZCSESS]]|sess=..|combatdefs=.." â€” the GM Tools state alone, for a bare
         /// "/zonecontrol get" with no zone name. Session flags and shard-combat rules are not zone
         /// state, so the plugin must be able to fetch them with no Zone loaded (owner 2026-08-17:
         /// the GM Tools toggles sat on "--" until a zone sync happened to run).</summary>
@@ -2661,7 +2678,7 @@ namespace ACE.Server.Command.Handlers
         /// merged view after inheritance, which is what actually gates drops; for a tier Default the two are
         /// the same object because nothing sits under it.
         ///
-        /// 🔴 `clear` and `off` are NOT the same thing and the messages say so out loud, because assuming
+        /// ðŸ”´ `clear` and `off` are NOT the same thing and the messages say so out loud, because assuming
         /// they were is the bug this whole feature exists to fix: at zone scope `clear` means INHERIT (the
         /// tier Default's answer wins, which may well be ON) while `off` means OFF regardless.
         /// </summary>
@@ -2717,6 +2734,67 @@ namespace ACE.Server.Command.Handlers
             Msg(on
                 ? $"{scopeTag} weapon card: {card} ON - rolls at its authored chance here (chance value untouched)."
                 : $"{scopeTag} weapon card: {card} OFF - never rolls here, even if a lower layer sets a chance (chance value kept).");
+        }
+
+        /// <summary>The togglestat handler (2026-08-29) - HandleWeaponCard's shape over the full
+        /// stat registry. on/off/clear semantics identical; identifier space = ZoneStat.All.</summary>
+        private static void HandleStatToggle(List<string> args, int idIdx, string scopeTag, string usage,
+            ZoneVariantProfile authored, ZoneVariantProfile effective,
+            Action<Action<ZoneVariantProfile>> mutate, Action<string> Msg)
+        {
+            if (args.Count <= idIdx) { Msg(usage); return; }
+
+            if (args[idIdx].Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                Msg($"{scopeTag} stat toggles (absent = ON):");
+                var any = false;
+                foreach (var stat in ZoneStat.All)
+                {
+                    var own = authored?.StatToggles != null && authored.StatToggles.TryGetValue(stat, out var o)
+                        ? (bool?)o : null;
+                    var eff = effective?.StatToggles != null && effective.StatToggles.TryGetValue(stat, out var e)
+                        ? (bool?)e : null;
+                    if (own == null && eff != false) continue;
+                    any = true;
+                    var where = own.HasValue ? "here" : "inherited";
+                    Msg($"    {stat,-34} {((eff ?? true) ? "ON" : "OFF")}  ({where})");
+                }
+                Msg(any ? "    (every stat not listed is ON)" : "    (none - every stat is ON)");
+                return;
+            }
+
+            if (args.Count <= idIdx + 1) { Msg(usage); return; }
+            var tsKey = args[idIdx].ToLowerInvariant();
+            if (!ZoneStat.IsKnownStat(tsKey))
+            { Msg($"'{args[idIdx]}' is not a registered stat key."); return; }
+
+            var tok = args[idIdx + 1].ToLowerInvariant();
+            if (tok == "clear")
+            {
+                var had = false;
+                mutate(vp => had = vp.StatToggles.Remove(tsKey));
+                Msg(had
+                    ? $"{scopeTag} stat toggle: {tsKey} override cleared - this scope no longer decides; the layer underneath does."
+                    : $"{scopeTag} stat toggle: {tsKey} had no override here.");
+                return;
+            }
+            if (tok != "on" && tok != "off") { Msg(usage); return; }
+
+            var on = tok == "on";
+            mutate(vp => vp.StatToggles[tsKey] = on);
+            Msg(on
+                ? $"{scopeTag} stat toggle: {tsKey} ON - the authored/inherited value applies here again."
+                : $"{scopeTag} stat toggle: {tsKey} OFF - treated as NOT SET here, even if a lower layer authors it (the value underneath is kept).");
+        }
+
+        /// <summary>statoff=stat,stat,... - the stats toggled OFF at this (evaluated) scope. Sparse;
+        /// absent = every stat on. APPEND-ONLY tag (2026-08-29), same reduction as wpnoff.</summary>
+        private static void AppendStatOffs(StringBuilder sb, Dictionary<string, bool> toggles)
+        {
+            if (toggles == null || toggles.Count == 0) return;
+            var off = toggles.Where(kv => !kv.Value).Select(kv => kv.Key).OrderBy(k => k, StringComparer.Ordinal).ToList();
+            if (off.Count == 0) return;
+            sb.Append("|statoff=").Append(string.Join(",", off));
         }
 
         /// <summary>ctspoff=key,key,... - the specials turned OFF at this (evaluated) scope. Sparse; absent = all on.
@@ -2809,10 +2887,11 @@ namespace ACE.Server.Command.Handlers
                 }
             }
             AppendSpecialsOff(sb, vp?.CustomSpecials);
-            // LAST tag in the [[ZCD]] payload. vp here is this Default's OWN authored profile, so the
-            // off-set is "authored on this tier Default" - there is no layer under a Default for it to
-            // have inherited from, so authored and evaluated are the same thing at this scope.
+            // vp here is this Default's OWN authored profile, so the off-sets are "authored on this
+            // tier Default" - there is no layer under a Default for them to have inherited from.
             AppendWeaponCardsOff(sb, vp?.CustomWeaponCards);
+            // LAST tag in the [[ZCD]] payload - APPEND-ONLY (2026-08-29).
+            AppendStatOffs(sb, vp?.StatToggles);
             return sb.ToString();
         }
 
@@ -2832,7 +2911,7 @@ namespace ACE.Server.Command.Handlers
             var area = ZoneControlManager.GetArea(name);
             // LAYERED view (2026-07-30): VariationDefault -> zone -> wcid, so the plugin shows the value combat
             // actually uses rather than only what this bucket authors. Wire shape is unchanged (still
-            // "<stat>=<defined>,<value>") — provenance is a Phase 3 change made together with the plugin.
+            // "<stat>=<defined>,<value>") â€” provenance is a Phase 3 change made together with the plugin.
             var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
 
             var sb = new StringBuilder();
@@ -2941,7 +3020,7 @@ namespace ACE.Server.Command.Handlers
                     sb.Append("|prop_b_").Append(kv.Key).Append('=').Append(kv.Value ? 1 : 0);
             }
 
-            // Appearance overrides (cosmetic layer, separate from props/stats): ap_<field>=<value>. Sparse — the
+            // Appearance overrides (cosmetic layer, separate from props/stats): ap_<field>=<value>. Sparse â€” the
             // selected bucket's OWN fields (the zone default with no --wcid, else that WCID's overlay), so the
             // plugin's Set/Clear act on exactly what it shows.
             var apVp = area == null ? null : (wcid.HasValue
@@ -3044,7 +3123,7 @@ namespace ACE.Server.Command.Handlers
             if (vp?.CustomModifiers is { Count: > 0 })
                 sb.Append("|cantrips=").Append(string.Join(",", vp.CustomModifiers));
 
-            // Banded cantrips (sparse, rebuilt each sync like the pool): the EVALUATED/merged view —
+            // Banded cantrips (sparse, rebuilt each sync like the pool): the EVALUATED/merged view â€”
             // vp is ResolveProfileForDisplay, so Default-layer bands sync too; a key absent here
             // rolls the catalog band. cantrips=<key>:<min>:<max>:<procMin>:<procMax>;...
             // Entries carry ':' / ';' so the parser can tell them from the legacy comma pool list above.
@@ -3137,7 +3216,7 @@ namespace ACE.Server.Command.Handlers
             AppendSessionState(sb, session);
 
             // Live hints from the admin's in-game target. When the plugin is watching a SPECIFIC monster
-            // (--wcid), only send them if the in-game target IS that monster — otherwise targeting some other
+            // (--wcid), only send them if the in-game target IS that monster â€” otherwise targeting some other
             // mob would overwrite the watched monster's weenie base values in the GUI. With no wcid watch
             // ("All monsters"), any target's live stats are useful context and flow through as before.
             var target = session.Player?.SelectedTarget as ACE.Server.WorldObjects.Creature;
@@ -3180,7 +3259,7 @@ namespace ACE.Server.Command.Handlers
             }
 
             AppendLadder(sb);   // APPEND-ONLY (2026-08-22): ladder apply versions, last so older plugins ignore it
-            // APPEND-ONLY (2026-08-25), and genuinely last in the [[ZC]] payload. 🔴 vp here is
+            // APPEND-ONLY (2026-08-25), and genuinely last in the [[ZC]] payload. ðŸ”´ vp here is
             // ResolveProfileForDisplay - the EVALUATED view after the Default -> zone -> wcid merge, which is
             // the convention every other layered tag in this payload already uses (the stat rows, cantrips=,
             // ctslots=, ctspoff=). So wpnoff at zone scope answers "which cards are OFF FOR THIS ZONE",
@@ -3190,6 +3269,9 @@ namespace ACE.Server.Command.Handlers
             // what this one means, because the two readings disagree only in the inherited case, which is
             // the case nobody tests.
             AppendWeaponCardsOff(sb, vp?.CustomWeaponCards);
+            // LAST tag in the [[ZC]] payload - APPEND-ONLY (2026-08-29). Same evaluated-view rule as
+            // wpnoff above: this answers "which stats are OFF FOR THIS SCOPE", inherited included.
+            AppendStatOffs(sb, vp?.StatToggles);
             return sb.ToString();
         }
 
@@ -3233,7 +3315,7 @@ namespace ACE.Server.Command.Handlers
 
                 case ZoneStat.ArmorLevel:
                 {
-                    // weenie/biota base body armor (max across parts — parts are uniform on nearly all mobs)
+                    // weenie/biota base body armor (max across parts â€” parts are uniform on nearly all mobs)
                     var parts = creature.Biota.PropertiesBodyPart;
                     if (parts == null || parts.Count == 0) return null;
                     return parts.Values.Max(p => p.BaseArmor);
@@ -3263,7 +3345,7 @@ namespace ACE.Server.Command.Handlers
 
         /// <summary>Re-tokenize the space-split parameters honoring double quotes, so zone names may contain
         /// spaces: /zonecontrol enable "My Zone". (ACE's CommandManager splits purely on spaces, so runs of
-        /// spaces inside quotes collapse to one — cosmetic only.)</summary>
+        /// spaces inside quotes collapse to one â€” cosmetic only.)</summary>
         private static List<string> RetokenizeParameters(string[] parameters)
         {
             var joined = string.Join(" ", parameters ?? Array.Empty<string>());
@@ -3347,7 +3429,7 @@ namespace ACE.Server.Command.Handlers
             => double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out value);
 
         /// <summary>Strip the wire's separator chars from a value so it can't break payload parsing.</summary>
-        // ── live stat resolution: /zonecontrol ladder ... (2026-08-22) ─────────────────────────────
+        // â”€â”€ live stat resolution: /zonecontrol ladder ... (2026-08-22) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private const int LadderTierMin = 11, LadderTierMax = 25;
 
@@ -3458,7 +3540,7 @@ namespace ACE.Server.Command.Handlers
                 Msg($"  Armor Level resolves to {r.ArmorLevel.Value} (base {ZoneStatResolver.BaseArmorLevel(r.Tier)}; stamped {wo.ArmorLevel ?? 0})");
         }
 
-        // ── T11+ crafting gate, LAYER 1 ([[ZCCG]]) ──
+        // â”€â”€ T11+ crafting gate, LAYER 1 ([[ZCCG]]) â”€â”€
 
         private const string CraftUsage =
             "Usage: craft <material> <itemtype> auto|allow|deny | craft list | craft get | craft materials | "
@@ -3781,7 +3863,7 @@ namespace ACE.Server.Command.Handlers
                 sb.Append(r.Material).Append('~').Append(r.Class).Append('~').Append(r.Mode);
             }
 
-            // ── APPENDED 2026-08-25: layer 0, the blocked-component list ──
+            // â”€â”€ APPENDED 2026-08-25: layer 0, the blocked-component list â”€â”€
             // `blockcomponents` is the toggle, 0/1, exactly like `enabled`.
             // `components` is wcid~name pairs, ';' between records and '~' inside one - the same shape as
             // `mats=` and `rules=`. The name is a display convenience read from the world weenie cache and
@@ -3798,7 +3880,7 @@ namespace ACE.Server.Command.Handlers
                   .Append(CleanWire(ACE.Database.DatabaseManager.World.GetCachedWeenie(w)?.GetName() ?? ""));
             }
 
-            // ── APPENDED 2026-08-26: the layer-0 CANDIDATE catalog, for the per-component toggles ──
+            // â”€â”€ APPENDED 2026-08-26: the layer-0 CANDIDATE catalog, for the per-component toggles â”€â”€
             // `components=` above is what IS blocked. This is what COULD be, so the plugin can draw an
             // UNTICKED row - the store records only the blocked set, so without this there is nothing to
             // draw an allowed component from.
@@ -3887,7 +3969,7 @@ namespace ACE.Server.Command.Handlers
         private static string SqlStr(string s) => "'" + (s ?? "").Replace("\\", "\\\\").Replace("'", "''") + "'";
 
         /// <summary>`ladder migrate [here|&lt;player&gt;] [--dry]` - grade a player's pre-grade Zone Cantrip pieces
-        /// (plan §5): the stamped numbers become grades against the tier's live bands, the record is written,
+        /// (plan Â§5): the stamped numbers become grades against the tier's live bands, the record is written,
         /// identity stamped, biota saved, and the same rows land in a dated SQL file.</summary>
         private static void LadderMigrate(Session session, List<string> args, Action<string> Msg)
         {
@@ -4059,7 +4141,7 @@ namespace ACE.Server.Command.Handlers
 
         private static string CleanWire(string s) => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
 
-        /// <summary>The raw-SQL statements that write an appearance set into a weenie — shared by
+        /// <summary>The raw-SQL statements that write an appearance set into a weenie â€” shared by
         /// bakemob (bake onto the SAME wcid) and clonemob (bake onto a fresh clone). Numeric-only
         /// interpolation, except Name which is ASCII-sanitized at set time and quote-escaped here.
         /// A Setup swap clears the weenie's own overlay first (parity with the runtime applier).</summary>
@@ -4199,7 +4281,7 @@ namespace ACE.Server.Command.Handlers
             dt = DamageType.Undef;
             if (string.IsNullOrWhiteSpace(s)) return false;
             s = s.Trim();
-            // raw flag int (e.g. 16 = Fire) — the plugin combo sends these
+            // raw flag int (e.g. 16 = Fire) â€” the plugin combo sends these
             if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var iv))
                 dt = (DamageType)iv;
             else if (!Enum.TryParse(s, true, out dt))
@@ -4297,7 +4379,7 @@ namespace ACE.Server.Command.Handlers
         private static string SurveySafe(string s)
             => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('~', ' ').Replace('=', ' ');
 
-        // ── Quests tab ([[ZCQ]]) ──
+        // â”€â”€ Quests tab ([[ZCQ]]) â”€â”€
         private const double QuestPullCooldownSeconds = 60.0;
         private static readonly ConcurrentDictionary<Session, DateTime> _questPulls = new();
 
@@ -4395,7 +4477,7 @@ namespace ACE.Server.Command.Handlers
         /// <summary>One survey SUMMARY line per landblock:
         /// [[ZCS]]zone=x|lb=F559|gens=4|creatures=5|monsters=4|types=Drudge~3,Skeleton~1|g=wcid~name~count,...
         /// (types = distinct MONSTER CreatureTypes with distinct-wcid counts, most common first;
-        /// g = the top-level placed generators grouped by wcid — lets the plugin tint the map by generator).</summary>
+        /// g = the top-level placed generators grouped by wcid â€” lets the plugin tint the map by generator).</summary>
         private static string BuildSurveySummaryPayload(string zone, ZoneControlManager.SurveyRow row)
         {
             var monsters = row.Creatures.Where(c => c.IsMonster).ToList();
@@ -4470,7 +4552,7 @@ namespace ACE.Server.Command.Handlers
               .Append(A(PropertyAttribute.Focus)).Append(',')
               .Append(A(PropertyAttribute.Self));
 
-            // vitals (weenie InitLevel — the SQL-authored base): vt=health,stamina,mana
+            // vitals (weenie InitLevel â€” the SQL-authored base): vt=health,stamina,mana
             uint V(PropertyAttribute2nd a) => weenie.PropertiesAttribute2nd != null && weenie.PropertiesAttribute2nd.TryGetValue(a, out var pv) ? pv.InitLevel : 0;
             sb.Append("|vt=")
               .Append(V(PropertyAttribute2nd.MaxHealth)).Append(',')
@@ -4602,3 +4684,4 @@ namespace ACE.Server.Command.Handlers
         }
     }
 }
+

@@ -729,8 +729,15 @@ namespace ACE.Server.Command.Handlers
                     if (c.ProcSpellcraft > 0)
                         wo.ItemSpellcraft = c.ProcSpellcraft;
 
+                    // PER-SLOT caps since 2026-08-29 (prop 9061 = arc, 9064 = ring); the forge's one
+                    // procaugcap key stamps whichever slots it just forged.
                     if (c.ProcAugCap > 0)
-                        wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcAugCapPropId, c.ProcAugCap);
+                    {
+                        if (c.ProcArc)
+                            wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcAugCapPropId, c.ProcAugCap);
+                        if (c.ProcRing)
+                            wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRingAugCapPropId, c.ProcAugCap);
+                    }
                 }
                 // A plain bow takes its element from the ammo and a generic caster has none, so there is
                 // no element to match a spell to - the same reason they roll no rend.

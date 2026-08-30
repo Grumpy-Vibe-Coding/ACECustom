@@ -54,7 +54,10 @@ namespace ACE.Server.Entity
             // item augs have actually unlocked (replace semantics — launchers scale through the
             // mod, never a flat term); authored DamageMod is the fallback whenever the system is
             // off or the launcher is unstamped legacy.
-            var baseDamageMod = Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, wielder as Player, out var gradedMod)
+            // (zone lock: outside authored areas the graded launcher mod is suppressed - the
+            // authored DamageMod fallback IS the base-stats behaviour the lock lands on)
+            var baseDamageMod = !Managers.ZoneControl.ZoneControlManager.WeaponPowerSuppressed(weapon, wielder)
+                    && Managers.WeaponScaling.WeaponScalingCombat.TryGetLauncherDamageMod(weapon, wielder as Player, out var gradedMod)
                 ? gradedMod
                 : (float)(weapon.GetProperty(PropertyFloat.DamageMod) ?? 1.0f);
 

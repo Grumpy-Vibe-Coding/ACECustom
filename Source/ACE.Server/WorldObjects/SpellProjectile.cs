@@ -615,15 +615,15 @@ namespace ACE.Server.WorldObjects
             {
                 lifeMagicDamage = LifeProjectileDamage * Spell.DamageRatio;
 
-                // could life magic projectiles crit?
-                // if so, did they use the same 1.5x formula as war magic, instead of 2.0x?
+                // UNIFIED CRIT MODEL (owner 2026-08-29, "all 3 schools get the same treatment"):
+                // a crit deals CritX x the base - the old 0.5 coefficient that quietly halved
+                // Crushing Blow on every magic path is gone. mod is (CritX - 1), default 1.0,
+                // so a cardless crit = 2x, the same retail rule the melee path now follows.
                 if (criticalHit)
                 {
-                    // verify: CriticalMultiplier only applied to the additional crit damage,
-                    // whereas CD/CDR applied to the total damage (base damage + additional crit damage)
                     weaponCritDamageMod = GetWeaponCritDamageMod(weapon, sourceCreature, attackSkill, target);
 
-                    critDamageBonus = lifeMagicDamage * 0.5f * weaponCritDamageMod;
+                    critDamageBonus = lifeMagicDamage * weaponCritDamageMod;
                 }
 
                 if (sourceCreature != null && sourceCreature.EffectiveLifeAugCount >= 1)
@@ -655,7 +655,7 @@ namespace ACE.Server.WorldObjects
                         }
                         // crit bonus re-derived from the replaced base (stock bonus above used the weenie base)
                         if (zoneReplaced && criticalHit)
-                            critDamageBonus = lifeMagicDamage * 0.5f * weaponCritDamageMod;
+                            critDamageBonus = lifeMagicDamage * weaponCritDamageMod;   // unified: CritX x base
                     }
                 }
 
@@ -689,16 +689,14 @@ namespace ACE.Server.WorldObjects
                     // Starting in July, War Magic critical hits will instead add a multiple of the maximum damage of the spell.
                     // No more crits that do less damage than non-crits!
 
-                    if (isPVP) // PvP: 50% of the MIN damage added to normal damage roll
-                        critDamageBonus = Spell.MinDamage * 0.5f;
-                    else   // PvE: 50% of the MAX damage added to normal damage roll
-                        critDamageBonus = Spell.MaxDamage * 0.5f;
-
-                    // verify: CriticalMultiplier only applied to the additional crit damage,
-                    // whereas CD/CDR applied to the total damage (base damage + additional crit damage)
+                    // UNIFIED CRIT MODEL (owner 2026-08-29): PvE crit = CritX x the FULL composed
+                    // base (max roll + aug term + skill bonus) - computed AFTER the base is built,
+                    // in the unified block below, so procs / zone bases / augs all crit in full.
+                    // PvP keeps the retail halved-min rule, deliberately out of scope.
                     weaponCritDamageMod = GetWeaponCritDamageMod(weapon, sourceCreature, attackSkill, target);
 
-                    critDamageBonus *= weaponCritDamageMod;
+                    if (isPVP) // PvP: 50% of the MIN damage added to normal damage roll
+                        critDamageBonus = Spell.MinDamage * 0.5f * weaponCritDamageMod;
                 }
 
                 /* War Magic skill-based damage bonus
@@ -715,7 +713,11 @@ namespace ACE.Server.WorldObjects
                         skillBonus = Spell.MinDamage * percentageBonus;
                     }
                 }
-                baseDamage = ThreadSafeRandom.Next(Spell.MinDamage, Spell.MaxDamage);
+                // unified crit: a PvE crit uses the MAX roll (retail melee's own rule), so the
+                // CritX multiple below lands on the spell's ceiling, not a random roll
+                baseDamage = criticalHit && !isPVP
+                    ? Spell.MaxDamage
+                    : ThreadSafeRandom.Next(Spell.MinDamage, Spell.MaxDamage);
 
                 // Zone Control "Cast on Strike": an authored B REPLACES THE ROLLED SPELL BASE, and
                 // nothing else. The War/Void aug term below still applies on top of it - owner
@@ -792,9 +794,7 @@ namespace ACE.Server.WorldObjects
                             var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
                             baseDamage = (long)Math.Round(baseDamage * (1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f)));
                         }
-                        // crit bonus re-derived from the replaced base (stock PvE bonus above used Spell.MaxDamage)
-                        if (zoneReplaced && criticalHit)
-                            critDamageBonus = (float)(baseDamage * 0.5f * weaponCritDamageMod);
+                        // (crit handled by the unified block below, which reads the replaced base)
                     }
                 }
 
@@ -832,13 +832,15 @@ namespace ACE.Server.WorldObjects
                     }
                 }
 
-                // Cast on Strike: re-derive the crit bonus from the REPLACED base, same reasoning as the
-                // ring path and as the zone monster block below - stock computes it from Spell.MaxDamage
-                // (84 on these spells), so a crit added ~42 to a ~9,440 base and procs could not crit in
-                // any meaningful way. Crushing Blow was dead for the same reason. After the aug term, so
-                // the crit scales with the whole base the hit actually uses.
-                if (isZcProc && criticalHit)
-                    critDamageBonus = (float)(baseDamage * 0.5f * weaponCritDamageMod);
+                // ══ UNIFIED CRIT (owner 2026-08-29, "all 3 schools get the same treatment"): the
+                // PvE crit bonus is computed HERE, after the base is fully composed (max roll or
+                // proc B or zone base, plus the aug term, post-variance), so the crit total is
+                // exactly CritX x the base the hit actually uses - on hand-casts, procs and mob
+                // casts alike. mod = CritX - 1 (default 1.0 = the retail 2x rule); the Crushing
+                // Blow band bounds it. This replaces the per-site 0.5f re-derives that quietly
+                // halved crush on every magic path. PvP keeps its retail bonus from above.
+                if (criticalHit && !isPVP)
+                    critDamageBonus = (float)((baseDamage + skillBonus) * weaponCritDamageMod);
 
                 finalDamage = baseDamage + critDamageBonus + skillBonus;
 

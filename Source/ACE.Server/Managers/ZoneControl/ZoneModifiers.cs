@@ -289,20 +289,21 @@ namespace ACE.Server.Managers.ZoneControl
 
         public static bool TryGet(int key, out Def def) => Catalog.TryGetValue(key, out def);
 
+        /// <summary>Every catalog def, for the per-line roll sweep (owner 2026-08-29: each LINE rolls
+        /// its own anchored chance; the pool / count / weight machinery is retired).</summary>
+        public static IEnumerable<Def> AllDefs => Catalog.Values;
+
+        /// <summary>The per-line chance stat for a catalog key ("modifier_chance_43"); its "_t25"
+        /// twin is the T25 anchor. Registered explicitly in ZoneStat.All - a NEW catalog line needs
+        /// its pair added there too, or the wire will not carry it.</summary>
+        public static string LineChanceStat(int key) => "modifier_chance_" + key;
+
         /// <summary>Tier scale of the anchored linear ladder: 1.0 at T11, 2.0 at T25 (same f as the core anchors).</summary>
         public static double TierScale(int tier) => 1.0 + (Math.Clamp(tier, 11, 25) - 11) / 14.0;
 
-        /// <summary>Line-count fallback when no Default authors cantrip_lines_min/max/chance_N for the tier
-        /// (owner 2026-08-23, option (a)): linear T11 -> T25 anchored on the T11 Default as authored that day
-        /// (min 1 -> 4, max 4 -> 7, chance1 40 -> 30 pct, chance2 10, chance3 1). An authored stat still wins.</summary>
-        public static (int Min, int Max, double Chance1, double Chance2, double Chance3) LinesFallback(int tier)
-        {
-            var t = (Math.Clamp(tier, 11, 25) - 11) / 14.0;   // 0 at T11 .. 1 at T25
-            var min = (int)Math.Round(1 + 3 * t);
-            var max = (int)Math.Round(4 + 3 * t);
-            var c1 = 0.40 - 0.10 * t;
-            return (min, Math.Max(min, max), c1, 0.10, 0.01);
-        }
+        // LinesFallback REMOVED 2026-08-29 with the line-count ladder (one-row-per-Modifier design):
+        // every line rolls its own anchored modifier_chance_<key> now, so there is no per-piece
+        // count to fall back to.
 
         /// <summary>
         /// The HARDCODED band at a tier - what every fallback uses when no Default / zone band is authored
@@ -390,9 +391,12 @@ namespace ACE.Server.Managers.ZoneControl
             // floor exactly TIES the best craftable weapon, and every roll above it beats one.
             // The old 0.58 was chosen to clear the Critical Strike imbue's flat 0.50 - that imbue is
             // suppressed for players now, so it is no longer the thing to beat.
-            // Max and both T25 anchors are PROVISIONAL - owner is setting the T11 range next, and
-            // the T25 pair below is still the old imbue-era number. Do not read them as designed.
-            Min = 0.33, Max = 0.33, Min25 = 0.78, Max25 = 0.88, Lo = 0.0, Hi = 1.0,
+            // DECIDED 2026-08-29 (owner, power-level session): the whole weapon ladder is budgeted
+            // at +20% player power per tier (BiS-over-craft ~13x at T25, split evenly across the
+            // three multiplying cards). Bite's share is shaped so crits stay an EVENT: 0.60 at the
+            // T25 chase, deliberately NOT the old imbue-era 0.88 near-every-hit zone. T11 max 0.40
+            // gives an S-grade roll a visible edge over the 0.33 craft tie.
+            Min = 0.33, Max = 0.40, Min25 = 0.50, Max25 = 0.60, Lo = 0.0, Hi = 1.0,
         };
 
         // Armor Rend -> prop 9057, the fraction of the target's armour ignored. Plugin box is
@@ -422,7 +426,11 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand WeaponRendPower = new WeaponBand
         {
             Name = "Rend Power", MinStat = ZoneScaling.ZoneStat.WeaponRendPowerMin, MaxStat = ZoneScaling.ZoneStat.WeaponRendPowerMax,
-            Min = 1.50, Max = 2.13, Min25 = 2.75, Max25 = 4.00, Lo = 1.5, Hi = 5.0,
+            // T25 RAISED 2026-08-29 (owner, power-level session, +20%/tier budget): T25 3.75-5.00.
+            // In damage terms: wire 5.00 -> rendingMod 6.0 = 2.4x the craft's 2.5x contribution,
+            // sitting exactly AT the Hi clamp - rend's even third of the ~13x BiS-over-craft budget.
+            // Rides the Rending merge: every card-stamped rend rolls this band at the imbue chance.
+            Min = 1.50, Max = 2.13, Min25 = 3.75, Max25 = 5.00, Lo = 1.5, Hi = 5.0,
         };
 
         // Slayer -> SlayerDamageBonus, a RAW damage multiplier vs the killed creature type. The
@@ -439,13 +447,14 @@ namespace ACE.Server.Managers.ZoneControl
         // with the same weapon, so a matched rend cancels out of it and 440 holds whatever the vuln
         // cap becomes (see the vuln/rend MAX ruling, Creature_Properties.cs:167).
         //
-        // Max 660 and BOTH T25 anchors are PROVISIONAL - owner 2026-08-27, "660 max (will change for
-        // sure)". Do not read them as designed. Augs are NOT folded in yet: the owner has not ruled
-        // flat-vs-pct, and when they do the form is "440 + X pct", so this band stays the anchor.
+        // RE-RULED 2026-08-30 (owner): base B is a token "one damage to two damage" - flat 1-2 at
+        // EVERY tier, no T25 growth. The proc's real damage comes from the WIELDER's War/Void augs,
+        // which the engine adds flat on top of B, so tier scaling rides the aug ladder, not this
+        // band. This supersedes the 440-660 provisional and the "440 + X pct" form entirely.
         public static readonly WeaponBand WeaponProcArcDamage = new WeaponBand
         {
             Name = "Cast on Strike (Arc)", MinStat = ZoneScaling.ZoneStat.WeaponProcArcDmgMin, MaxStat = ZoneScaling.ZoneStat.WeaponProcArcDmgMax,
-            Min = 440, Max = 660, Min25 = 1800, Max25 = 2600, Lo = 1, Hi = 100000,
+            Min = 1, Max = 2, Min25 = 1, Max25 = 2, Lo = 1, Hi = 100000,
         };
 
         /// <summary>The ring's own band. Seeded identical to the arc's so the two start level and the
@@ -454,7 +463,7 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand WeaponProcRingDamage = new WeaponBand
         {
             Name = "Cast on Strike (Ring)", MinStat = ZoneScaling.ZoneStat.WeaponProcRingDmgMin, MaxStat = ZoneScaling.ZoneStat.WeaponProcRingDmgMax,
-            Min = 440, Max = 660, Min25 = 1800, Max25 = 2600, Lo = 1, Hi = 100000,
+            Min = 1, Max = 2, Min25 = 1, Max25 = 2, Lo = 1, Hi = 100000,
         };
 
         public static readonly WeaponBand WeaponSlayer = new WeaponBand
@@ -467,8 +476,9 @@ namespace ACE.Server.Managers.ZoneControl
             // fixed weapons you WIELD rather than something you apply to a drop, so they are not the bar.
             // NOTE Lo below is 1.5, which sits BENEATH the free craftable value - it was never a
             // meaningful floor. The engine's own no-match fallback is 1.0, not 1.5.
-            // Max and the T25 pair are PROVISIONAL, same as the other bands.
-            Min = 1.75, Max = 1.75, Min25 = 2.40, Max25 = 3.00, Lo = 1.5, Hi = 10.0,
+            // DECIDED 2026-08-29 (owner, +20%/tier budget): T11 max 2.10 = +20% over the craft tie
+            // for an S-grade; T25 3.00-4.10 carries slayer's even third of the ~13x BiS budget.
+            Min = 1.75, Max = 2.10, Min25 = 3.00, Max25 = 4.10, Lo = 1.5, Hi = 10.0,
         };
 
         // Shield Cleaving -> IgnoreShield, the fraction of the defender's shield AL ignored. Plugin
@@ -477,7 +487,10 @@ namespace ACE.Server.Managers.ZoneControl
         public static readonly WeaponBand WeaponShieldCleave = new WeaponBand
         {
             Name = "Shield Cleaving", MinStat = ZoneScaling.ZoneStat.WeaponShieldCleaveMin, MaxStat = ZoneScaling.ZoneStat.WeaponShieldCleaveMax,
-            Min = 0.60, Max = 0.75, Min25 = 0.90, Max25 = 1.00, Lo = 0.0, Hi = 1.0,
+            // Floor re-ruled 2026-08-30 (owner: "fifty at T11 and a hundred percent at T25") -
+            // 0.60 was the tie-the-vanilla-imbue floor; 50 now sits UNDER the best craftable
+            // armor-rend-style value on purpose. T25 max 1.00 = total shield bypass, unchanged.
+            Min = 0.50, Max = 0.75, Min25 = 0.90, Max25 = 1.00, Lo = 0.0, Hi = 1.0,
         };
 
         // Crushing Blow -> PropertyFloat.CriticalMultiplier. The band is in DISPLAY space, i.e. the
@@ -502,8 +515,13 @@ namespace ACE.Server.Managers.ZoneControl
             // (Crimson Night Gem Setting reaches 3.0 stored / 4.0x, but it is retail quest content
             // that applies ONLY to a Silifi of Crimson Stars - not a general competitor.)
             // The old 7.50 cleared the Crippling Blow imbue's 7.0x; that imbue is suppressed for
-            // players now. Max and the T25 pair are PROVISIONAL, same as Biting Strike above.
-            Min = 3.25, Max = 3.25, Min25 = 9.50, Max25 = 10.00, Lo = 2.0, Hi = 10.0,
+            // players now.
+            // DECIDED 2026-08-29 (owner, +20%/tier budget): T11 3.25-4.00 (S-grade beats the bag),
+            // T25 5.50-6.80 - paired with Bite's 0.50-0.60 the crit pair carries its even third of
+            // the ~13x BiS budget without the 9.5-10x every-hit-crits meta. Under the unified crit
+            // model (same night) this band IS the crit ratio's bound on all three schools - the old
+            // player_crit_damage_cap clamp was deleted with it.
+            Min = 3.25, Max = 4.00, Min25 = 5.50, Max25 = 6.80, Lo = 2.0, Hi = 10.0,
         };
 
         /// <summary>Every weapon band, for help text / catalog printouts. Order is display order.</summary>

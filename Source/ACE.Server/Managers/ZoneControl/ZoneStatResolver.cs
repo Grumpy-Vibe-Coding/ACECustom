@@ -301,7 +301,7 @@ namespace ACE.Server.Managers.ZoneControl
                 return ZoneModifiers.WeaponBandAt(b, 11);
             if (!statsFetched)
                 stats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
-            var pin = PinBand(stats, b);
+            var pin = PinBand(stats, b, tier);
             if (pin.HasValue)
                 return Clamp(pin.Value.Min, pin.Value.Max, b);
             return ZoneModifiers.WeaponBandAt(b, tier);
@@ -321,31 +321,50 @@ namespace ACE.Server.Managers.ZoneControl
             var b = ws.Band;
             if (p != null && (p.Has(b.MinStat) || p.Has(b.MaxStat)))
             {
-                // The historical RollRange semantics, preserved EXACTLY: one box authored = that exact
-                // value (min == max), both authored = the range, reversed bounds swap. If a half-authored
-                // pair fell through to the ladder instead, every zone that sets one box would silently
-                // start producing a range and its tuning would shift under it.
-                var lo = p.Has(b.MinStat) ? p.Get(b.MinStat) : p.Get(b.MaxStat);
-                var hi = p.Has(b.MaxStat) ? p.Get(b.MaxStat) : lo;
+                // The historical RollRange semantics, preserved EXACTLY per anchor: one box authored =
+                // that exact value (min == max), both authored = the range, reversed bounds swap.
+                // ANCHORED since 2026-08-29: the pair above is the T11 anchor; a "_t25" pair beside it
+                // is the T25 anchor and tiers between sit on the line. No _t25 pair = FLAT at every
+                // tier, which is byte-identical to the old pin behaviour.
+                var lo11 = p.Has(b.MinStat) ? p.Get(b.MinStat) : p.Get(b.MaxStat);
+                var hi11 = p.Has(b.MaxStat) ? p.Get(b.MaxStat) : lo11;
+                var (lo, hi) = AnchorLerp(lo11, hi11,
+                    p.Has(b.MinStat + "_t25") ? p.Get(b.MinStat + "_t25") : (double?)null,
+                    p.Has(b.MaxStat + "_t25") ? p.Get(b.MaxStat + "_t25") : (double?)null, tier);
                 return Clamp(lo, hi, b);
             }
             return ZoneModifiers.WeaponBandAt(b, tier);
         }
 
+        /// <summary>Lerp an authored T11 pair toward its optional T25 anchor pair. One-box rule per
+        /// anchor: a lone _min_t25 or _max_t25 is an exact pair at T25. No T25 at all = flat.</summary>
+        private static (double Lo, double Hi) AnchorLerp(double lo11, double hi11, double? lo25, double? hi25, int tier)
+        {
+            if (lo25 == null && hi25 == null)
+                return (lo11, hi11);
+            var l25 = lo25 ?? hi25.Value;
+            var h25 = hi25 ?? l25;
+            var t = Math.Clamp((tier - 11) / 14.0, 0.0, 1.0);
+            return (lo11 + (l25 - lo11) * t, hi11 + (h25 - hi11) * t);
+        }
+
         /// <summary>The authored pin on a Stats dictionary, or null when neither box is set. Same
-        /// one-box rule as <see cref="WeaponDropBand"/>; StatCurve.Evaluate(1) is how every other
-        /// Default-layer read in this file spells "the authored number".</summary>
-        private static (double Min, double Max)? PinBand(Dictionary<string, ZoneScaling.StatCurve> stats, ZoneModifiers.WeaponBand b)
+        /// one-box rule as <see cref="WeaponDropBand"/>, and since 2026-08-29 the same T11/T25
+        /// anchoring; StatCurve.Evaluate(1) is how every other Default-layer read in this file spells
+        /// "the authored number".</summary>
+        private static (double Min, double Max)? PinBand(Dictionary<string, ZoneScaling.StatCurve> stats, ZoneModifiers.WeaponBand b, int tier)
         {
             if (stats == null || stats.Count == 0)
                 return null;
-            var hasMin = stats.TryGetValue(b.MinStat, out var cMin) && cMin != null;
-            var hasMax = stats.TryGetValue(b.MaxStat, out var cMax) && cMax != null;
-            if (!hasMin && !hasMax)
+            double? Read(string key)
+                => stats.TryGetValue(key, out var c) && c != null ? c.Evaluate(1) : (double?)null;
+            var min11 = Read(b.MinStat);
+            var max11 = Read(b.MaxStat);
+            if (min11 == null && max11 == null)
                 return null;
-            var lo = hasMin ? cMin.Evaluate(1) : cMax.Evaluate(1);
-            var hi = hasMax ? cMax.Evaluate(1) : lo;
-            return (lo, hi);
+            var lo11 = min11 ?? max11.Value;
+            var hi11 = max11 ?? lo11;
+            return AnchorLerp(lo11, hi11, Read(b.MinStat + "_t25"), Read(b.MaxStat + "_t25"), tier);
         }
 
         /// <summary>Order + clamp a weapon band to the card's own Lo/Hi. Those bounds are copied from

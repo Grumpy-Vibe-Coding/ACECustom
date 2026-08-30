@@ -369,10 +369,9 @@ namespace ACE.Server.WorldObjects
         /// reason, which a silent read-site guard cannot - but only this expresses NEVER.
         ///
         /// NOTE this does not touch the OTHER crit contributors: the weapon aug-scaling crit term, the
-        /// luminance-aug crit term, gear crit rating, or player_crit_damage_cap. On melee the cap (3.0)
-        /// is what actually binds - it binds at CDR 50 with zero crit sources - so this ruling changes
-        /// nothing about melee crit DAMAGE. It bites on crit CHANCE, and on casters, whose crit damage
-        /// has no cap read site at all.
+        /// luminance-aug crit term or gear crit rating. (A historical note here about the
+        /// player_crit_damage_cap clamp binding on melee is obsolete - that clamp was deleted
+        /// 2026-08-29 with the unified crit model; the Crushing Blow band bounds the ratio now.)
         ///
         /// Flip this const to restore retail behaviour; it is the single switch.
         /// </summary>
@@ -382,6 +381,13 @@ namespace ACE.Server.WorldObjects
         public static bool CritImbuesSuppressed(Creature wielder)
             => CritImbuesSuppressedForPlayers && wielder is Player;
 
+        /// <summary>The weapon zone lock (owner 2026-08-30): true when this ZC weapon's custom
+        /// power is suppressed for this swing - toggle on, player wielder, ZcTier 11+ item,
+        /// outside every enabled authored area. One name so the card read sites below stay
+        /// one-line gates; the rule itself lives in ZoneControlManager.WeaponPowerSuppressed.</summary>
+        public static bool ZcPowerSuppressed(WorldObject weapon, Creature wielder)
+            => ACE.Server.Managers.ZoneControl.ZoneControlManager.WeaponPowerSuppressed(weapon, wielder);
+
         private const float defaultPhysicalCritFrequency = 0.1f;    // 10% base chance
 
         /// <summary>
@@ -389,7 +395,10 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public static float GetWeaponCriticalChance(WorldObject weapon, Creature wielder, CreatureSkill skill, Creature target)
         {
-            var critRate = (float)(weapon?.CriticalFrequency ?? defaultPhysicalCritFrequency);
+            // zone lock: outside authored areas a ZC weapon's Biting Strike stamp reads as absent
+            var critRate = ZcPowerSuppressed(weapon, wielder)
+                ? defaultPhysicalCritFrequency
+                : (float)(weapon?.CriticalFrequency ?? defaultPhysicalCritFrequency);
 
             if (weapon != null && weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike)
                 && !CritImbuesSuppressed(wielder))   // owner 2026-08-25: Biting Strike is the only crit-chance source on a player weapon
@@ -446,7 +455,11 @@ namespace ACE.Server.WorldObjects
         // what this was actually increased to for base, was never stated directly in the dev notes
         // speculation is that it was 5%, to align with the minimum that CS magic scales from
 
-        private const float defaultMagicCritFrequency = 0.05f;
+        // UNIFIED 2026-08-29 (owner, "all 3 should get the same crit treatment"): magic's base crit
+        // chance comes up from retail's speculative 0.05 to match melee/missile's 0.10, so Biting
+        // Strike means the same thing on every school. The retail note this shadowed was itself
+        // speculation ("what this was actually increased to ... was never stated").
+        private const float defaultMagicCritFrequency = 0.10f;
 
         /// <summary>
         /// Returns the critical chance for the caster weapon
@@ -466,7 +479,10 @@ namespace ACE.Server.WorldObjects
                 return wandlessRate * Creature.GetNegativeRatingMod(target.GetCritResistRating());
             }
 
-            var critRate = (float)(weapon.GetProperty(PropertyFloat.CriticalFrequency) ?? defaultMagicCritFrequency);
+            // zone lock: outside authored areas a ZC weapon's Biting Strike stamp reads as absent
+            var critRate = ZcPowerSuppressed(weapon, wielder)
+                ? defaultMagicCritFrequency
+                : (float)(weapon.GetProperty(PropertyFloat.CriticalFrequency) ?? defaultMagicCritFrequency);
 
             if (weapon.HasImbuedEffect(ImbuedEffectType.CriticalStrike)
                 && !CritImbuesSuppressed(wielder))   // same ruling on the magic path
@@ -499,7 +515,13 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public static float GetWeaponCritDamageMod(WorldObject weapon, Creature wielder, CreatureSkill skill, Creature target)
         {
-            var critDamageMod = (float)(weapon?.GetProperty(PropertyFloat.CriticalMultiplier) ?? defaultCritDamageMultiplier);
+            // zone lock: outside authored areas a ZC weapon's Crushing Blow stamp AND its
+            // aug-scaling crit term both read as absent
+            var zcSuppressed = ZcPowerSuppressed(weapon, wielder);
+
+            var critDamageMod = zcSuppressed
+                ? defaultCritDamageMultiplier
+                : (float)(weapon?.GetProperty(PropertyFloat.CriticalMultiplier) ?? defaultCritDamageMultiplier);
 
             if (weapon != null && weapon.HasImbuedEffect(ImbuedEffectType.CripplingBlow)
                 && !CritImbuesSuppressed(wielder))   // owner 2026-08-25: Crushing Blow is the only crit-damage source on a player weapon
@@ -512,8 +534,9 @@ namespace ACE.Server.WorldObjects
             // Weapon aug-scaling crit term (T11 weapon relevance): kc(quality) x per-aug crit
             // modifier x min(matching combat augs, tier cap) — the aug-pegged floor. Math.Max so
             // a Crushing Blow card / big CriticalMultiplier stays the jackpot above it (§7.10).
-            critDamageMod = Math.Max(critDamageMod,
-                ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetCritDamageBonus(weapon, wielder));
+            if (!zcSuppressed)
+                critDamageMod = Math.Max(critDamageMod,
+                    ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.GetCritDamageBonus(weapon, wielder));
 
             // Zone Control: authored crit_damage_rating IS the final multiplier; engine computes 1 + mod,
             // so store value - 1 (e.g. authored 4 -> crits deal exactly 4x)
@@ -556,8 +579,11 @@ namespace ACE.Server.WorldObjects
             // Replace semantics: the STOCK ADDITIVE path is the fallback whenever the system is
             // off or the caster is unstamped legacy — bit-for-bit pre-system behavior, so the
             // kill switch has a clean prediction.
+            // zone lock: outside authored areas the graded caster mod is suppressed - the stock
+            // additive fallback below IS the base-stats behaviour the lock lands on
             float modifier;
-            if (ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(weapon, wielder as Player, out var gradedMod))
+            if (!ZcPowerSuppressed(weapon, wielder)
+                && ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(weapon, wielder as Player, out var gradedMod))
                 modifier = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.ComposeCasterModifier(
                     gradedMod, enchantments, ACE.Server.Managers.WeaponScaling.WeaponScalingManager.Current.CasterAuraRescale);
             else
@@ -602,6 +628,10 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public static float GetWeaponCreatureSlayerModifier(WorldObject weapon, Creature wielder, Creature target)
         {
+            // zone lock: outside authored areas a ZC weapon's Slayer stamp reads as absent
+            if (ZcPowerSuppressed(weapon, wielder))
+                return defaultModifier;
+
             if (weapon != null && weapon.SlayerCreatureType != null && weapon.SlayerDamageBonus != null &&
                 target != null && weapon.SlayerCreatureType == target.CreatureType)
             {
@@ -683,6 +713,11 @@ namespace ACE.Server.WorldObjects
                 // For CombatPets without weapons, check if rending was applied to the creature itself
                 hasRending = true;
             }
+
+            // zone lock: outside authored areas a ZC weapon's Rend (and its rolled power) reads
+            // as absent - suppressed here, after eligibility, so retail/pet rends stay untouched
+            if (hasRending && ZcPowerSuppressed(weapon, wielder))
+                hasRending = false;
 
             if (hasRending && skill != null)
             {
@@ -1020,7 +1055,11 @@ namespace ACE.Server.WorldObjects
         public float GetIgnoreShieldMod(WorldObject weapon)
         {
             var creatureMod = IgnoreShield ?? 0.0f;
-            var weaponMod = weapon?.IgnoreShield ?? 0.0f;
+            // zone lock: outside authored areas a ZC weapon's Shield Cleaving stamp reads as
+            // absent (the attacker's own creature-side IgnoreShield is never gated)
+            var weaponMod = ZcPowerSuppressed(weapon, this as Creature)
+                ? 0.0
+                : weapon?.IgnoreShield ?? 0.0f;
 
             return 1.0f - (float)Math.Max(creatureMod, weaponMod);
         }
@@ -1279,6 +1318,12 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void TryProcItemWithChanceMod(WorldObject attacker, Creature target, bool selfTarget, float chanceMultiplier)
         {
+            // zone lock: outside authored areas a ZC weapon's Cast on Strike slots (arc AND ring)
+            // never fire. `this` is the proccing item, so cloaks/aetheria/player Ring Glyph
+            // crafts are untouched - they never carry ZcTier.
+            if (ZcPowerSuppressed(this, attacker as Creature))
+                return;
+
             // Slot 1 - the arc, and every pre-existing proc on the shard (cloaks, aetheria, the ~11,700
             // player Ring Glyph crafts). Aetheria's own rate curve applies here and only here.
             if (ProcSpell != null)

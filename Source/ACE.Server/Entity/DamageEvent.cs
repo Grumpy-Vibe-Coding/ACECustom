@@ -335,7 +335,11 @@ namespace ACE.Server.Entity
             // switch is off / weapon unstamped / attacker not a player.
             if (playerAttacker != null)
             {
-                WeaponScalingFlatBonus = Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(Weapon, playerAttacker);
+                // zone lock: outside authored areas the aug-scaling flat term is 0 (and Scheme C
+                // variance below rides it, so both vanish together)
+                WeaponScalingFlatBonus = Managers.ZoneControl.ZoneControlManager.WeaponPowerSuppressed(Weapon, playerAttacker)
+                    ? 0f
+                    : Managers.WeaponScaling.WeaponScalingCombat.GetFlatBonus(Weapon, playerAttacker);
 
                 // Scheme C (2026-08-03): when the weapon has an authored family variance, the
                 // WHOLE envelope (weenie base + aug term) rolls down from max by the quality-
@@ -414,27 +418,29 @@ namespace ACE.Server.Entity
                         luminanceAugmentBonus = cachedLuminanceAugmentCount.Value * luminanceAugmentCritDamageMultiplier;
                     }
 
-                    // Update the CriticalDamageMod to include luminance augment bonus
+                    // ══ UNIFIED CRIT MODEL (owner 2026-08-29, "all 3 schools get the same crit
+                    // treatment"): a critical hit deals exactly CritX x A MAX NORMAL HIT, where the
+                    // max normal hit includes EVERY flat (weapon max, lum-aug flat, weapon-scaling
+                    // term) under the normal rating chain, and CritX = the Crushing Blow multiplier
+                    // (default 2.0 = the retail "twice the maximum damage" rule) plus the lum-aug
+                    // crit term. Crit Damage RATING stacks ON TOP (owner ruling); the defender's
+                    // Crit Damage Resist mitigates afterwards, unchanged.
+                    //
+                    // This REPLACES the 2026-08-01 composition where the lum-aug flat was crit-blind
+                    // and a launcher's multiplied k-slice crit in full - the asymmetry that made bow
+                    // crits land ~7x a normal hit and forced the player_crit_damage_cap clamp. The
+                    // clamp is RETIRED with it: CritX IS the ratio, the Crushing Blow band is the cap.
                     CriticalDamageMod = 1.0f + WorldObject.GetWeaponCritDamageMod(Weapon, attacker, attackSkill, defender) + luminanceAugmentBonus;
 
-                    // NEW: Apply enrage multiplier if attacker is a mob and enraged
+                    // Apply enrage multiplier if attacker is a mob and enraged
                     if (attacker.IsEnraged && !(attacker is Player))
-                    {
                         CriticalDamageMod *= attacker.EnrageDamageMultiplier ?? 1.0f;
-                        //Console.WriteLine($"[DEBUG] CriticalDamageMod After Mob Attacker Enrage Multiplier: {CriticalDamageMod}");
-                    }
 
-                    // Calculate damage before mitigation. Crit base = the weapon's max PLUS the
-                    // weapon-scaling term (owner 2026-08-01 "option 3": the WEAPON's damage crits
-                    // in full — for launchers the graded-mod slice already lives in MaxDamage and
-                    // the term is 0). The luminance aug flat stays crit-blind exactly as it always
-                    // has, so the historic aug economy is untouched.
-                    DamageBeforeMitigation = (BaseDamageMod.MaxDamage + WeaponScalingFlatBonus) * AttributeMod * PowerMod * SlayerMod * DamageRatingMod * CriticalDamageMod;
-
-                    // Cap reference — what a MAX normal hit (ALL flats included) deals under the
-                    // same non-crit rating chain; captured before the crit rating rebuild below.
+                    // the full non-crit ceiling, ALL flats included, normal rating chain
                     var maxNormalHit = (BaseDamageMod.MaxDamage + DebugLuminanceFlatDamageBonus + WeaponScalingFlatBonus)
                                        * AttributeMod * PowerMod * SlayerMod * DamageRatingMod;
+
+                    DamageBeforeMitigation = maxNormalHit * CriticalDamageMod;
 
                     CriticalDamageRatingMod = Creature.GetPositiveRatingMod(attacker.GetCritDamageRating());
 
@@ -445,20 +451,19 @@ namespace ACE.Server.Entity
                     if (pkBattle)
                         DamageRatingMod = Creature.AdditiveCombine(DamageRatingMod, PkDamageMod);
 
-                    DamageBeforeMitigation *= Creature.AdditiveCombine(CriticalDamageRatingMod, 1.0f); // Apply only crit bonus
+                    DamageBeforeMitigation *= Creature.AdditiveCombine(CriticalDamageRatingMod, 1.0f); // Crit Damage Rating ON TOP
 
-                    // PLAYER crit cap (owner 2026-08-01: bows' multiplied slice made their crits
-                    // land ~7x a normal hit): total crit damage clamps to N x a max normal hit.
-                    // 0 = uncapped. Mob crits stay governed by the zone crit system, not this.
-                    var critCap = ServerConfig.player_crit_damage_cap.Value;
-                    if (playerAttacker != null && critCap > 0 && DamageBeforeMitigation > critCap * maxNormalHit)
-                        DamageBeforeMitigation = (float)(critCap * maxNormalHit);
+                    // player_crit_damage_cap RETIRED here 2026-08-29 (owner): under the unified
+                    // model the Crushing Blow band bounds the ratio by construction, so the clamp
+                    // that contained the old bow inflation has nothing left to contain.
                 }
             }
 
             // armor rending and cleaving
+            // (zone lock: outside authored areas a ZC weapon's Armor Rend stamp reads as absent)
             var armorRendingMod = 1.0f;
-            if (Weapon != null && Weapon.HasImbuedEffect(ImbuedEffectType.ArmorRending))
+            if (Weapon != null && Weapon.HasImbuedEffect(ImbuedEffectType.ArmorRending)
+                && !Managers.ZoneControl.ZoneControlManager.WeaponPowerSuppressed(Weapon, attacker))
             {
                 armorRendingMod = WorldObject.GetArmorRendingMod(attackSkill);
 

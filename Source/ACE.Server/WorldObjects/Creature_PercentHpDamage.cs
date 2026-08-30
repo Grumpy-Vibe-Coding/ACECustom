@@ -132,9 +132,13 @@ namespace ACE.Server.WorldObjects
             if (attacker == null || defender == null)
                 return 1.0;
 
-            // ZONE DEFAULT profile, not the per-creature winner: a per-WCID override REPLACES the whole
-            // default profile, and the curves are zone-level policy that must still govern override mobs.
-            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveZoneDefaultForCreature(attacker);
+            // PER-CREATURE merged profile since 2026-08-29 (release audit blocker 4). This read used
+            // the zone-Default resolve on the stale theory that "a per-WCID override REPLACES the
+            // whole default profile" - the merge has been PER-STAT since 2026-07-30, so an override
+            // mob inherits the zone's curves unless it authors its own, and authoring relief_* on a
+            // --wcid bucket (a boss that respects player DR less, say) now actually works instead of
+            // being silently ignored while the sim and the display both claimed it did.
+            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
 
             var augRelief = GetAxisRelief(zp, AugPointKeys, defender.LuminanceAugmentLifeCount ?? 0,
                 ReliefAnchor(zp, ACE.Server.Managers.ZoneScaling.ZoneStat.ReliefAugStart, ServerConfig.v11_relief_aug_start.Value),
@@ -161,8 +165,8 @@ namespace ACE.Server.WorldObjects
             if (attacker == null || defender == null)
                 return 1.0;
 
-            // zone default profile — same reasoning as GetV11ReliefMultiplier
-            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveZoneDefaultForCreature(attacker);
+            // per-creature merged profile — same 2026-08-29 fix as GetV11ReliefMultiplier
+            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
 
             var relief = GetAxisRelief(zp, CritDrPointKeys, defender.GetCritDamageResistRating(),
                 ReliefAnchor(zp, ACE.Server.Managers.ZoneScaling.ZoneStat.ReliefCritDrStart, ServerConfig.v11_relief_critdr_start.Value),

@@ -133,7 +133,7 @@ namespace ACE.Server.Network.Structure
             // Owner 2026-08-22: Zone Cantrip lines belong in the Property Details section, not
             // adrift in the description block. Runs here so downstream LongDesc edits see the same
             // shape they always have (a block already pinned to the top).
-            PromoteZoneModifierLines(zcResolved);
+            PromoteZoneModifierLines(zcResolved, wo, examiner);
 
             // TODO: Resolve this issue a better way?
             // Because of the way ACE handles default base values in recipe system (or rather the lack thereof)
@@ -966,7 +966,7 @@ namespace ACE.Server.Network.Structure
         /// the bullets come from the record (record order, specials and Armor Level included, the core
         /// four excluded - they are ratings, not cantrip lines) plus any baked Reinforced text line
         /// (earned + frozen, never in the record). The baked "Zone Cantrip:" text is stripped either way.</param>
-        private void PromoteZoneModifierLines(ZoneStatResolver.Resolved resolved = null)
+        private void PromoteZoneModifierLines(ZoneStatResolver.Resolved resolved = null, WorldObject wo = null, Player examiner = null)
         {
             if (!PropertiesString.TryGetValue(PropertyString.LongDesc, out var ld) || string.IsNullOrEmpty(ld))
                 return;
@@ -1006,6 +1006,14 @@ namespace ACE.Server.Network.Structure
 
             if (cantrips.Count == 0)
                 return;
+
+            // Armor zone lock (owner 2026-08-30, wording approved): same rule as the weapon
+            // panel - the lines keep showing full power (items are compared in town), and this
+            // pinned line reconciles that with the dormant contribution while the examiner
+            // stands outside every authored area.
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.IsZcGear(wo)
+                && ACE.Server.Managers.ZoneControl.ZoneControlManager.WornPowerSuppressed(examiner))
+                cantrips.Insert(0, ACE.Server.Managers.ZoneControl.ZoneControlManager.ZoneLockedAppraisalLine);
 
             // Collapse the blank runs the pulled lines leave behind: the slot-special stamp joins
             // with a blank line, so removing one can leave three consecutive newlines.
@@ -1379,11 +1387,24 @@ namespace ACE.Server.Network.Structure
                 {
                     var wsPct = ACE.Server.Managers.WeaponScaling.WeaponScalingManager
                         .RelativeDamagePercent(wsScript, wsCfg.TightenStrength, wsQuality.Value);
-                    effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade} ({wsPct}% of max)");
+                    // "of max DAMAGE" (owner 2026-08-30): the percent measures dealt damage vs a
+                    // perfect roll, NOT the quality percentile, and family ladders have different
+                    // spreads - a bow F- honestly deals 72% of a perfect bow. Without the word
+                    // "damage" that read as a display bug ("how is the worst grade 72%?").
+                    effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade} ({wsPct}% of max damage)");
                 }
                 else
                     effectDescriptions.Insert(0, $"- Weapon Grade: {wsGrade}");
             }
+
+            // Zone lock (owner 2026-08-30, "add the dormant line"): when the lock is ON and THIS
+            // examiner is standing outside every authored area, say so at the very top - the
+            // panel keeps showing the item's full power on purpose (players compare and trade in
+            // town, where gated numbers would make every drop read as junk), so this line is
+            // what reconciles the big numbers with the small hits. Absent when the lock is off,
+            // when the item is not ZC-stamped, or inside an authored area.
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.WeaponPowerSuppressed(weapon, examiner))
+                effectDescriptions.Insert(0, ACE.Server.Managers.ZoneControl.ZoneControlManager.ZoneLockedAppraisalLine);
 
             // Cast on Strike (owner 2026-08-27: "Appraisal line should show Force Arc (13% proc chance)").
             // One line PER SLOT - the arc and the ring are separate entities with separate rates, so a
