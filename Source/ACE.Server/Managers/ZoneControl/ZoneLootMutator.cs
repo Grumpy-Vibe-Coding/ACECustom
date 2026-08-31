@@ -414,7 +414,17 @@ namespace ACE.Server.Managers.ZoneControl
             var gotBite = isWeapon && WonT(p, ZoneStat.WeaponBiteChance, lootTier);
             var gotCrush = isWeapon && WonT(p, ZoneStat.WeaponCrushChance, lootTier);
             var gotArmorRend = (isMelee || isMissile) && WonT(p, ZoneStat.WeaponArmorRendChance, lootTier);
-            var gotShieldCleave = isWeapon && WonT(p, ZoneStat.WeaponShieldCleaveChance, lootTier);
+            // Shields block MELEE and MISSILE, never magic - so this gates exactly like armor rend
+            // (owner 2026-08-30: "why is shield cleaving on a wand"). It was `isWeapon`, which let
+            // casters roll it, and the card is INERT on a caster: the stamped PropertyFloat.IgnoreShield
+            // is only ever read by Creature_Combat.GetShieldMod(attacker, damageType, weapon), called
+            // from DamageEvent.cs - the physical path. The spell path uses a DIFFERENT overload,
+            // SpellProjectile.GetShieldMod(target, shield), which takes no weapon and consults the
+            // shield's AbsorbMagicDamage instead. So a caster rolling this got a dead card that still
+            // SPENT one of its weapon_modifier_cap slots - a 3-card T11 wand effectively dropped with 2.
+            // Eligibility also feeds the Min-floor top-up pool (CouldWinT), so the old gate let the
+            // floor FORCE a dead shield cleave onto a short caster drop as filler.
+            var gotShieldCleave = (isMelee || isMissile) && WonT(p, ZoneStat.WeaponShieldCleaveChance, lootTier);
             var gotSlayer = eligSlayer && WonT(p, ZoneStat.WeaponSlayerChance, lootTier);
 
             // ── PHASE 2 - THE BOUNDS (cap: owner 2026-08-30, "combo impossible at T11"; floor:
@@ -425,9 +435,14 @@ namespace ACE.Server.Managers.ZoneControl
             // weapon_modifier_min (anchored, unset = no floor) then tops a short drop up at random
             // from the eligible losers - COUNT guaranteed, identity random.
             var won = new[] { gotRend, gotSlayer, gotBite, gotCrush, gotArmorRend, gotShieldCleave, gotCleave, gotSplit, gotArc, gotRing };
+            // Index order matches `won` above. Bite and Crush stay isWeapon on purpose - magic crits
+            // exist, so those are live on a caster. Shield Cleave is (isMelee || isMissile) to match
+            // its roll gate: this array drives the Min-floor TOP-UP, so leaving it as isWeapon here
+            // would let the floor force a dead shield cleave onto a short caster drop even though the
+            // roll itself can no longer produce one.
             var eligible = new[]
             {
-                eligRend, eligSlayer, isWeapon, isWeapon, isMelee || isMissile, isWeapon,
+                eligRend, eligSlayer, isWeapon, isWeapon, isMelee || isMissile, isMelee || isMissile,
                 isMelee, isMissile, hasProcSlots, hasProcSlots,
             };
             ApplyModifierBounds(p, ZoneStat.WeaponModifierMin, ZoneStat.WeaponModifierCap, lootTier, won, eligible, new[]
