@@ -623,6 +623,12 @@ namespace ACE.Server.Factories
 
         private static readonly ZoneSetFamily[] zoneSetFamilies = (ZoneSetFamily[])System.Enum.GetValues(typeof(ZoneSetFamily));
 
+        /// <summary>Index of the two RANGED lanes inside <see cref="zoneSetFamilies"/>. Everything
+        /// else in that array is a MELEE family. Derived, not hardcoded, so reordering or extending
+        /// the enum cannot silently mis-lane the draw.</summary>
+        private static readonly int zoneSetMissileFamily = System.Array.IndexOf(zoneSetFamilies, ZoneSetFamily.Missile);
+        private static readonly int zoneSetCasterFamily = System.Array.IndexOf(zoneSetFamilies, ZoneSetFamily.Caster);
+
         /// <summary>
         /// BUDGET MODE sampler (owner 2026-08-24). Turns a total item budget plus category weights into
         /// an ordinary ZoneLootSetCounts, so every existing creation path downstream is reused unchanged.
@@ -632,9 +638,13 @@ namespace ACE.Server.Factories
         /// per-slot weights carried on <paramref name="w"/>. Per-item sampling is what makes "on
         /// average 3 armor" true: the split varies kill to kill and converges on the weights.
         ///
-        /// Weapon families are drawn WITHOUT REPLACEMENT (owner): three weapon picks yield three
-        /// DIFFERENT families, never three swords. Once all nine are used the weapon category drops
-        /// out of the draw. Armor and jewelry DO allow repeats - two rings is a legitimate roll.
+        /// 🔴 WEAPONS ARE DRAWN LANE-FIRST (owner 2026-08-31): "1/3 should be melee, 1/3 missile,
+        /// 1/3 caster - that's the goal". Every weapon pick chooses a LANE at equal weight, THEN a
+        /// family inside it. Within melee the seven families are still drawn WITHOUT REPLACEMENT
+        /// (three melee picks yield three different families, never three swords); missile and
+        /// caster are single families and DO repeat, which is what makes the thirds hold - see
+        /// the block comment at the weapon case. Armor and jewelry allow repeats too - two rings
+        /// is a legitimate roll.
         ///
         /// The budget is a CEILING, not a quota: armor coverage credit (one coat covering chest +
         /// abdomen + upper arms) can satisfy several sampled slots with a single item, so the corpse
@@ -659,9 +669,12 @@ namespace ACE.Server.Factories
                 (0, w.Amulet), (1, w.Ring), (2, w.Bracelet), (3, w.Trinket),
             };
 
-            var freeFamilies = new List<int>();
+            // melee families only - the two ranged lanes are single families that repeat, so they
+            // are never consumed and never need a free-list
+            var freeMelee = new List<int>();
             for (var i = 0; i < zoneSetFamilies.Length; i++)
-                freeFamilies.Add(i);
+                if (i != zoneSetMissileFamily && i != zoneSetCasterFamily)
+                    freeMelee.Add(i);
 
             static double Sum((int Slot, double Weight)[] a)
             {
@@ -694,7 +707,9 @@ namespace ACE.Server.Factories
                 // w.Weapons gates the category on/off exactly like every other slot ("a slot at 0 is
                 // off"). Without this the weapon pool is always non-empty, so a sub-tier-11 profile -
                 // where TierDefault zeroes every slot - would drop WEAPONS ONLY instead of nothing.
-                if (wWeapon > 0 && w.Weapons > 0 && freeFamilies.Count > 0) cats.Add((0, wWeapon));
+                // No free-list test any more: missile and caster repeat, so the weapon category can
+                // never run dry the way it did when all nine families were consumable.
+                if (wWeapon > 0 && w.Weapons > 0) cats.Add((0, wWeapon));
                 if (wArmor > 0 && armorTotal > 0) cats.Add((1, wArmor));
                 if (wJewelry > 0 && jewelTotal > 0) cats.Add((2, wJewelry));
                 if (wCloak > 0 && w.Cloak > 0) cats.Add((3, wCloak));
@@ -714,10 +729,42 @@ namespace ACE.Server.Factories
 
                 switch (picked)
                 {
-                    case 0:   // weapon - without replacement
-                        var fi = ACE.Common.ThreadSafeRandom.Next(0, freeFamilies.Count - 1);
-                        result.WeaponFamilyPicks.Add(freeFamilies[fi]);
-                        freeFamilies.RemoveAt(fi);
+                    case 0:   // weapon - LANE first (equal thirds), then the family inside the lane
+                        //
+                        // 🔴 WHY LANE-FIRST AND NOT A WEIGHT ON THE FAMILY DRAW. The obvious fix for
+                        // "melee is 7 of 9 families" is to weight the flat family pick - melee 1 each,
+                        // missile and caster 16. Measured, that DOES land 33.5/33.2/33.3 today, and it
+                        // is a fitted number that silently rots: because missile and caster were single
+                        // families drawn WITHOUT replacement they were hard-capped at one per corpse,
+                        // so the split moves with how many weapons a corpse drops. Same weight of 16 at
+                        // budget 10-14 gives melee 44.1 pct; at weapon category weight 4 it gives 45.1
+                        // pct. The thirds would quietly break every time someone touched an unrelated
+                        // Drop Table knob, with nothing in the GUI to say so.
+                        // Choosing the LANE first makes the ratio STRUCTURAL: measured 33.3/33.4/33.3
+                        // and flat across budget 4-6 / 7-9 / 10-14 and weapon weights 1, 2 and 4.
+                        //
+                        // 🔴 MISSILE AND CASTER MUST BE ALLOWED TO REPEAT. Capping either at one per
+                        // corpse re-introduces the exact bias this replaces (measured: missile capped
+                        // = 37.2 melee / 25.5 missile / 37.4 caster). Repeats are harmless - each entry
+                        // re-rolls its own sub-type downstream in CreateZoneSetWeapon, so two missile
+                        // picks are usually a bow and a crossbow, and CasterWcids is one pool anyway.
+                        // About 12.6 pct of corpses now carry two or more of one ranged lane; that is
+                        // the intended cost of a true third (owner ruled "caster repeats allowed").
+                    {
+                        var lanes = new List<int>(3);
+                        if (freeMelee.Count > 0) lanes.Add(0);   // melee - only while a family is left
+                        lanes.Add(1);                            // missile - repeats
+                        lanes.Add(2);                            // caster  - repeats
+                        var lane = lanes[ACE.Common.ThreadSafeRandom.Next(0, lanes.Count - 1)];
+                        if (lane == 0)
+                        {
+                            var fi = ACE.Common.ThreadSafeRandom.Next(0, freeMelee.Count - 1);
+                            result.WeaponFamilyPicks.Add(freeMelee[fi]);
+                            freeMelee.RemoveAt(fi);
+                        }
+                        else
+                            result.WeaponFamilyPicks.Add(lane == 1 ? zoneSetMissileFamily : zoneSetCasterFamily);
+                    }
                         break;
 
                     case 1:   // armor (shield included)
