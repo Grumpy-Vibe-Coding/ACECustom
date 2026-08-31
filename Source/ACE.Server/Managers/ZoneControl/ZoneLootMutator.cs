@@ -829,10 +829,14 @@ namespace ACE.Server.Managers.ZoneControl
         /// expressible with pins):
         ///   - minStat unset = NO FLOOR, the pre-floor behaviour exactly. Anchored + rounded like
         ///     the cap.
-        ///   - When fewer winners survive than the floor demands, the drop TOPS UP at random from
-        ///     the lines that were ELIGIBLE but lost their chance roll AND could have won it -
-        ///     enabled, chance authored, chance above zero (CouldWinT). A disabled or unauthored
-        ///     line can never be forced on, and an OFF toggle keeps meaning off.
+        ///   - When fewer winners survive than the floor demands, the drop TOPS UP from the lines
+        ///     that were ELIGIBLE but lost their chance roll AND could have won it - enabled,
+        ///     chance authored, chance above zero (CouldWinT). A disabled or unauthored line can
+        ///     never be forced on, and an OFF toggle keeps meaning off.
+        ///   - The top-up pick is WEIGHTED BY EACH LINE'S OWN AUTHORED CHANCE (2026-08-31), not
+        ///     uniform. The COUNT is still guaranteed and the identity is still random, but a rare
+        ///     line stays rare in the pool. See WeightedPick for why - a uniform draw inflated the
+        ///     armour chase lines 2500x on the live shard.
         ///   - The cap stays HARD: a floor above the cap clamps down to it.
         ///   - Pool smaller than the deficit = stamp everything poolable and stop; no error.
         ///   - Trim and top-up are mutually exclusive on one drop (with floor &lt;= cap, too many
@@ -878,16 +882,60 @@ namespace ACE.Server.Managers.ZoneControl
             if (winners >= min)
                 return;
             var pool = new List<int>();
+            var poolWeights = new List<double>();
             for (int i = 0; i < won.Length; i++)
                 if (eligible[i] && !won[i] && CouldWinT(p, chanceStats[i], tier))
+                {
                     pool.Add(i);
+                    poolWeights.Add(Math.Clamp(p.GetT(chanceStats[i], 0.0, tier), 0.0, 1.0));
+                }
             while (winners < min && pool.Count > 0)
             {
-                var k = ThreadSafeRandom.Next(0, pool.Count - 1);
+                var k = WeightedPick(poolWeights);
                 won[pool[k]] = true;
                 pool.RemoveAt(k);
+                poolWeights.RemoveAt(k);
                 winners++;
             }
+        }
+
+        /// <summary>
+        /// An index into <paramref name="weights"/>, drawn in proportion to the weights - the
+        /// floor's top-up pick (2026-08-31).
+        ///
+        /// 🔴 WHY THIS IS NOT A UNIFORM DRAW. Do not "simplify" it back to one. The pool holds every
+        /// eligible line that lost its roll, and those lines are NOT equally rare: the armour CHASE
+        /// lines sit at 0.0000228 while the FILLER lines sit at 0.3 - four orders of magnitude apart.
+        /// A uniform pick treats them as equals, so every short piece the floor fills becomes a
+        /// roughly 1-in-5 chance to mint a chase line. MEASURED on the live shard 2026-08-31 with
+        /// armor_modifier_min 2: chase lines went from their authored 1-in-21,930 to 15.8 pct of
+        /// armour pieces and 33.3 pct of jewellery (6/38 and 9/27) - a 2500x / 4000x inflation, in a
+        /// single loot run. Weighting by each line's own authored chance keeps the floor's COUNT
+        /// guarantee exactly (the line-count distribution is bit-identical) while leaving relative
+        /// rarity intact - measured 1.3x / 1.7x, i.e. noise.
+        ///
+        /// The plugin's Preview mirrors this draw; if you change one, change the other or the GUI
+        /// starts lying about what a drop looks like.
+        ///
+        /// All-zero weights cannot happen today - CouldWinT already requires chance &gt; 0 - but a
+        /// caller that ever loosens that gate gets a uniform fallback rather than a divide by zero.
+        /// </summary>
+        private static int WeightedPick(List<double> weights)
+        {
+            var total = 0.0;
+            for (int i = 0; i < weights.Count; i++)
+                total += weights[i];
+            if (total <= 0.0)
+                return ThreadSafeRandom.Next(0, weights.Count - 1);
+
+            var roll = ThreadSafeRandom.Next(0.0f, 1.0f) * total;
+            for (int i = 0; i < weights.Count; i++)
+            {
+                roll -= weights[i];
+                if (roll < 0.0)
+                    return i;
+            }
+            return weights.Count - 1;                                 // floating-point tail guard
         }
 
         /// <summary>The floor's top-up gate: every WonT condition EXCEPT the random roll - the
