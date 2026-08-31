@@ -845,7 +845,6 @@ namespace ACE.Server.Factories
                     // creation.
                     var armorType = TreasureArmorType.Undef;
                     var wcid = WeenieClassName.undef;
-                    var coverage = default(ACE.Entity.Enum.CoverageMask);
 
                     for (var attempt = 0; attempt < 50; attempt++)
                     {
@@ -864,7 +863,6 @@ namespace ACE.Server.Factories
 
                         armorType = candidateType;
                         wcid = candidate;
-                        coverage = candidateCoverage;
                         break;
                     }
 
@@ -885,12 +883,21 @@ namespace ACE.Server.Factories
 
                     items.Add(wo);
 
-                    // a piece credits EVERY slot it covers
-                    for (var j = 0; j < slots.Length; j++)
-                    {
-                        if ((coverage & slots[j].mask) != 0)
-                            credit[j]++;
-                    }
+                    // ONE PICK = ONE PIECE (owner 2026-08-30). This used to credit EVERY slot the
+                    // piece covered, so a coat satisfied chest + abdomen + upper arms with a single
+                    // item and the corpse landed well under its armor budget - measured against T10
+                    // that is the ONLY bucket that shrinks, because weapons / jewelry / cloak have no
+                    // coverage overlap. Retail T10 rolls each armor item independently
+                    // (ArmorWcids.Roll, no state between items - ten girths is a legal T10 corpse),
+                    // and the owner ruled T11 must match: "if t10 rolls independant, we need to do
+                    // the same for t11".
+                    // This REVERSES the 07-20 spec decision ("a multi-slot piece fills every slot it
+                    // covers -> one clean wearable set, no overlap"). Overlap is now expected and
+                    // intended: two pieces covering the same slot is a normal corpse, as at T10.
+                    // The slot WEIGHTS still steer which slot each pick asks for, so the Drop Table >
+                    // Slots tab keeps its meaning - what changed is only that satisfying one slot no
+                    // longer silently satisfies its neighbours.
+                    credit[s]++;
                 }
             }
         }

@@ -968,6 +968,23 @@ namespace ACE.Server.WorldObjects
                 {
                     effectiveTreasure = CloneTreasureDeath(effectiveTreasure);
                     effectiveTreasure.Tier = zoneFloorTier;
+
+                    // ZONE SET ONLY (owner 2026-08-30). Raising the tier alone left the mob's OWN
+                    // retail chances intact, so a sub-tier-11 profile dying inside a v11+ zone rolled
+                    // its full retail payload AT THE RAISED TIER and then got the zone set on top -
+                    // e.g. tier-10 profile 3007 is 100/100/100 with 10 magic items, so ~11.5 extra
+                    // items per corpse. That is exactly the case this floor exists to serve (its own
+                    // comment names "a mis-tiered T8/T9/T10 WCID"), so it was a live double-drop on
+                    // the design's intended path - it just was not reachable yet, because no 3007 mob
+                    // is placed or generator-spawned in any authored zone landblock today.
+                    // The floor's contract is that such a mob drops THAT VARIATION'S SET, not its own
+                    // loot as well, so the three retail roll groups are zeroed here. Profiles already
+                    // at tier 11+ never enter this branch and are untouched; a mob with NO table of
+                    // its own already gets ZoneLootFallbackProfile (73001), which is all zeros too -
+                    // so after this every zone drop comes from one place.
+                    effectiveTreasure.ItemChance = 0;
+                    effectiveTreasure.MagicItemChance = 0;
+                    effectiveTreasure.MundaneItemChance = 0;
                 }
 
                 List<WorldObject> items = LootGenerationFactory.CreateRandomLootObjects(effectiveTreasure);
