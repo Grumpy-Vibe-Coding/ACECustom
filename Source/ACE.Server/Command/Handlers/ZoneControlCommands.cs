@@ -2856,7 +2856,12 @@ namespace ACE.Server.Command.Handlers
             if (stats != null)
                 foreach (var stat in ZoneStat.All)
                     if (stats.TryGetValue(stat, out var curve) && curve != null)
-                        sb.Append('|').Append(stat).Append("=1,").Append(curve.Base.ToString(CultureInfo.InvariantCulture));
+                        // NEVER let a small value go out in scientific notation (2026-08-30). Double.ToString()
+                        // emits "2.28E-05" for the armor CHASE chances (0.0000228), and anything downstream
+                        // that is not exponent-aware reads that as 0 - which is indistinguishable from
+                        // "never rolls" in the GUI. A plain decimal round-trips through every parser.
+                        sb.Append('|').Append(stat).Append("=1,")
+                          .Append(curve.Base.ToString("0.##########", CultureInfo.InvariantCulture));
 
             // APPEND-ONLY (2026-08-23): this Default's OWN authored bands + slot rules, same shapes as the
             // [[ZC]] sync, so the plugin Catalog at "Default v[N]" scope shows N's bands instead of the last
