@@ -45,6 +45,38 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string AttackSkill = "attack_skill";
         // min_attack_skill REMOVED 2026-08-02 (owner): redundant with attack_skill's absolute replace.
         // The prestige-gated v11_min_attack_skill server config floor still exists independently.
+        /// <summary>
+        /// The monster's LEVEL (PropertyInt.Level, 25).
+        ///
+        /// Added 2026-08-31. Nothing scaled level before this - a retail weenie dropped into a T11
+        /// zone kept whatever level it shipped with. Stamped at spawn rather than read live because
+        /// Level is plain item data that other systems (target weighting in Monster_Awareness, the
+        /// appraisal panel) read directly off the creature.
+        /// </summary>
+        public const string MonsterLevel = "monster_level";
+
+        /// <summary>
+        /// FALLBACK creature type (PropertyInt.CreatureType, 2) - applied ONLY to a monster whose
+        /// weenie has none, or has Invalid. It never overwrites a real species.
+        ///
+        /// Added 2026-08-31. A null CreatureType means NO SLAYER WEAPON CAN EVER ROLL off that mob:
+        /// ZoneLootMutator gates slayer eligibility on `killed?.CreatureType != null &amp;&amp; != Invalid`
+        /// and then copies the value onto the drop. An arbitrary retail weenie dropped into a zone
+        /// therefore silently removed a whole weapon card from its loot table. Fallback rather than
+        /// override so retail identity survives wherever it exists - a Drudge stays a Drudge.
+        /// </summary>
+        public const string MonsterCreatureType = "monster_creature_type";
+
+        /// <summary>
+        /// The monster's OFFENSIVE magic skill - what its spells are resisted against
+        /// (WorldObject_Magic reads GetCreatureSkill(spell.School).Current).
+        ///
+        /// Added 2026-08-31. attack_skill, melee_defense, missile_defense and magic_defense were all
+        /// already zone stats; this was the missing member of that family. Without it a zone could
+        /// author beautiful spell_damage and still have every cast resisted, because the mob kept its
+        /// retail-level War/Life skill. Absolute replace, same shape as AttackSkill.
+        /// </summary>
+        public const string MagicSkill = "magic_skill";
         public const string MeleeDefense = "melee_defense";
         public const string MissileDefense = "missile_defense";
         public const string MagicDefense = "magic_defense";
@@ -429,7 +461,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public static readonly string[] All =
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
-            AttackSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
+            MonsterLevel, MonsterCreatureType, AttackSkill, MagicSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
             DamageResistRating, ArmorLevel, VulnCap, PercentHpBase,
             CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
             AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,

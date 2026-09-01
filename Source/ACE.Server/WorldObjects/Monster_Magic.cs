@@ -48,7 +48,13 @@ namespace ACE.Server.WorldObjects
 
         /// <summary>
         /// Returns TRUE if monster has known spells (or zone-ADDED spells - a zone can make a caster
-        /// out of a mob with an empty book, provided its combat style allows magic)
+        /// out of a mob with an empty book).
+        ///
+        /// 2026-08-31: the old wording said "provided its combat style allows magic". That is NOT
+        /// true in this codebase and it sent a Bestiary audit chasing a gate that does not exist -
+        /// GetNextAttackType tests only `HasKnownSpells &amp;&amp; TryRollSpell()`, and nothing anywhere
+        /// reads AiAllowedCombatStyle for magic (it is used for DualWield and StubbornMissile only).
+        /// Zone-added spells fire regardless of combat style.
         /// </summary>
         private bool HasKnownSpells => Biota.HasKnownSpell(BiotaDatabaseLock) || ZoneHasAddedSpells();
 

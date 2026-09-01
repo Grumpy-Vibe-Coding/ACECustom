@@ -258,10 +258,15 @@ namespace ACE.Server.WorldObjects
                         zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpBoss, minionXp);
                     else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true)
                         zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpLeader, minionXp);
-                    else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcMinion) == true)
-                        zoneXp = minionXp;
                     else
-                        zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpDefault, minionXp);   // unranked: xp_default, else Minion
+                        // UNRANKED NOW PAYS MINION (owner ruling 2026-08-31). It used to prefer
+                        // xp_default when that was authored, which on the live store meant an
+                        // unranked mob paid 100,000,000 against a minion's 500,000,000 - a silent
+                        // 5x shortfall that scaled with however far apart the two were authored.
+                        // Rank is a deliberate mark for the exceptions (Leader, Boss); the unmarked
+                        // majority ARE the minions, so minion is the honest default.
+                        // xp_default is left registered but is now unreachable here.
+                        zoneXp = minionXp;
                     baseXp = (long)Math.Round(zoneXp);
                 }
                 if (killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward))

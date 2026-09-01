@@ -26,6 +26,14 @@ namespace ACE.Server.Managers.WeaponScaling
         // these two climb instead, +500/tier each: Triune Weave, plus the weapon-family charm
         // (Crashing Steel melee / True Shot launchers / Battlemage's Wrath elemental casters /
         // Nether Veil nether casters). 0 = no charm gate (all tiers through T15).
+        /// <summary>
+        /// CREATURE aug requirement for the T11+ hit gate (owner 2026-08-31). Unlike MinWieldAugs this
+        /// is NOT a wield requirement - nothing stops you equipping the gear. It gates whether your
+        /// swings and spells can LAND on a monster at this variation (TierHitGate).
+        /// 4,000 at T11, +500/tier, frozen at the 6,000 purchase cap from T15 - above which TRIUNE
+        /// carries the ladder, exactly as it does for the item-aug wield gate.
+        /// </summary>
+        public int MinWieldCreature { get; set; }
         public int MinWieldTriune { get; set; }
         public int MinWieldSkillCharm { get; set; }
     }
@@ -280,6 +288,7 @@ namespace ACE.Server.Managers.WeaponScaling
                     Tier = tier,
                     Cap = 2500 + 500 * (tier - 11),
                     MinWieldAugs = tier == 11 ? 2000 : Math.Min(4000, 2500 + 500 * (tier - 12)),
+                    MinWieldCreature = Math.Min(6000, 4000 + 500 * (tier - 11)),
                     MinWieldTriune = tier >= 16 ? 500 * (tier - 15) : 0,
                     MinWieldSkillCharm = tier >= 16 ? 500 * (tier - 15) : 0,
                 });
@@ -542,6 +551,7 @@ namespace ACE.Server.Managers.WeaponScaling
             {
                 t.Cap = Math.Max(0, t.Cap);
                 t.MinWieldAugs = Math.Max(0, t.MinWieldAugs);
+                t.MinWieldCreature = Math.Max(0, t.MinWieldCreature);
                 t.MinWieldTriune = Math.Max(0, t.MinWieldTriune);
                 t.MinWieldSkillCharm = Math.Max(0, t.MinWieldSkillCharm);
 

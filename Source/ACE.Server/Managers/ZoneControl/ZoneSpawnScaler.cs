@@ -60,6 +60,28 @@ namespace ACE.Server.Managers.ZoneControl
             ApplyAttribute(creature, profile, ZoneStat.Focus, PropertyAttribute.Focus);
             ApplyAttribute(creature, profile, ZoneStat.Self, PropertyAttribute.Self);
 
+            // Level (2026-08-31): zone-wide, so an arbitrary retail weenie stops advertising its
+            // shipped level in a T11 zone. Stamped, not read live - Level is plain item data that
+            // Monster_Awareness target weighting and the appraisal panel read straight off the
+            // creature. Floored at 1; level 0 reads as "unset" to several consumers.
+            if (profile.Has(ZoneStat.MonsterLevel))
+                creature.SetProperty(PropertyInt.Level,
+                    (int)Math.Max(1.0, Math.Round(profile.Get(ZoneStat.MonsterLevel))));
+
+            // Creature type (2026-08-31): FALLBACK ONLY. Applied when the weenie has no species, or
+            // Invalid - never over a real one, so a Drudge stays a Drudge. Without a species the mob
+            // silently suppresses every slayer roll in its own loot (ZoneLootMutator eligibility).
+            if (profile.Has(ZoneStat.MonsterCreatureType)
+                && (creature.CreatureType == null || creature.CreatureType == ACE.Entity.Enum.CreatureType.Invalid))
+            {
+                var ct = (int)Math.Round(profile.Get(ZoneStat.MonsterCreatureType));
+                // CreatureType is `: uint` - IsDefined THROWS on a type mismatch rather than
+                // returning false, so the boxed value must be uint. This is the SPAWN path: an int
+                // here would have thrown on every governed spawn the moment the stat was authored.
+                if (ct > 0 && System.Enum.IsDefined(typeof(ACE.Entity.Enum.CreatureType), (uint)ct))
+                    creature.SetProperty(PropertyInt.CreatureType, ct);
+            }
+
             ApplyVital(creature, profile, ZoneStat.MaxStamina, creature.Stamina);
             ApplyVital(creature, profile, ZoneStat.MaxMana, creature.Mana);
 

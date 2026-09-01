@@ -207,6 +207,15 @@ namespace ACE.Server.Entity
             if (defender.Invincible)
                 return 0.0f;
 
+            // T11+ HIT GATE (owner 2026-08-31): an under-augmented player cannot land on a
+            // tier-11+ monster at all. Checked BEFORE Overpower on purpose - Overpower bypasses
+            // evade, so leaving it first would let it punch straight through the gate.
+            if (!ACE.Server.Managers.ZoneControl.TierHitGate.CanHitOrTell(attacker, defender))
+            {
+                Evaded = true;
+                return 0.0f;
+            }
+
             // overpower
             if (attacker.Overpower != null)
                 Overpower = Creature.GetOverpower(attacker, defender);

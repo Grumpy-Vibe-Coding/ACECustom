@@ -145,9 +145,19 @@ namespace ACE.Server.WorldObjects
 
             if (casterCreature != null)
             {
-                // Retrieve caster's skill level in the Magic School
-                magicSkill = casterCreature.GetCreatureSkill(spell.School).Current;
-
+                // Zone Scaler (2026-08-31): an authored profile sets the monster's OFFENSIVE magic
+                // skill absolutely, exactly like attack_skill does for melee/missile in
+                // Creature_Combat.GetEffectiveAttackSkill. ResolveForCreature returns null for
+                // players, exempt creatures and unauthored zones, so this falls through to the normal
+                // skill everywhere else. Without it, zone-authored spell damage lands on a mob's
+                // retail-level War Magic and players resist essentially every cast.
+                var zoneMagic = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(casterCreature);
+                if (zoneMagic != null && zoneMagic.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicSkill))
+                    // floor at 0: a negative authored value would wrap through the uint cast
+                    magicSkill = (uint)Math.Round(Math.Max(0.0, zoneMagic.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.MagicSkill)));
+                else
+                    // Retrieve caster's skill level in the Magic School
+                    magicSkill = casterCreature.GetCreatureSkill(spell.School).Current;
             }
             else if (caster.ItemSpellcraft != null)
             {
@@ -171,6 +181,13 @@ namespace ACE.Server.WorldObjects
 
             //Console.WriteLine($"{target.Name}.ResistSpell({Name}, {spell.Name}): magicSkill: {magicSkill}, difficulty: {difficulty}");
             bool resisted = MagicDefenseCheck(magicSkill, difficulty, out float resistChance);
+
+            // T11+ HIT GATE (owner 2026-08-31): an under-augmented player's spells are resisted
+            // outright by a tier-11+ monster, whatever the skill check said. Same all-or-nothing
+            // rule as melee/missile in DamageEvent.
+            if (!resisted && this is Creature gateCaster
+                && !ACE.Server.Managers.ZoneControl.TierHitGate.CanHitOrTell(gateCaster, targetCreature))
+                resisted = true;
 
             var player = this as Player;
             var targetPlayer = target as Player;

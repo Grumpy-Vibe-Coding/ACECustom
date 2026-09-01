@@ -803,9 +803,25 @@ namespace ACE.Server.Command.Handlers
             return ACE.Server.Managers.ZoneControl.ZoneModifiers.SlotAllowed(slotRule, ACE.Server.Managers.ZoneControl.ZoneModifiers.PieceMask(wo));
         }
 
-        /// <summary>Test gear is meant to be WORN: SET the minter's wield counters to exactly the tier's gates -
-        /// item augs, Triune Weave, and the four weapon-family charms - both directions, so a lower-tier premade
-        /// also tests as a lower-tier character (owner 2026-08-23: "it should go lower").</summary>
+        /// <summary>
+        /// Test gear is meant to be WORN: SET the minter's wield counters to exactly the tier's gates -
+        /// item augs, Triune Weave, and the four weapon-family charms - BOTH DIRECTIONS, so a premade
+        /// can be re-forged up or down on demand with no extra steps (owner 2026-08-23 "it should go
+        /// lower", reaffirmed 2026-08-31: "t11 to t15 to t20 to t13 to t11 on demand").
+        ///
+        /// 🔴 ITEM AUGS PIN TO THE TIER'S WEAPON DAMAGE CAP, NOT ITS WIELD FLOOR - clamped to the
+        /// 4,000 purchase cap. This is the fix for a two-way conflict, so do not "simplify" it back
+        /// to MinWieldAugs:
+        ///   - MinWieldAugs is the FLOOR and sits exactly 500 BELOW the tier Cap at every tier.
+        ///     Pinning to it left every premade one step under its damage ceiling, because weapon
+        ///     damage uses min(itemAugs, Cap) - that was the 2026-08-20 ruling this method silently
+        ///     defeated for eleven days.
+        ///   - Pinning to the raw Cap would overshoot the purchase cap above T14 (T25 Cap = 9,500 vs
+        ///     a 4,000 buy limit), minting a test character no real player could ever be.
+        /// min(Cap, 4000) satisfies both: T11 lands on 2,500 = its Cap; T15+ freezes at 4,000, and
+        /// TRIUNE carries the tiers above (owner 2026-08-31). Raising the ceiling past T14 is a
+        /// Triune question, never an item-aug one.
+        /// </summary>
         private static void EnsureWieldCounters(Player player, int tier, Action<string> Msg)
         {
             var row = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(tier);
@@ -815,17 +831,20 @@ namespace ACE.Server.Command.Handlers
             {
                 if (need < 0) return;
                 var cur = player.GetProperty(prop) ?? 0;
-                if (cur == need) return;
+                if (cur == need) return;                  // pin: both directions, so re-forging down works
                 player.SetProperty(prop, need);
                 player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, prop, need));
                 raised.Add($"{label} {cur:N0} -> {need:N0}");
             }
-            if (row.MinWieldAugs > 0 && (player.LuminanceAugmentItemCount ?? 0) != row.MinWieldAugs)
+            // the tier's damage ceiling, never above what a player could actually buy
+            const long ItemAugPurchaseCap = 4000;          // EmoteManager.AugmentationCaps["Item"]
+            var itemTarget = Math.Min((long)row.Cap, ItemAugPurchaseCap);
+            if (itemTarget > 0 && (player.LuminanceAugmentItemCount ?? 0) != itemTarget)
             {
                 var cur = player.LuminanceAugmentItemCount ?? 0;
-                player.LuminanceAugmentItemCount = (uint)row.MinWieldAugs;
-                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, row.MinWieldAugs));
-                raised.Add($"Item Augs {cur:N0} -> {row.MinWieldAugs:N0}");
+                player.LuminanceAugmentItemCount = (uint)itemTarget;
+                player.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt64(player, PropertyInt64.LumAugItemCount, itemTarget));
+                raised.Add($"Item Augs {cur:N0} -> {itemTarget:N0}");
             }
             Raise(PropertyInt64.TriuneWeaveCount, row.MinWieldTriune, "Triune Weave");
             Raise(PropertyInt64.BattlemagesWrathCharmCount, row.MinWieldSkillCharm, "Battlemage's Wrath");

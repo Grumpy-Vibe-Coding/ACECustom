@@ -1207,7 +1207,7 @@ namespace ACE.Server.Command.Handlers.Processors
             public List<int> ExplicitTargetVariations { get; } = new();
         }
 
-        [CommandHandler("createinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Spawns landblock instance. Prestige mirroring (extra landblock_instance rows for other prestige layers) never runs on retail/base (variation null or 1–10); it only runs when your current layer is prestige (11+). Flags: -nomirror|-nm skips mirroring. -mirror|-mv <list> targets only prestige variants: comma list and/or ranges (11,15,20 or 11-15), all|* = 11..max configured, spaces after commas OK (e.g. -mv 11, 15, 20). Retail IDs in -mv are rejected. Auto-mirror 11→12..max only if createinst_auto_mirror_higher_prestige_variants=true and no explicit -mv/-mirror.", "<wcid or classname> [flags]")]
+        [CommandHandler("createinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Spawns landblock instance. Prestige mirroring (extra landblock_instance rows for other prestige layers) only runs when your current layer is a PRESTIGE variation, i.e. above PrestigeManager.PRESTIGE_VAR_OFFSET (1000) - NOT at variations 11-25, where the mirror flags below are inert and you get exactly one row. Flags: -nomirror|-nm skips mirroring. -mirror|-mv <list> targets only prestige variants: comma list and/or ranges (11,15,20 or 11-15), all|* = 11..max configured, spaces after commas OK (e.g. -mv 11, 15, 20). Retail IDs in -mv are rejected. Auto-mirror 11→12..max only if createinst_auto_mirror_higher_prestige_variants=true and no explicit -mv/-mirror.", "<wcid or classname> [flags]")]
         public static void HandleCreateInst(Session session, params string[] parameters)
         {
             var loc = new Position(session.Player.Location);
@@ -1539,7 +1539,7 @@ namespace ACE.Server.Command.Handlers.Processors
             var zRange = changed > 0 ? $" Z range now {minZ:F2}..{maxZ:F2}." : "";
             session.Network.EnqueueSend(new GameMessageSystemChat(
                 $"fixinstz wcid {wcid} ({scopeLabel}): scanned {scanned}, updated {changed}, unresolved terrain {failed}.{zRange} " +
-                $"Reload the landblock (or restart) to respawn. Use /syncinst or export to persist for live.", ChatMessageType.Broadcast));
+                $"Reload the landblock (or restart) to respawn. Rows live in ace_world only - there is no instance export command.", ChatMessageType.Broadcast));
             PlayerManager.BroadcastToAuditChannel(session.Player,
                 $"{session.Player.Name} ran /fixinstz wcid {wcid} ({scopeLabel}): updated {changed}/{scanned}, failed {failed}.");
         }

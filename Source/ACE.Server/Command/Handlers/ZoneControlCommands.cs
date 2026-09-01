@@ -2201,6 +2201,120 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "clonezone":
+                    {
+                        // clonezone <src> <variation|lo-hi>
+                        //
+                        // The new name is DERIVED as "<src> <variation>" rather than taken as an
+                        // argument, and that is deliberate: `create` has to hunt for the first token
+                        // that parses as a variation, so a name ending in a number ("Tou Tou 12") is
+                        // ambiguous and needs quoting. Deriving it removes the ambiguity entirely and
+                        // matches the convention anyway.
+                        if (args.Count < 3) { Msg("Usage: clonezone <zone> <variation|lo-hi>   e.g. clonezone Tou Tou 12-25"); return; }
+
+                        var czSrc = ZoneControlManager.GetArea(args[1]);
+                        if (czSrc == null) { Msg($"No zone '{args[1]}'."); return; }
+
+                        var czSpec = args[2];
+                        int czLo, czHi;
+                        var czDash = czSpec.IndexOf('-');
+                        if (czDash > 0)
+                        {
+                            if (!int.TryParse(czSpec.Substring(0, czDash).TrimStart('v', 'V'), out czLo)
+                                || !int.TryParse(czSpec.Substring(czDash + 1).TrimStart('v', 'V'), out czHi))
+                            { Msg("Usage: clonezone <zone> <variation|lo-hi>"); return; }
+                        }
+                        else
+                        {
+                            if (!int.TryParse(czSpec.TrimStart('v', 'V'), out czLo)) { Msg("Usage: clonezone <zone> <variation|lo-hi>"); return; }
+                            czHi = czLo;
+                        }
+
+                        if (czLo < 0 || czHi < czLo || czHi - czLo > 50) { Msg("Bad variation range."); return; }
+
+                        var czMade = new List<string>();
+                        var czSkipped = new List<string>();
+
+                        for (var v = czLo; v <= czHi; v++)
+                        {
+                            if (v == czSrc.Variation) { czSkipped.Add($"v{v} (the source)"); continue; }
+
+                            var czName = SanitizeZoneName(czSrc.Name + " " + v);
+                            if (ZoneControlManager.GetArea(czName) != null) { czSkipped.Add($"'{czName}' exists"); continue; }
+
+                            var clone = new ControlledArea
+                            {
+                                Name = czName,
+                                Variation = v,
+                                // DISABLED on purpose. Creature stats do NOT interpolate across tiers -
+                                // AnchoredDefaultProfileFor only underlays FLAT v11 values - so a zone
+                                // enabled before its own VariationDefault is authored would run
+                                // T11-strength monsters wearing a higher-tier label, silently.
+                                Enabled = false,
+                                Bounded = czSrc.Bounded,
+                                Notes = $"cloned from '{czSrc.Name}' (v{czSrc.Variation})",
+                                Landblocks = new HashSet<ushort>(czSrc.Landblocks),
+                                TerrainOverrides = new Dictionary<ushort, string>(czSrc.TerrainOverrides ?? new Dictionary<ushort, string>()),
+                            };
+
+                            ZoneControlManager.UpsertArea(clone);
+                            czMade.Add(czName);
+                        }
+
+                        if (czMade.Count == 0) { Msg("Nothing created. " + string.Join("; ", czSkipped)); return; }
+
+                        Msg($"Created {czMade.Count} zone(s) from '{czSrc.Name}', {czSrc.Landblocks.Count} landblock(s) each:");
+                        Msg("  " + string.Join(", ", czMade));
+                        if (czSkipped.Count > 0) Msg("  skipped: " + string.Join("; ", czSkipped));
+                        Msg("All DISABLED - author each tier's Default first, then enable.");
+                        Msg("  Seed a tier from the one below it:  default <var> copyfrom <var>");
+                        Msg("  Stats do NOT interpolate: an unauthored tier runs T11-strength monsters.");
+                        PlayerManager.BroadcastToAuditChannel(session?.Player,
+                            $"clonezone {czSrc.Name} -> {czMade.Count} zone(s) v{czLo}-v{czHi}");
+                        return;
+                    }
+
+                    case "mobcheck":
+                    {
+                        // Every reasonable shape works. The wcid may arrive as --wcid (house flag), or
+                        // as a bare number in either position; the zone may be named or left out, in
+                        // which case the zone you are STANDING IN is used. Requiring one exact form
+                        // here bought nothing but a usage message.
+                        var mcWcid = wcid;
+                        string mcZone = null;
+
+                        for (var i = 1; i < args.Count; i++)
+                        {
+                            if (!mcWcid.HasValue && uint.TryParse(args[i], out var parsedWcid)) { mcWcid = parsedWcid; continue; }
+                            if (mcZone == null) mcZone = args[i];
+                        }
+
+                        if (!mcWcid.HasValue)
+                        {
+                            Msg("Usage: mobcheck <wcid>            - checks the zone you are standing in");
+                            Msg("       mobcheck <zone> <wcid>     - checks a named zone");
+                            return;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(mcZone))
+                        {
+                            var mcLoc = session.Player?.Location;
+                            if (mcLoc == null) { Msg("No location - name the zone: mobcheck <zone> <wcid>"); return; }
+                            var here = ZoneControlManager.ResolveWinnerForLocation(
+                                mcLoc.LandblockId.Landblock, ZoneControlManager.GetEffectiveVariation(session.Player));
+                            if (here == null)
+                            {
+                                Msg($"You are not standing in an authored zone (landblock {mcLoc.LandblockId.Landblock:X4}).");
+                                Msg("Name one instead: mobcheck <zone> <wcid>");
+                                return;
+                            }
+                            mcZone = here.Name;
+                        }
+
+                        HandleMobCheck(mcZone, mcWcid.Value, Msg);
+                        return;
+                    }
+
                     case "show":
                     {
                         if (args.Count < 2) { Msg("Usage: show <name> [--wcid <id>]"); return; }
@@ -4537,6 +4651,94 @@ namespace ACE.Server.Command.Handlers
         /// <summary>Builds the "[[ZCI]]" weenie base-data payload for the plugin's Body Parts / Resists /
         /// Weapon tabs: body-part table, creature resist + armor-vs floats, wielded weapons, spell count.
         /// All data comes from the WEENIE (authoring baseline), not a live instance.</summary>
+        /// <summary>
+        /// `mobcheck` - does this monster actually work in this zone?
+        ///
+        /// Zone Control scales a mob from the zone + tier Default with NO opt-in property, so most of
+        /// a monster is automatic. What is left is a thin IDENTITY layer, and every one of its gaps
+        /// fails SILENTLY: a null species just quietly removes slayer from the mob's own loot, an
+        /// unauthored magic skill just quietly gets every cast resisted. Nothing anywhere told a dev
+        /// any of that. This is that missing surface (2026-08-31).
+        ///
+        /// Read-only. It writes nothing and fixes nothing - it names what to fix.
+        /// </summary>
+        private static void HandleMobCheck(string zoneName, uint mobWcid, Action<string> Msg)
+        {
+            var area = ZoneControlManager.GetArea(zoneName);
+            if (area == null) { Msg($"No zone '{zoneName}'."); return; }
+
+            var weenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(mobWcid);
+            if (weenie == null) { Msg($"No weenie {mobWcid}."); return; }
+
+            var eval = ZoneControlManager.EvaluateForDisplay(zoneName, mobWcid);
+            bool Has(string stat) => eval != null && eval.Values.ContainsKey(stat);
+            double Val(string stat) => eval != null && eval.Values.TryGetValue(stat, out var v) ? v : 0.0;
+
+            var issues = 0;
+            void Ok(string t) => Msg("  ok    " + t);
+            void Warn(string t) { issues++; Msg("  WARN  " + t); }
+
+            Msg($"{weenie.GetName() ?? ("wcid " + mobWcid)} ({mobWcid}) in {zoneName} v{area.Variation}");
+
+            // 1. is the zone even live
+            if (area.Enabled) Ok($"zone enabled at variation {area.Variation}");
+            else Warn($"zone '{zoneName}' is DISABLED - nothing below applies to a live spawn");
+
+            // 2. level - no ZoneStat existed before 2026-08-31, so a retail weenie kept its own
+            var weenieLevel = weenie.GetProperty(PropertyInt.Level) ?? 0;
+            if (Has(ZoneStat.MonsterLevel)) Ok($"level {Val(ZoneStat.MonsterLevel):0} (zone monster_level)");
+            else if (weenieLevel > 0) Warn($"level {weenieLevel} comes from the weenie - monster_level is not authored");
+            else Warn("no level at all - weenie has none and monster_level is not authored");
+
+            // 3. species - a null one silently removes slayer from this mob's OWN loot
+            var ctype = weenie.GetProperty(PropertyInt.CreatureType) ?? 0;
+            // CreatureType is `: uint` - IsDefined THROWS on a type mismatch rather than returning
+            // false, so the boxed value must be uint, not int.
+            var ctypeValid = ctype > 0 && System.Enum.IsDefined(typeof(ACE.Entity.Enum.CreatureType), (uint)ctype);
+            if (ctypeValid) Ok($"creature type {(ACE.Entity.Enum.CreatureType)ctype}");
+            else if (Has(ZoneStat.MonsterCreatureType))
+                Ok($"creature type {(ACE.Entity.Enum.CreatureType)(int)Val(ZoneStat.MonsterCreatureType)} (zone fallback)");
+            else Warn("NO creature type - no slayer weapon can ever roll off this mob");
+
+            // 4. casting - authored spell damage lands on the mob's own magic skill unless overridden
+            var bookCount = weenie.PropertiesSpellBook?.Count ?? 0;
+            var zoneAdds = eval?.SpellRules?.Count(r => !r.Disabled) ?? 0;
+            if (bookCount + zoneAdds > 0)
+            {
+                if (Has(ZoneStat.MagicSkill)) Ok($"{bookCount} book spell(s) + {zoneAdds} zone-added, magic_skill {Val(ZoneStat.MagicSkill):0}");
+                else Warn($"casts {bookCount + zoneAdds} spell(s) but magic_skill is NOT authored - players will resist them");
+            }
+            else Ok("no spells - magic_skill not needed");
+
+            // 5. rank. Unranked pays xp_minion since 2026-08-31, so this is information, not a fault.
+            var boss = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcBoss) == true;
+            var leader = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcLeader) == true;
+            var minion = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcMinion) == true;
+            Ok("rank: " + (boss ? "Boss" : leader ? "Leader" : minion ? "Minion" : "unranked (pays xp_minion)"));
+
+            // 6. the stats that actually make a T11 monster. Unauthored means the WEENIE value passes
+            // through at every read site - nothing is code-defaulted for creatures.
+            var core = new[]
+            {
+                ZoneStat.MaxHealth, ZoneStat.Strength, ZoneStat.Endurance, ZoneStat.Coordination,
+                ZoneStat.Quickness, ZoneStat.Focus, ZoneStat.Self, ZoneStat.AttackSkill,
+                ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
+                ZoneStat.ArmorLevel, ZoneStat.AttackDamage,
+            };
+            var missing = core.Where(c => !Has(c)).ToList();
+            if (missing.Count == 0) Ok($"all {core.Length} core stats authored");
+            else Warn($"{missing.Count} of {core.Length} core stats NOT authored (weenie value passes through): {string.Join(", ", missing)}");
+
+            // 7. cosmetics - a per-WCID name only exists in the zone bucket
+            var look = area.AppearanceByWcid != null && area.AppearanceByWcid.ContainsKey(mobWcid);
+            if (look) Ok("appearance authored for this wcid");
+            else Msg("  --    no per-wcid appearance; it uses the stock look and name");
+
+            Msg(issues == 0
+                ? "  => ready."
+                : $"  => {issues} thing(s) to fix.");
+        }
+
         private static string BuildMobInfoPayload(uint wcid)
         {
             var weenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(wcid);
