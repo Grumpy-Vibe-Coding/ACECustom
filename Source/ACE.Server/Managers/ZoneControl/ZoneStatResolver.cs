@@ -238,9 +238,12 @@ namespace ACE.Server.Managers.ZoneControl
         // ── the live ladder ─────────────────────────────────────────────────────
 
         /// <summary>
-        /// The band a catalog key resolves against at a tier: the tier's Default-layer override
-        /// (CustomModifierBands on variation = tier, what real drops there roll from) when authored, else the
-        /// catalog band scaled to the tier (ZoneModifiers.CatalogBandAt). A ZONE's own band override is a drop-time concern only - the piece does not remember
+        /// The band a catalog key resolves against at a tier: the tier's ANCHORED Default-layer override
+        /// (CustomModifierBands from GetAnchoredDefaultProfile - the v11 anchor board under the tier's own
+        /// Default, which is what real drops there roll from) when authored, else the catalog band scaled to
+        /// the tier (ZoneModifiers.CatalogBandAt). Reading the RAW Default here was the 2x-at-T25 bug: no
+        /// Default is authored above v11, so every tier 12-25 took the CatalogBandAt branch at resolve while
+        /// drops took the authored band. A ZONE's own band override is a drop-time concern only - the piece does not remember
         /// its zone, and re-resolution only happens after an explicit ladder apply, when the tier's Default
         /// IS the published truth.
         /// </summary>
@@ -252,9 +255,9 @@ namespace ACE.Server.Managers.ZoneControl
             // as CoreWindow). owner 2026-08-23.
             if (!ServerConfig.zonecontrol_enabled.Value)
                 return ZoneFallback.Band(def);
-            var vd = ZoneControlManager.GetVariationDefault(tier);
-            if (vd?.Profile?.CustomModifierBands != null
-                && vd.Profile.CustomModifierBands.TryGetValue(key, out var live)
+            var anchored = ZoneControlManager.GetAnchoredDefaultProfile(tier);
+            if (anchored?.CustomModifierBands != null
+                && anchored.CustomModifierBands.TryGetValue(key, out var live)
                 && live != null && live.Max > 0)
                 return live.Min <= live.Max ? (live.Min, live.Max) : (live.Max, live.Min);
             return ZoneModifiers.CatalogBandAt(def, tier);
@@ -300,7 +303,7 @@ namespace ACE.Server.Managers.ZoneControl
             if (!ServerConfig.zonecontrol_enabled.Value)
                 return ZoneModifiers.WeaponBandAt(b, 11);
             if (!statsFetched)
-                stats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
+                stats = ZoneControlManager.GetAnchoredDefaultProfile(tier)?.Stats;
             var pin = PinBand(stats, b, tier);
             if (pin.HasValue)
                 return Clamp(pin.Value.Min, pin.Value.Max, b);
@@ -384,8 +387,8 @@ namespace ACE.Server.Managers.ZoneControl
         /// </summary>
         public static double? DefaultLayerValue(int tier, string stat)
         {
-            var vd = ZoneControlManager.GetVariationDefault(tier);
-            if (vd?.Profile?.Stats != null && vd.Profile.Stats.TryGetValue(stat, out var curve) && curve != null)
+            var def = ZoneControlManager.GetAnchoredDefaultProfile(tier);
+            if (def?.Stats != null && def.Stats.TryGetValue(stat, out var curve) && curve != null)
                 return curve.Evaluate(1);
             return null;
         }
@@ -669,7 +672,7 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (!ServerConfig.zonecontrol_enabled.Value)
                 return 0;
-            var stats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
+            var stats = ZoneControlManager.GetAnchoredDefaultProfile(tier)?.Stats;
             if (stats == null || stats.Count == 0)
                 return 0;
             var h = 0;
@@ -777,8 +780,10 @@ namespace ACE.Server.Managers.ZoneControl
             var alBonus = 0;
 
             // The tier Default's Stats, fetched AT MOST ONCE per resolve and only when the record
-            // actually contains a weapon key. GetVariationDefault takes the manager lock, and a fully
-            // carded weapon would otherwise take it twelve times (two stat names per card).
+            // actually contains a weapon key. This used to matter for locking (GetVariationDefault takes
+            // the manager lock, and a fully carded weapon would have taken it twelve times - two stat
+            // names per card); since 2026-09-01 the anchored table is precomputed and read lock-free, so
+            // the caching is now just avoiding twelve dictionary probes.
             Dictionary<string, ZoneScaling.StatCurve> defStats = null;
             var defStatsFetched = false;
 
@@ -792,7 +797,7 @@ namespace ACE.Server.Managers.ZoneControl
                         continue;
                     if (!defStatsFetched)
                     {
-                        defStats = ZoneControlManager.GetVariationDefault(tier)?.Profile?.Stats;
+                        defStats = ZoneControlManager.GetAnchoredDefaultProfile(tier)?.Stats;
                         defStatsFetched = true;
                     }
                     var (wlo, whi) = WeaponResolveBand(ws, tier, defStats, statsFetched: true);

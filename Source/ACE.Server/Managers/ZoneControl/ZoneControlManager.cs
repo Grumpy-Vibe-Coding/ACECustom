@@ -74,6 +74,12 @@ namespace ACE.Server.Managers.ZoneControl
         /// happen to share the value 11 — they are not required to.</summary>
         public const int MinBoundedVariation = 11;
 
+        /// <summary>Top of the endgame variation band. Used ONLY to size the precomputed anchored-Default
+        /// table (<see cref="GetAnchoredDefaultProfile"/>); it is the same 25 the three tier lerps in
+        /// ZoneModifiers clamp to (TierScale / CatalogBandAt / WeaponBandAt), stated once here so the
+        /// table cannot silently cover a narrower range than the ladders do.</summary>
+        public const int MaxEndgameVariation = 25;
+
         // zone name (case-insensitive) -> zone
         private static readonly Dictionary<string, ControlledArea> _areas = new(StringComparer.OrdinalIgnoreCase);
         // RUNTIME zones (e.g. rift runs): live in the lock-free snapshot like any enabled zone, but are NEVER
@@ -167,6 +173,11 @@ namespace ACE.Server.Managers.ZoneControl
 
         // variation -> Default layer. Guarded by _lock; copied into the lock-free snapshot at rebuild.
         private static readonly Dictionary<int, VariationDefault> _variationDefaults = new();
+
+        // variation -> the ANCHORED, toggle-applied Default stat layer that ITEMS resolve against
+        // (2026-09-01). Rebuilt under _lock in RebuildIndexes, published volatile, read lock-free on the
+        // equip path. See GetAnchoredDefaultProfile for why this exists.
+        private static volatile Dictionary<int, ZoneVariantProfile> _anchoredDefaults = new();
 
         #region init / persistence
 
@@ -438,6 +449,16 @@ namespace ACE.Server.Managers.ZoneControl
                     list.Add(zr);
                 }
             }
+
+            // (4) Anchored Default profiles for ITEM resolution. Built for the whole endgame band, not just
+            // the authored variations: a v20 zone with no Default of its own still has to resolve items
+            // against v11's anchor board, which is exactly the case that was falling through to the ladder.
+            var anchored = new Dictionary<int, ZoneVariantProfile>();
+            for (var v = MinBoundedVariation; v <= MaxEndgameVariation; v++)
+                AddAnchored(anchored, v);
+            foreach (var v in _variationDefaults.Keys)        // authored outside the band (none today) still resolves
+                AddAnchored(anchored, v);
+            _anchoredDefaults = anchored;                     // volatile publish
 
             var previous = _snapshot;
             _snapshot = new Snapshot(enabledLbs, byLb, boundedByVar, terrOvByVar, terrDonorsByVar); // volatile publish
@@ -1301,12 +1322,64 @@ namespace ACE.Server.Managers.ZoneControl
 
         // ── per-variation Defaults (2026-07-30) ──
 
-        /// <summary>Read-only snapshot of a variation's Default, or null when none is authored.</summary>
+        /// <summary>Read-only snapshot of a variation's Default, or null when none is authored.
+        /// RAW - the variation's OWN layer, with no v11 anchor underneath and no StatToggles applied.
+        /// That is what the authoring/display surface wants (an editor must show what is actually stored
+        /// on the row being edited, not a merged view). Anything that has to answer "what does an item at
+        /// this tier resolve to" wants <see cref="GetAnchoredDefaultProfile"/> instead.</summary>
         public static VariationDefault GetVariationDefault(int variation)
         {
             EnsureInitialized();
             lock (_lock)
                 return DefaultFor(variation);
+        }
+
+        /// <summary>
+        /// The Default stat layer an ITEM at this tier resolves against: <see cref="AnchoredDefaultProfileFor"/>
+        /// (v11 anchor board under the variation's own Default) with StatToggles applied, i.e. the same
+        /// numbers the creature path already sees. Null only for variations outside the endgame band.
+        ///
+        /// WHY (2026-09-01): ZoneStatResolver read the RAW <see cref="GetVariationDefault"/> at five sites.
+        /// Since exactly one Default is authored (v11), that returned null at every tier 12-25, so item
+        /// re-resolution silently fell through to the hardcoded ladder while DROPS - which read the zone's
+        /// evaluated profile, anchor already merged in by <see cref="BuildZoneRef"/> - used the authored
+        /// board. A T25 armour line therefore dropped on band (14,69) and resolved on (28,138): a clean 2x
+        /// on first equip, written with SET semantics and saved, with the appraisal text baked at drop
+        /// disagreeing forever. This is the resolve-side twin of the 2026-08-30 anchor fix, which only ever
+        /// covered the creature path.
+        ///
+        /// Lock-free by design: precomputed in <see cref="RebuildIndexes"/> and published volatile, because
+        /// the equip path reads it once per armour line (up to 11) plus twice per weapon card.
+        /// </summary>
+        public static ZoneVariantProfile GetAnchoredDefaultProfile(int variation)
+        {
+            EnsureInitialized();
+            return _anchoredDefaults.TryGetValue(variation, out var p) ? p : null;
+        }
+
+        /// <summary>Build one entry of the anchored-Default table. Call under _lock (RebuildIndexes holds it).
+        /// StatToggles are applied here EXACTLY as <see cref="EvaluateVariant"/> applies them for the creature
+        /// path - a merged toggle of FALSE removes the stat outright, so every consumer falls back - which is
+        /// what makes the documented per-stat opt-out ("the only way to exempt a zone/monster from an
+        /// inherited Default") finally true on the item side as well. Note the twin is NOT removed, matching
+        /// EvaluateVariant: toggling off one box of an anchored pair leaves the surviving _t25 twin, and the
+        /// two paths must agree even where the rule is odd.</summary>
+        private static void AddAnchored(Dictionary<int, ZoneVariantProfile> into, int variation)
+        {
+            if (into.ContainsKey(variation))
+                return;
+            var merged = AnchoredDefaultProfileFor(variation);
+            if (merged == null)
+                return;
+            // Merge() always allocates a fresh profile, but AnchoredDefaultProfileFor short-circuits to a
+            // LIVE layer when only one exists - copy before removing anything, or a toggle would mutate the
+            // authored store.
+            merged = ZoneVariantProfile.Merge(merged);
+            if (merged.StatToggles is { Count: > 0 })
+                foreach (var kv in merged.StatToggles)
+                    if (!kv.Value)
+                        merged.Stats.Remove(kv.Key);
+            into[variation] = merged;
         }
 
         // ── live stat resolution: ladder apply versions (2026-08-22) ──
