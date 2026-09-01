@@ -7412,6 +7412,231 @@ namespace ACE.Server.Command.Handlers
                     $"{parameters[0]} not found.  Type /showprops for a list of properties.");
         }
 
+        /// <summary>
+        /// /nolog - edit the no-log areas (log out inside one, log back in at your lifestone).
+        ///
+        /// This is a thin editor over ONE ordinary server property, ServerConfig.nolog_landblocks.
+        /// Everything it does can also be done with /modifystring by hand; the command exists so nobody
+        /// has to hand-write the token format. The built-in retail list in Player_Location stays the
+        /// seed and needs no property at all - a server that authors nothing behaves exactly as before.
+        ///
+        /// A landblock+variation pair can be turned OFF as well as on, including a pair that comes from
+        /// the retail seed, which is why removal writes a suppress token rather than just deleting one.
+        /// </summary>
+        [CommandHandler("nolog", AccessLevel.Developer, CommandHandlerFlag.None, 0,
+            "List or edit the no-log areas - log out in one and you log back in at your lifestone.",
+            "nolog list | add <where> [scope] | remove <where> [scope] | check [where] | help")]
+        public static void HandleNoLog(Session session, params string[] parameters)
+        {
+            void Msg(string s) => CommandHandlerHelper.WriteOutputInfo(session, s);
+
+            var sub = parameters.Length > 0 ? parameters[0].ToLowerInvariant() : "list";
+
+            if (sub == "help")
+            {
+                // Kept SHORT and column-aligned on purpose - the previous block wrapped in the chat
+                // window and read as a wall. Lines stay under ~66 chars so they do not fold.
+                Msg("No-Log Areas - log out in one, log back in at your lifestone.");
+                Msg("");
+                Msg("  /nolog list            - show every area in force");
+                Msg("  /nolog add <where>     - make one a no-log area");
+                Msg("  /nolog remove <where>  - stop one being one");
+                Msg("  /nolog check [where]   - does logging out here bounce me?");
+                Msg("");
+                Msg("  <where>");
+                Msg("    here                 - the landblock you stand in");
+                Msg("    016C                 - a hex landblock");
+                Msg("    016C,016D,016E       - a list, sent as one write");
+                Msg("");
+                Msg("  scope - optional, after <where>");
+                Msg("    base                 - normal world; default for a hex");
+                Msg("    11                   - one variation");
+                Msg("    all                  - base and every variation");
+                Msg("    'here' alone uses the layer you stand in.");
+                Msg("");
+                Msg("  Stored in the nolog_landblocks property.");
+                Msg("  The built-in retail list is the seed and needs nothing.");
+                return;
+            }
+
+            if (sub == "list")
+            {
+                var entries = Player.NoLogEntries();
+                Msg($"{entries.Count} no-log area(s) in force:");
+                // Built-in rows show their NAME; rows you added show "(added)". No "(built-in)" tag -
+                // with no overrides every row wore it and it said nothing. The plugin keys off the
+                // "(added)" marker to decide which rows are removable.
+                foreach (var (lb, key) in entries)
+                {
+                    var seed = Player.IsNoLogSeed(lb, key);
+                    var tail = seed ? Player.NoLogSeedName(lb) : "(added)";
+                    Msg($"  {lb:X4}  {Player.NoLogScopeName(key),-13} {tail}");
+                }
+                var raw = ServerConfig.nolog_landblocks?.Value ?? "";
+                Msg(string.IsNullOrWhiteSpace(raw) ? "Overrides: none (built-in list only)." : "Overrides: " + raw);
+                return;
+            }
+
+            if (sub == "check")
+            {
+                if (!TryNoLogTarget(session, parameters, 1, out var lb, out var variation, out var err)) { Msg(err); return; }
+                var key = Player.NoLogVariationKey(variation);
+                var on = Player.IsNoLogArea(lb, variation);
+                var scope = Player.NoLogScopeName(key);
+                Msg($"{lb:X4} at {scope}: {(on ? "NO-LOG - logging out here returns you to your lifestone." : "normal - you log back in where you left.")}");
+                if (on && Player.IsNoLogSeed(lb, key))
+                    Msg("  Source: the built-in retail list.");
+                return;
+            }
+
+            if (sub != "add" && sub != "remove")
+            {
+                Msg($"Unknown subcommand '{sub}'. Try /nolog help.");
+                return;
+            }
+
+            // A COMMA LIST is accepted so a whole zone is one command, not one per landblock. That
+            // matters: Tou Tou alone is 90 landblocks, and every write flushes to the database, so
+            // ninety separate commands would be ninety flushes off one button press.
+            if (!TryNoLogTargets(session, parameters, 1, out var landblocks, out var rawVariation, out var error)) { Msg(error); return; }
+
+            // an explicit scope argument overrides where the caller is standing
+            var variationKey = Player.NoLogVariationKey(rawVariation);
+            var scopeArg = parameters.Length > 2 ? parameters[2] : null;
+            if (!string.IsNullOrWhiteSpace(scopeArg))
+            {
+                if (!Player.TryParseNoLogToken("0000:" + scopeArg.Trim(), out _, out variationKey, out _))
+                {
+                    Msg($"Bad scope '{scopeArg}'. Use base, all, or a variation number.");
+                    return;
+                }
+            }
+
+            var adding = sub == "add";
+            var original = ServerConfig.nolog_landblocks?.Value ?? "";
+            var tokens = SplitNoLogTokens(original);
+
+            foreach (var landblock in landblocks)
+            {
+                // Drop any existing token for this exact pair, in either direction, so an add/remove
+                // cycle is lossless rather than accumulating contradictions.
+                var lb = landblock;
+                tokens.RemoveAll(t => Player.TryParseNoLogToken(t, out var tlb, out var tkey, out _)
+                                      && tlb == lb && tkey == variationKey);
+
+                // Then author an explicit token, UNLESS the built-in seed already says exactly this on
+                // its own. The seed only ever covers the base bucket, so only a base-scope edit can be
+                // redundant with it - a variation or 'all' edit always needs its own token.
+                var seedSaysSame = variationKey == Player.NoLogBaseScopeKey
+                                   && Player.IsNoLogSeed(lb, variationKey) == adding;
+                if (!seedSaysSame)
+                    tokens.Add(Player.NoLogTokenFor(lb, variationKey, !adding));
+            }
+
+            var updated = string.Join(", ", tokens);
+            if (updated == original)
+            {
+                Msg($"{DescribeNoLogTargets(landblocks)} at {Player.NoLogScopeName(variationKey)} "
+                    + $"{(landblocks.Count == 1 ? "is" : "are")} already {(adding ? "a no-log area" : "normal")} - nothing changed.");
+                return;
+            }
+
+            if (!ServerConfig.SetValue("nolog_landblocks", updated))
+            {
+                Msg("Could not write the nolog_landblocks property.");
+                return;
+            }
+
+            // FLUSH NOW, do not wait for the property worker.
+            //
+            // SetValue only updates the in-memory value and queues the row; PropertyManager drains the
+            // queue on a 300000 ms timer (_workerThread) and StopUpdating() stops that timer WITHOUT
+            // flushing. So an edit followed by a shutdown inside five minutes is silently lost - the
+            // admin sees it working live, then it is gone on the next start. That is intolerable for a
+            // setting whose whole job is to survive a relog, and it bit exactly that way in testing.
+            ServerConfig.WriteUpdatesToDb();
+
+            Msg($"{DescribeNoLogTargets(landblocks)} at {Player.NoLogScopeName(variationKey)} "
+                + $"{(landblocks.Count == 1 ? "is" : "are")} now {(adding ? "NO-LOG" : "normal")}.");
+            Msg(string.IsNullOrWhiteSpace(updated) ? "Overrides: none (built-in list only)." : "Overrides: " + updated);
+            PlayerManager.BroadcastToAuditChannel(session?.Player,
+                $"{(adding ? "Added" : "Removed")} no-log: {DescribeNoLogTargets(landblocks)} ({Player.NoLogScopeName(variationKey)})");
+        }
+
+        /// <summary>"016C" / "here" / "F156,F157,F158" -> the landblocks to act on. Duplicates collapse.</summary>
+        private static bool TryNoLogTargets(Session session, string[] parameters, int index, out List<ushort> landblocks, out int? variation, out string error)
+        {
+            landblocks = new List<ushort>();
+            variation = null;
+            error = null;
+
+            var raw = parameters.Length > index ? parameters[index] : "here";
+
+            foreach (var piece in raw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var token = piece.Trim();
+                if (token.Length == 0) continue;
+
+                if (!TryNoLogTarget(session, new[] { token }, 0, out var lb, out var v, out error))
+                    return false;
+
+                if (v.HasValue) variation = v;                 // only "here" supplies one
+                if (!landblocks.Contains(lb)) landblocks.Add(lb);
+            }
+
+            if (landblocks.Count == 0) { error = "No landblock given. Use a hex id, a comma list, or 'here'."; return false; }
+            return true;
+        }
+
+        /// <summary>Short human summary of a target list - the ids when there are few, a count when many.</summary>
+        private static string DescribeNoLogTargets(List<ushort> landblocks)
+        {
+            if (landblocks.Count == 1) return landblocks[0].ToString("X4");
+            if (landblocks.Count <= 6) return string.Join(", ", landblocks.ConvertAll(l => l.ToString("X4")));
+            return landblocks.Count + " landblocks";
+        }
+
+        private static List<string> SplitNoLogTokens(string raw)
+        {
+            var list = new List<string>();
+            foreach (var t in (raw ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+                if (!string.IsNullOrWhiteSpace(t))
+                    list.Add(t.Trim());
+            return list;
+        }
+
+        /// <summary>
+        /// Resolve the landblock (and, for "here", the caller's variation) for a /nolog subcommand.
+        /// The variation is the RAW Location.Variation, deliberately not GetEffectiveVariation - that one
+        /// also applies the ForceEndgameSystems dev override, and an entry authored from a simulated
+        /// variation could never match the real one at login.
+        /// </summary>
+        private static bool TryNoLogTarget(Session session, string[] parameters, int index, out ushort landblock, out int? variation, out string error)
+        {
+            landblock = 0;
+            variation = null;
+            error = null;
+
+            var token = parameters.Length > index ? parameters[index] : "here";
+
+            if (token.Equals("here", StringComparison.OrdinalIgnoreCase))
+            {
+                var loc = session?.Player?.Location;
+                if (loc == null) { error = "No location for 'here' - stand somewhere, or pass a hex landblock."; return false; }
+                landblock = loc.LandblockId.Landblock;
+                variation = loc.Variation;
+                return true;
+            }
+
+            var text = token.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? token.Substring(2) : token;
+            if (!ushort.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out landblock))
+            {
+                error = $"'{token}' is not a hex landblock (e.g. 016C) or 'here'.";
+                return false;
+            }
+            return true;
+        }
+
         [CommandHandler("modifystring", AccessLevel.Admin, CommandHandlerFlag.None, 2, "Modifies a server property that is a string", "modifystring (string) (string)")]
         public static void HandleModifyServerStringProperty(Session session, params string[] parameters)
         {
