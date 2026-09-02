@@ -53,6 +53,20 @@ namespace ACE.Server.Managers.ZoneControl
             if (profile == null)
                 return;
 
+            // VITAL FILL RATIOS ARE CAPTURED HERE, BEFORE ANY ATTRIBUTE MOVES (owner 2026-09-01).
+            // Endurance feeds MaxHealth (and Self feeds Mana), so raising an attribute lifts MaxValue
+            // instantly while Current stays where the weenie left it. Reading the ratio AFTER that -
+            // which is what ApplyVital and the MaxHealth block below used to do - reads an already
+            // collapsed number and then faithfully preserves the wrong thing.
+            // Retail wcid 4124 in a T11 zone: Endurance 178 -> 1100 lifted MaxHealth ~89 -> ~550 while
+            // Current stayed 89, so the "preserved" ratio was 16 pct and the monster spawned at
+            // 161,819 / 1,000,000. Custom T11 monsters hid it because their attributes are already
+            // near 1100, so scaling barely moves their max - it only bites the arbitrary retail mob,
+            // i.e. exactly the drop-in case the whole Bestiary lane exists to serve.
+            var fillHealth = FillRatio(creature.Health);
+            var fillStamina = FillRatio(creature.Stamina);
+            var fillMana = FillRatio(creature.Mana);
+
             ApplyAttribute(creature, profile, ZoneStat.Strength, PropertyAttribute.Strength);
             ApplyAttribute(creature, profile, ZoneStat.Endurance, PropertyAttribute.Endurance);
             ApplyAttribute(creature, profile, ZoneStat.Coordination, PropertyAttribute.Coordination);
@@ -88,14 +102,19 @@ namespace ACE.Server.Managers.ZoneControl
             if (profile.Has(ZoneStat.MaxHealth))
             {
                 var maxBefore = creature.Health.MaxValue;
-                var healthPct = maxBefore > 0 ? (float)creature.Health.Current / maxBefore : 1f;
                 var target = (long)Math.Round(profile.Get(ZoneStat.MaxHealth));
                 // subtract the non-starting contributions (endurance formula, ranks) so MaxValue lands on target
                 var nonStarting = (long)maxBefore - creature.Health.StartingValue;
                 creature.Health.StartingValue = (uint)Math.Clamp(target - nonStarting, 1L, uint.MaxValue);
-                var maxAfter = creature.Health.MaxValue;
-                creature.Health.Current = (uint)Math.Clamp((uint)Math.Round(healthPct * maxAfter), 0u, maxAfter);
             }
+
+            // Refill to the ratios captured above, AFTER every max has settled - attributes, the
+            // authored vitals, and max_health all move MaxValue, so this has to be the last word.
+            // A fresh spawn was at 100 pct, so it comes up full; a live re-apply onto a damaged
+            // monster keeps it damaged, which is the behaviour the ratio existed for.
+            RefillVital(creature.Health, fillHealth);
+            RefillVital(creature.Stamina, fillStamina);
+            RefillVital(creature.Mana, fillMana);
 
             // Incoming crit protection: REPLACE the base rating props on the live spawn (engine reads
             // them generically - Creature_Rating). The OUTGOING pair (crit_rating/crit_damage_rating)
@@ -130,18 +149,31 @@ namespace ACE.Server.Managers.ZoneControl
 
         /// <summary>Set a vital's (Stamina/Mana) max absolutely, as a spawn snapshot preserving current %
         /// (same pattern as the MaxHealth block above; Health is handled separately in ApplyToSpawn).</summary>
+        /// <summary>How full a vital is, sampled BEFORE anything moves its maximum. See the block comment
+        /// at the top of ApplyToSpawn for why the timing is the whole point.</summary>
+        private static float FillRatio(WorldObjects.Entity.CreatureVital vital)
+            => vital != null && vital.MaxValue > 0 ? (float)vital.Current / vital.MaxValue : 1f;
+
+        /// <summary>Restore a vital to a ratio captured earlier, clamped to its CURRENT maximum.</summary>
+        private static void RefillVital(WorldObjects.Entity.CreatureVital vital, float fill)
+        {
+            if (vital == null)
+                return;
+            var max = vital.MaxValue;
+            vital.Current = (uint)Math.Clamp((uint)Math.Round(Math.Clamp(fill, 0f, 1f) * max), 0u, max);
+        }
+
+        /// <summary>Set a vital's authored maximum. The fill ratio is NOT applied here - RefillVital runs
+        /// once at the end of ApplyToSpawn, after every contributor to MaxValue has settled.</summary>
         private static void ApplyVital(Creature creature, EvaluatedProfile profile, string statKey, WorldObjects.Entity.CreatureVital vital)
         {
             if (profile == null || !profile.Has(statKey))
                 return;
 
             var maxBefore = vital.MaxValue;
-            var pct = maxBefore > 0 ? (float)vital.Current / maxBefore : 1f;
             var target = (long)Math.Round(profile.Get(statKey));
             var nonStarting = (long)maxBefore - vital.StartingValue;
             vital.StartingValue = (uint)Math.Clamp(target - nonStarting, 1L, uint.MaxValue);
-            var maxAfter = vital.MaxValue;
-            vital.Current = (uint)Math.Clamp((uint)Math.Round(pct * maxAfter), 0u, maxAfter);
         }
 
         /// <summary>Stamp a zone profile's generic prop overrides onto a freshly-spawned governed monster.</summary>

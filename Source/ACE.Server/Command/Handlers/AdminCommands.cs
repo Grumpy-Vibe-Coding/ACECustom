@@ -4865,6 +4865,23 @@ namespace ACE.Server.Command.Handlers
 
             obj.Location.LandblockId = new LandblockId(obj.Location.GetCell());
 
+            // ZONE SCALING for admin-spawned creatures (owner 2026-09-01, found while testing at v12).
+            // ZoneSpawnScaler.ApplyToSpawn is otherwise only reached from the landblock-instance path
+            // (WorldObjectFactory), so /create and /createliveops produced a HALF-scaled monster: the
+            // live-read stats applied (ratings read 1100) while the spawn-STAMPED ones did not (a retail
+            // lich stood in a v12 zone with 89 health and its own 161/178/135 attributes instead of
+            // 1,000,000 and 1100s). Generators, landblock instances and summons were always fine - this
+            // was purely the admin direct-spawn path, which is the one a dev reaches for when testing a
+            // new mob, so it failed in the most confusing possible direction.
+            //
+            // Placement HAS to come first: the scaler resolves the zone from Location (and Position
+            // carries Variation through InFrontOf), so calling this before the two assignments above
+            // would resolve nothing and silently no-op again. Prestige and Rift scaling are deliberately
+            // NOT added here - they are separate systems with their own entry points, and this fixes
+            // only the gap that was actually observed.
+            if (obj is Creature spawnedCreature)
+                Managers.ZoneControl.ZoneSpawnScaler.ApplyToSpawn(spawnedCreature);
+
             LastSpawnPos = obj.Location;
 
             return obj;
