@@ -564,6 +564,20 @@ namespace ACE.Server.Managers.WeaponScaling
                     t.MinWieldSkillCharm = 500 * (t.Tier - 15);
                     t.MinWieldAugs = Math.Min(4000, t.MinWieldAugs);
                 }
+
+                // Migration for stores saved before MinWieldCreature existed (the column was added
+                // 2026-08-31 with the T11+ hit gate). The FRESH-config seed above authors this ladder,
+                // but an existing store was written without the field, so every live row loaded as 0 -
+                // and TierHitGate reads `MinWieldCreature > 0 && ...`, so a 0 SKIPS the check outright.
+                // The gate shipped ON on 2026-09-01 enforcing only Item augs and Triune, with the
+                // 4,000-6,000 Creature requirement - the largest component - silently inert. Found
+                // 2026-09-01 when `tier curves` printed a creature column of zeros and a suspiciously
+                // straight interpolation.
+                // 0 is read as UNSET rather than as an authored "no requirement", same assumption the
+                // charm migration above makes: the field was never reachable from any command, so no
+                // stored 0 can be deliberate.
+                if (t.Tier >= 11 && t.MinWieldCreature == 0)
+                    t.MinWieldCreature = Math.Min(6000, 4000 + 500 * (t.Tier - 11));
             }
 
             var scripts = new Dictionary<string, WeaponScalingScript>(StringComparer.OrdinalIgnoreCase);

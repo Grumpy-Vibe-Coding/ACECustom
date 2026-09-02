@@ -2274,6 +2274,12 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "tier":
+                    {
+                        HandleTierTune(args, Msg);
+                        return;
+                    }
+
                     case "mobcheck":
                     case "mobcheckget":
                     {
@@ -4694,6 +4700,169 @@ namespace ACE.Server.Command.Handlers
         /// cannot drift into disagreeing about whether a mob is ready, which they would have the first
         /// time either side gained a check.
         /// </summary>
+        /// <summary>
+        /// `tier` - the PER-TIER TUNING GENERATOR (owner 2026-09-01).
+        ///
+        /// Per-tier tuning has to happen, but plain stats have no runtime tier ramp: every read site
+        /// calls EvaluatedProfile.Get with no tier argument, and the _t25 anchor lerp serves loot BANDS
+        /// only. The two ways to close that were (a) register _t25 twins and move ~12 combat hot-path
+        /// read sites onto GetT, or (b) generate the fifteen per-tier Defaults at AUTHORING time and let
+        /// the already-working Default stack serve them. Owner chose (b).
+        ///
+        /// Why (b) is the better shape and not just the safer one:
+        ///   - ZERO combat code changes. It reuses the VariationDefault path that monster_level proved
+        ///     working in game on 2026-09-01.
+        ///   - A runtime lerp can only ever draw a STRAIGHT LINE. Player power does not grow in a
+        ///     straight line: Creature and Item augs climb to their caps at T15 and then stop, and from
+        ///     T16 all growth is Triune. Evaluating the curve at authoring time means the curve can be
+        ///     any shape at all - the engine never sees it.
+        ///   - The fifteen values stay VISIBLE in the store. A dev can read what T17 actually gets
+        ///     instead of inferring it from two anchors and a formula.
+        /// The cost is that retuning means re-running the command. That is one line.
+        ///
+        /// Curves:
+        ///   augs   (default) - interpolate on the AUG LADDER, so a stat tracks the thing that actually
+        ///                      gates a player's ability to fight at that tier. Front-loaded: T15 lands
+        ///                      ~44 pct of the way from T11 to T25, not the 29 pct a straight line gives.
+        ///   linear           - plain lerp on (tier-11)/14, matching how the loot bands behave.
+        ///
+        /// Writes ONLY the stat named. Everything else on each tier Default is untouched, and the v11
+        /// anchor still supplies every stat below these (AnchoredDefaultProfileFor).
+        /// </summary>
+        private static void HandleTierTune(List<string> args, Action<string> Msg)
+        {
+            if (args.Count < 2)
+            {
+                Msg("Usage: tier <stat> <t11value> <t25value> [--curve augs|linear]");
+                Msg("       tier show <stat>          what each tier is authored at");
+                Msg("       tier clear <stat>         drop it from every tier Default");
+                Msg("       tier curves               the aug ladder this interpolates on");
+                return;
+            }
+
+            var verb = args[1];
+
+            if (verb.Equals("curves", StringComparison.OrdinalIgnoreCase))
+            {
+                Msg("Aug ladder - the interpolation basis for --curve augs:");
+                Msg("  tier   creature    item  triune    life   TOTAL   fraction");
+                var p11 = AugPowerAt(MinBoundedTier);
+                var p25 = AugPowerAt(MaxTunedTier);
+                for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
+                {
+                    var row = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(t);
+                    var pw = AugPowerAt(t);
+                    var frac = p25 > p11 ? (pw - p11) / (double)(p25 - p11) : 0.0;
+                    Msg($"  T{t,-4} {row?.MinWieldCreature ?? 0,8} {row?.MinWieldAugs ?? 0,7} {row?.MinWieldTriune ?? 0,7} {LifeAugCap,7} {pw,7}   {frac,7:0.000}");
+                }
+                Msg($"  Life is a CONSTANT {LifeAugCap} - a real capped player is 6000 + 4000 + 4000 = 14000 augs,");
+                Msg("  then 500 Triune per tier from T16 (owner 2026-09-01). It shifts the curve, not its shape.");
+                return;
+            }
+
+            if (verb.Equals("show", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.Count < 3) { Msg("Usage: tier show <stat>"); return; }
+                var showStat = NormalizeStat(args[2]);
+                if (showStat == null) { Msg($"Unknown stat '{args[2]}'."); return; }
+                Msg($"{showStat} across the tier Defaults:");
+                var any = false;
+                for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
+                {
+                    var prof = ZoneControlManager.GetVariationDefault(t)?.Profile;
+                    if (prof?.Stats != null && prof.Stats.TryGetValue(showStat, out var c) && c != null)
+                    { Msg($"  T{t,-4} {c.Evaluate(1),14:0.####}"); any = true; }
+                    else Msg($"  T{t,-4} {"(not authored)",14}");
+                }
+                if (!any) Msg("  Nothing authored. It falls through to the v11 anchor, or to code defaults.");
+                return;
+            }
+
+            if (verb.Equals("clear", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.Count < 3) { Msg("Usage: tier clear <stat>"); return; }
+                var clrStat = NormalizeStat(args[2]);
+                if (clrStat == null) { Msg($"Unknown stat '{args[2]}'."); return; }
+                var cleared = 0;
+                for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
+                {
+                    var removed = false;
+                    ZoneControlManager.MutateVariationDefault(t, d => removed = d.Profile.Stats.Remove(clrStat));
+                    if (removed) cleared++;
+                }
+                Msg($"Cleared {clrStat} from {cleared} tier Default(s).");
+                return;
+            }
+
+            // tier <stat> <t11> <t25> [--curve augs|linear]
+            var stat = NormalizeStat(verb);
+            if (stat == null) { Msg($"Unknown stat '{verb}'. See 'statlist'."); return; }
+            if (args.Count < 4
+                || !double.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var v11)
+                || !double.TryParse(args[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var v25))
+            { Msg("Usage: tier <stat> <t11value> <t25value> [--curve augs|linear]"); return; }
+
+            var useAugs = true;
+            for (var i = 4; i < args.Count; i++)
+            {
+                if (args[i].Equals("--curve", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Count)
+                {
+                    var c = args[i + 1];
+                    if (c.Equals("linear", StringComparison.OrdinalIgnoreCase)) useAugs = false;
+                    else if (c.Equals("augs", StringComparison.OrdinalIgnoreCase)) useAugs = true;
+                    else { Msg($"Unknown curve '{c}'. Use augs or linear."); return; }
+                }
+            }
+
+            var pw11 = AugPowerAt(MinBoundedTier);
+            var pw25 = AugPowerAt(MaxTunedTier);
+
+            Msg($"{stat}: T{MinBoundedTier} {v11:0.####} -> T{MaxTunedTier} {v25:0.####}  (curve: {(useAugs ? "augs" : "linear")})");
+            for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
+            {
+                double frac;
+                if (useAugs && pw25 > pw11)
+                    frac = (AugPowerAt(t) - pw11) / (double)(pw25 - pw11);
+                else
+                    frac = (t - MinBoundedTier) / (double)(MaxTunedTier - MinBoundedTier);
+
+                var value = v11 + (v25 - v11) * frac;
+                var tier = t;    // captured per iteration - a shared loop variable would author the last tier fifteen times
+                ZoneControlManager.MutateVariationDefault(tier, d =>
+                    d.Profile.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false });
+                Msg($"  T{tier,-4} {value,14:0.####}");
+            }
+            Msg($"Authored on {MaxTunedTier - MinBoundedTier + 1} tier Defaults. Stamped stats land on RESPAWN.");
+        }
+
+        /// <summary>Top of the band the tuning generator writes. The ladders in ZoneModifiers clamp to
+        /// the same 25.</summary>
+        private const int MaxTunedTier = 25;
+        private const int MinBoundedTier = ZoneControlManager.MinBoundedVariation;
+
+        /// <summary>Life augs are capped and UNGATED, so every real player at cap carries the same
+        /// 4,000 (owner 2026-09-01: "6k creature, 4k item, 4k life is the max a real player has").
+        /// TierHitGate does not read them - Life cannot distinguish two players, so it is a constant
+        /// offset here rather than a variable.</summary>
+        private const int LifeAugCap = 4000;
+
+        /// <summary>
+        /// Total aug power a player is expected to hold at a tier: the LIVE wield ladder
+        /// (WeaponScalingManager, the same rows TierHitGate gates on, so the tuning basis and the gate
+        /// can never drift) plus the flat Life cap.
+        ///
+        /// The shape this produces is why the default curve is not linear: Creature and Item climb to
+        /// their caps by T15 and then stop, and from T16 every remaining point is Triune. Growth is
+        /// therefore about +1,000 per tier to T15 and +500 per tier after it.
+        /// </summary>
+        private static int AugPowerAt(int tier)
+        {
+            var row = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.GetTier(tier);
+            if (row == null)
+                return LifeAugCap;
+            return row.MinWieldCreature + row.MinWieldAugs + row.MinWieldTriune + LifeAugCap;
+        }
+
         private static void HandleMobCheck(string zoneName, uint mobWcid, Action<string> Msg)
         {
             var r = EvaluateMobCheck(zoneName, mobWcid);
