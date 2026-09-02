@@ -92,23 +92,32 @@ namespace ACE.Server.Managers.ZoneControl
             var item = (long)player.EffectiveItemAugCount;
             var triune = player.GetProperty(PropertyInt64.TriuneWeaveCount) ?? 0;
 
-            if (row.MinWieldCreature > 0 && creature < row.MinWieldCreature)
-            {
-                reason = $"Your Creature augmentations ({creature:N0}) are below the {row.MinWieldCreature:N0} required at tier {variation}.";
-                return false;
-            }
+            // EVERY unmet requirement, one per line under a plain lead line (owner 2026-09-01).
+            //
+            // It used to return on the FIRST failure, so a player short on two counters was told about
+            // Creature only, farmed exactly that, came back, and was told about Item for the first
+            // time - one grind turned into two, reading as the goalposts moving. The message is the
+            // only feedback the gate ever gives, so it has to be complete.
+            //
+            // Requirements the player already MEETS are left out, and so is any counter this tier does
+            // not ask for at all (MinWieldTriune is 0 below T16 - printing "0 of 0" is noise). The list
+            // is exactly what is still to do.
+            var needCreature = row.MinWieldCreature > 0 && creature < row.MinWieldCreature;
+            var needItem = row.MinWieldAugs > 0 && item < row.MinWieldAugs;
+            var needTriune = row.MinWieldTriune > 0 && triune < row.MinWieldTriune;
 
-            if (row.MinWieldAugs > 0 && item < row.MinWieldAugs)
-            {
-                reason = $"Your Item augmentations ({item:N0}) are below the {row.MinWieldAugs:N0} required at tier {variation}.";
-                return false;
-            }
+            if (!needCreature && !needItem && !needTriune)
+                return true;
 
-            if (row.MinWieldTriune > 0 && triune < row.MinWieldTriune)
-            {
-                reason = $"Your Triune Weave ({triune:N0}) is below the {row.MinWieldTriune:N0} required at tier {variation}.";
-                return false;
-            }
+            // Built ONLY on a block - the pass path above allocates nothing. Lines are newline-joined
+            // and split by CanHitOrTell into one chat message each, rather than relying on the client
+            // to render a newline inside a single system message.
+            var sb = new System.Text.StringBuilder("You are not powerful enough to fight this creature.");
+            if (needCreature) sb.Append('\n').Append($"Creature augmentations: {creature:N0} of {row.MinWieldCreature:N0}");
+            if (needItem) sb.Append('\n').Append($"Item augmentations: {item:N0} of {row.MinWieldAugs:N0}");
+            if (needTriune) sb.Append('\n').Append($"Triune Weave: {triune:N0} of {row.MinWieldTriune:N0}");
+            reason = sb.ToString();
+            return false;
 
             return true;
         }
@@ -122,8 +131,16 @@ namespace ACE.Server.Managers.ZoneControl
             if (CanHit(attacker, target, out var reason))
                 return true;
 
+            // One chat message PER LINE (owner 2026-09-01: lead line, then a line per unmet
+            // requirement). Sent separately rather than as one message containing newlines - the
+            // client is not relied on to break the line.
             if (attacker is Player player && reason != null)
-                player.Session?.Network?.EnqueueSend(new GameMessageSystemChat(reason, ChatMessageType.Broadcast));
+            {
+                var net = player.Session?.Network;
+                if (net != null)
+                    foreach (var line in reason.Split('\n'))
+                        net.EnqueueSend(new GameMessageSystemChat(line, ChatMessageType.Broadcast));
+            }
 
             return false;
         }
