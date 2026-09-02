@@ -2275,7 +2275,12 @@ namespace ACE.Server.Command.Handlers
                     }
 
                     case "mobcheck":
+                    case "mobcheckget":
                     {
+                        // mobcheckget is the MACHINE twin - same parsing, same evaluation, [[ZCMC]] out
+                        // instead of chat lines. Same split as mobinfo/defaultget: the plugin panel reads
+                        // the payload, a dev with no plugin still types `mobcheck` and gets prose.
+                        var mcWire = sub == "mobcheckget";
                         // Every reasonable shape works. The wcid may arrive as --wcid (house flag), or
                         // as a bare number in either position; the zone may be named or left out, in
                         // which case the zone you are STANDING IN is used. Requiring one exact form
@@ -2289,29 +2294,50 @@ namespace ACE.Server.Command.Handlers
                             if (mcZone == null) mcZone = args[i];
                         }
 
+                        // On the wire path EVERY exit must be a payload - a panel waiting on [[ZCMC]] must
+                        // not be left hanging by a prose usage line it will never parse.
+                        void McFail()
+                        {
+                            if (mcWire) Msg("[[ZCMC]]wcid=" + (mcWcid ?? 0) + "|found=0");
+                        }
+
                         if (!mcWcid.HasValue)
                         {
-                            Msg("Usage: mobcheck <wcid>            - checks the zone you are standing in");
-                            Msg("       mobcheck <zone> <wcid>     - checks a named zone");
+                            McFail();
+                            if (!mcWire)
+                            {
+                                Msg("Usage: mobcheck <wcid>            - checks the zone you are standing in");
+                                Msg("       mobcheck <zone> <wcid>     - checks a named zone");
+                            }
                             return;
                         }
 
                         if (string.IsNullOrWhiteSpace(mcZone))
                         {
                             var mcLoc = session.Player?.Location;
-                            if (mcLoc == null) { Msg("No location - name the zone: mobcheck <zone> <wcid>"); return; }
+                            if (mcLoc == null)
+                            {
+                                McFail();
+                                if (!mcWire) Msg("No location - name the zone: mobcheck <zone> <wcid>");
+                                return;
+                            }
                             var here = ZoneControlManager.ResolveWinnerForLocation(
                                 mcLoc.LandblockId.Landblock, ZoneControlManager.GetEffectiveVariation(session.Player));
                             if (here == null)
                             {
-                                Msg($"You are not standing in an authored zone (landblock {mcLoc.LandblockId.Landblock:X4}).");
-                                Msg("Name one instead: mobcheck <zone> <wcid>");
+                                McFail();
+                                if (!mcWire)
+                                {
+                                    Msg($"You are not standing in an authored zone (landblock {mcLoc.LandblockId.Landblock:X4}).");
+                                    Msg("Name one instead: mobcheck <zone> <wcid>");
+                                }
                                 return;
                             }
                             mcZone = here.Name;
                         }
 
-                        HandleMobCheck(mcZone, mcWcid.Value, Msg);
+                        if (mcWire) Msg(BuildMobCheckPayload(mcZone, mcWcid.Value));
+                        else HandleMobCheck(mcZone, mcWcid.Value, Msg);
                         return;
                     }
 
@@ -4661,62 +4687,159 @@ namespace ACE.Server.Command.Handlers
         /// any of that. This is that missing surface (2026-08-31).
         ///
         /// Read-only. It writes nothing and fixes nothing - it names what to fix.
+        ///
+        /// TWO RENDERERS, ONE EVALUATION (2026-09-01): <see cref="EvaluateMobCheck"/> does all the
+        /// reading; this method renders it as chat text and <see cref="BuildMobCheckPayload"/> renders
+        /// the SAME record as the [[ZCMC]] wire payload the Bestiary &gt; Readiness panel draws. They
+        /// cannot drift into disagreeing about whether a mob is ready, which they would have the first
+        /// time either side gained a check.
         /// </summary>
         private static void HandleMobCheck(string zoneName, uint mobWcid, Action<string> Msg)
         {
+            var r = EvaluateMobCheck(zoneName, mobWcid);
+            if (r.Error != null) { Msg(r.Error); return; }
+
+            void Ok(string t) => Msg("  ok    " + t);
+            void Warn(string t) => Msg("  WARN  " + t);
+
+            Msg($"{r.MobName} ({mobWcid}) in {zoneName} v{r.Variation}");
+
+            if (r.ZoneEnabled) Ok($"zone enabled at variation {r.Variation}");
+            else Warn($"zone '{zoneName}' is DISABLED - nothing below applies to a live spawn");
+
+            if (r.LevelSource == MobCheckSource.Zone) Ok($"level {r.Level} (zone monster_level)");
+            else if (r.LevelSource == MobCheckSource.Weenie) Warn($"level {r.Level} comes from the weenie - monster_level is not authored");
+            else Warn("no level at all - weenie has none and monster_level is not authored");
+
+            if (r.CreatureTypeSource == MobCheckSource.Weenie) Ok($"creature type {r.CreatureTypeName}");
+            else if (r.CreatureTypeSource == MobCheckSource.Zone) Ok($"creature type {r.CreatureTypeName} (zone fallback)");
+            else Warn("NO creature type - no slayer weapon can ever roll off this mob");
+
+            if (r.SpellCount > 0)
+            {
+                if (r.HasMagicSkill) Ok($"{r.BookSpells} book spell(s) + {r.ZoneSpells} zone-added, magic_skill {r.MagicSkill}");
+                else Warn($"casts {r.SpellCount} spell(s) but magic_skill is NOT authored - players will resist them");
+            }
+            else Ok("no spells - magic_skill not needed");
+
+            Ok("rank: " + r.RankLabel);
+
+            if (r.CoreMissing.Count == 0) Ok($"all {r.CoreTotal} core stats authored");
+            else Warn($"{r.CoreMissing.Count} of {r.CoreTotal} core stats NOT authored (weenie value passes through): {string.Join(", ", r.CoreMissing)}");
+
+            // A look BAKED onto the weenie by bakemob/clonemob is global and leaves no zone bucket
+            // (clonemob deletes it), so an absent bucket is NOT evidence of a stock look - only that
+            // this ZONE does not override the look. Worded as fact, and never counted as an issue.
+            if (r.HasZoneAppearance) Ok("appearance authored for this wcid in this zone");
+            else Msg("  --    no per-zone appearance override; the look comes from the weenie");
+
+            Msg(r.Issues == 0
+                ? "  => ready."
+                : $"  => {r.Issues} thing(s) to fix.");
+        }
+
+        /// <summary>Where a mobcheck value came from.</summary>
+        private enum MobCheckSource { None = 0, Weenie = 1, Zone = 2 }
+
+        /// <summary>The whole readiness answer for one monster in one zone. Built once by
+        /// <see cref="EvaluateMobCheck"/>; rendered as chat by <see cref="HandleMobCheck"/> and as the
+        /// [[ZCMC]] wire payload by <see cref="BuildMobCheckPayload"/>.</summary>
+        private sealed class MobCheckResult
+        {
+            public string Error;
+            public string MobName = "";
+            public int Variation;
+            public bool ZoneEnabled;
+            public int Level;
+            public MobCheckSource LevelSource;
+            public int CreatureType;
+            public string CreatureTypeName = "";
+            public MobCheckSource CreatureTypeSource;
+            public int BookSpells, ZoneSpells;
+            public int SpellCount => BookSpells + ZoneSpells;
+            public bool HasMagicSkill;
+            public int MagicSkill;
+            public string RankLabel = "";
+            public List<string> CoreMissing = new();
+            public int CoreTotal;
+            public bool HasZoneAppearance;
+
+            /// <summary>Count of WARN rows - the same number the chat renderer prints as "N thing(s) to
+            /// fix". Rank and appearance are information and never count.</summary>
+            public int Issues
+            {
+                get
+                {
+                    var n = 0;
+                    if (!ZoneEnabled) n++;
+                    if (LevelSource != MobCheckSource.Zone) n++;
+                    if (CreatureTypeSource == MobCheckSource.None) n++;
+                    if (SpellCount > 0 && !HasMagicSkill) n++;
+                    if (CoreMissing.Count > 0) n++;
+                    return n;
+                }
+            }
+        }
+
+        /// <summary>Read every readiness fact for one monster in one zone. READ ONLY.</summary>
+        private static MobCheckResult EvaluateMobCheck(string zoneName, uint mobWcid)
+        {
             var area = ZoneControlManager.GetArea(zoneName);
-            if (area == null) { Msg($"No zone '{zoneName}'."); return; }
+            if (area == null) return new MobCheckResult { Error = $"No zone '{zoneName}'." };
 
             var weenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(mobWcid);
-            if (weenie == null) { Msg($"No weenie {mobWcid}."); return; }
+            if (weenie == null) return new MobCheckResult { Error = $"No weenie {mobWcid}." };
 
             var eval = ZoneControlManager.EvaluateForDisplay(zoneName, mobWcid);
             bool Has(string stat) => eval != null && eval.Values.ContainsKey(stat);
             double Val(string stat) => eval != null && eval.Values.TryGetValue(stat, out var v) ? v : 0.0;
 
-            var issues = 0;
-            void Ok(string t) => Msg("  ok    " + t);
-            void Warn(string t) { issues++; Msg("  WARN  " + t); }
+            var r = new MobCheckResult
+            {
+                MobName = weenie.GetName() ?? ("wcid " + mobWcid),
+                Variation = area.Variation,
+                ZoneEnabled = area.Enabled,
+            };
 
-            Msg($"{weenie.GetName() ?? ("wcid " + mobWcid)} ({mobWcid}) in {zoneName} v{area.Variation}");
-
-            // 1. is the zone even live
-            if (area.Enabled) Ok($"zone enabled at variation {area.Variation}");
-            else Warn($"zone '{zoneName}' is DISABLED - nothing below applies to a live spawn");
-
-            // 2. level - no ZoneStat existed before 2026-08-31, so a retail weenie kept its own
+            // level - no ZoneStat existed before 2026-08-31, so a retail weenie kept its own
             var weenieLevel = weenie.GetProperty(PropertyInt.Level) ?? 0;
-            if (Has(ZoneStat.MonsterLevel)) Ok($"level {Val(ZoneStat.MonsterLevel):0} (zone monster_level)");
-            else if (weenieLevel > 0) Warn($"level {weenieLevel} comes from the weenie - monster_level is not authored");
-            else Warn("no level at all - weenie has none and monster_level is not authored");
+            if (Has(ZoneStat.MonsterLevel)) { r.Level = (int)Val(ZoneStat.MonsterLevel); r.LevelSource = MobCheckSource.Zone; }
+            else if (weenieLevel > 0) { r.Level = weenieLevel; r.LevelSource = MobCheckSource.Weenie; }
+            else r.LevelSource = MobCheckSource.None;
 
-            // 3. species - a null one silently removes slayer from this mob's OWN loot
+            // species - a null one silently removes slayer from this mob's OWN loot
             var ctype = weenie.GetProperty(PropertyInt.CreatureType) ?? 0;
             // CreatureType is `: uint` - IsDefined THROWS on a type mismatch rather than returning
             // false, so the boxed value must be uint, not int.
-            var ctypeValid = ctype > 0 && System.Enum.IsDefined(typeof(ACE.Entity.Enum.CreatureType), (uint)ctype);
-            if (ctypeValid) Ok($"creature type {(ACE.Entity.Enum.CreatureType)ctype}");
-            else if (Has(ZoneStat.MonsterCreatureType))
-                Ok($"creature type {(ACE.Entity.Enum.CreatureType)(int)Val(ZoneStat.MonsterCreatureType)} (zone fallback)");
-            else Warn("NO creature type - no slayer weapon can ever roll off this mob");
-
-            // 4. casting - authored spell damage lands on the mob's own magic skill unless overridden
-            var bookCount = weenie.PropertiesSpellBook?.Count ?? 0;
-            var zoneAdds = eval?.SpellRules?.Count(r => !r.Disabled) ?? 0;
-            if (bookCount + zoneAdds > 0)
+            if (ctype > 0 && System.Enum.IsDefined(typeof(ACE.Entity.Enum.CreatureType), (uint)ctype))
             {
-                if (Has(ZoneStat.MagicSkill)) Ok($"{bookCount} book spell(s) + {zoneAdds} zone-added, magic_skill {Val(ZoneStat.MagicSkill):0}");
-                else Warn($"casts {bookCount + zoneAdds} spell(s) but magic_skill is NOT authored - players will resist them");
+                r.CreatureType = ctype;
+                r.CreatureTypeName = ((ACE.Entity.Enum.CreatureType)ctype).ToString();
+                r.CreatureTypeSource = MobCheckSource.Weenie;
             }
-            else Ok("no spells - magic_skill not needed");
+            else if (Has(ZoneStat.MonsterCreatureType))
+            {
+                var zct = (int)Val(ZoneStat.MonsterCreatureType);
+                r.CreatureType = zct;
+                r.CreatureTypeName = System.Enum.IsDefined(typeof(ACE.Entity.Enum.CreatureType), (uint)zct)
+                    ? ((ACE.Entity.Enum.CreatureType)zct).ToString() : zct.ToString();
+                r.CreatureTypeSource = MobCheckSource.Zone;
+            }
+            else r.CreatureTypeSource = MobCheckSource.None;
 
-            // 5. rank. Unranked pays xp_minion since 2026-08-31, so this is information, not a fault.
+            // casting - authored spell damage lands on the mob's own magic skill unless overridden
+            r.BookSpells = weenie.PropertiesSpellBook?.Count ?? 0;
+            r.ZoneSpells = eval?.SpellRules?.Count(sr => !sr.Disabled) ?? 0;
+            r.HasMagicSkill = Has(ZoneStat.MagicSkill);
+            r.MagicSkill = r.HasMagicSkill ? (int)Val(ZoneStat.MagicSkill) : 0;
+
+            // rank. Unranked pays xp_minion since 2026-08-31, so this is information, not a fault.
             var boss = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcBoss) == true;
             var leader = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcLeader) == true;
             var minion = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcMinion) == true;
-            Ok("rank: " + (boss ? "Boss" : leader ? "Leader" : minion ? "Minion" : "unranked (pays xp_minion)"));
+            r.RankLabel = boss ? "Boss" : leader ? "Leader" : minion ? "Minion" : "unranked (pays xp_minion)";
 
-            // 6. the stats that actually make a T11 monster. Unauthored means the WEENIE value passes
+            // the stats that actually make a T11 monster. Unauthored means the WEENIE value passes
             // through at every read site - nothing is code-defaulted for creatures.
             var core = new[]
             {
@@ -4725,21 +4848,54 @@ namespace ACE.Server.Command.Handlers
                 ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
                 ZoneStat.ArmorLevel, ZoneStat.AttackDamage,
             };
-            var missing = core.Where(c => !Has(c)).ToList();
-            if (missing.Count == 0) Ok($"all {core.Length} core stats authored");
-            else Warn($"{missing.Count} of {core.Length} core stats NOT authored (weenie value passes through): {string.Join(", ", missing)}");
+            r.CoreTotal = core.Length;
+            r.CoreMissing = core.Where(c => !Has(c)).ToList();
 
-            // 7. cosmetics - a per-WCID name only exists in the zone bucket
-            var look = area.AppearanceByWcid != null && area.AppearanceByWcid.ContainsKey(mobWcid);
-            if (look) Ok("appearance authored for this wcid");
-            else Msg("  --    no per-wcid appearance; it uses the stock look and name");
+            r.HasZoneAppearance = area.AppearanceByWcid != null && area.AppearanceByWcid.ContainsKey(mobWcid);
+            return r;
+        }
 
-            Msg(issues == 0
-                ? "  => ready."
-                : $"  => {issues} thing(s) to fix.");
+        /// <summary>
+        /// [[ZCMC]] - the machine twin of `mobcheck`, for the plugin Bestiary &gt; Readiness panel.
+        /// Emitted by the `mobcheckget` verb; `mobcheck` itself stays human-readable chat so the command
+        /// is still usable with no plugin installed. Fields are FACTS, not prose - the panel owns its own
+        /// wording, which is what lets the UI text follow the plugin style rules with no server deploy.
+        /// APPEND-ONLY: add new fields at the end, never reorder or remove.
+        /// </summary>
+        private static string BuildMobCheckPayload(string zoneName, uint mobWcid)
+        {
+            var r = EvaluateMobCheck(zoneName, mobWcid);
+            var sb = new StringBuilder();
+            sb.Append("[[ZCMC]]wcid=").Append(mobWcid);
+            if (r.Error != null)
+                return sb.Append("|found=0").ToString();
+
+            static string Safe(string s) => (s ?? "").Replace('|', ' ').Replace(',', ' ').Replace('=', ' ').Replace('~', ' ');
+
+            sb.Append("|found=1")
+              .Append("|zone=").Append(Safe(zoneName))
+              .Append("|var=").Append(r.Variation)
+              .Append("|name=").Append(Safe(r.MobName))
+              .Append("|enabled=").Append(r.ZoneEnabled ? 1 : 0)
+              .Append("|lvl=").Append(r.Level)
+              .Append("|lvlsrc=").Append((int)r.LevelSource)
+              .Append("|ctype=").Append(r.CreatureType)
+              .Append("|ctypename=").Append(Safe(r.CreatureTypeName))
+              .Append("|ctypesrc=").Append((int)r.CreatureTypeSource)
+              .Append("|book=").Append(r.BookSpells)
+              .Append("|zsp=").Append(r.ZoneSpells)
+              .Append("|mskill=").Append(r.HasMagicSkill ? 1 : 0)
+              .Append("|mskillval=").Append(r.MagicSkill)
+              .Append("|rank=").Append(Safe(r.RankLabel))
+              .Append("|coretotal=").Append(r.CoreTotal)
+              .Append("|coremissing=").Append(string.Join(",", r.CoreMissing))
+              .Append("|look=").Append(r.HasZoneAppearance ? 1 : 0)
+              .Append("|issues=").Append(r.Issues);
+            return sb.ToString();
         }
 
         private static string BuildMobInfoPayload(uint wcid)
+
         {
             var weenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(wcid);
             if (weenie == null)

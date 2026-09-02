@@ -413,6 +413,15 @@ namespace ACE.Server.Managers.ZoneScaling
         // a single test value existed - re-author it once.
         public const string LootDropsMin = "loot_drops_min";   // floor; DEFINING THIS is what enables budget mode
         public const string LootDropsMax = "loot_drops_max";   // optional ceiling; budget rolls uniform-inclusive between them
+        // Carried inventory on the corpse (owner 2026-09-01). Inside a governed v11+ zone a monster drops
+        // THAT VARIATION'S SET and nothing else, so create-list Contain items - which never pass through
+        // CreateRandomLootObjects and so survived the floor's zeroing of the three retail roll groups - are
+        // suppressed by DEFAULT. Set this above 0 to let one monster hand over what it carries anyway.
+        // That is the QUEST-ITEM channel: authored per-WCID, it is how a quest mob delivers its drop
+        // without re-opening the floodgate for every retail mob that happens to carry junk.
+        // Unset / 0 = suppressed. Only consulted when the zone loot floor is actually in force.
+        public const string DropCarriedInventory = "drop_carried_inventory";
+
         public const string LootWeightWeapon = "loot_weight_weapon";       // relative category weights, normalized at roll time
         public const string LootWeightArmor = "loot_weight_armor";         //   (shield rides armor)
         public const string LootWeightJewelry = "loot_weight_jewelry";
@@ -498,6 +507,7 @@ namespace ACE.Server.Managers.ZoneScaling
             LootSlotGirthMax, LootSlotUpperLegMax, LootSlotLowerLegMax, LootSlotBootMax,
             LootSlotShieldMax, LootSlotAmuletMax, LootSlotRingMax, LootSlotBraceletMax, LootSlotTrinketMax, LootSlotCloakMax,
             LootDropsMin, LootDropsMax,
+            DropCarriedInventory,
             LootWeightWeapon, LootWeightArmor, LootWeightJewelry, LootWeightCloak,
             // Armor v2 (2026-08-21). Order here is cosmetic ONLY: every wire payload that carries these
             // ([[ZC]] sync, [[ZCD]] Default reply) emits "<name>=<defined>,<value>" pairs, so the plugin

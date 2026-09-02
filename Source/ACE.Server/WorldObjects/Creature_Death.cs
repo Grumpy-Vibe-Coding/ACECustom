@@ -1265,7 +1265,29 @@ namespace ACE.Server.WorldObjects
             // contain and non-wielded treasure create (create-list: quest drops etc.)
             // Runs LAST: the client's loot window displays in reverse insertion order, so the
             // last-inserted quest/special items show FIRST (owner loot-order decision 2026-07-20).
-            if (Biota.PropertiesCreateList != null)
+            //
+            // ZONE LOOT FLOOR SUPPRESSES CARRIED INVENTORY, OPT-IN PER MONSTER (owner 2026-09-01).
+            // Inside a governed v11+ zone a monster drops THAT VARIATION'S SET and nothing else. The
+            // three retail roll groups are already zeroed where the floor is applied above, but that
+            // only covers ROLLED treasure - create-list Contain items never pass through
+            // CreateRandomLootObjects at all, so they kept landing on the corpse. Found on retail wcid
+            // 4124 (Lich Overseer), which carries three Focusing Stones and tipped all three into a T12
+            // corpse alongside the zone set.
+            //
+            // NOT a blanket rule, because quest mobs deliver their quest item through exactly this
+            // channel (owner: none do today, but they will). drop_carried_inventory authored above 0 -
+            // normally on that ONE monster's per-WCID bucket - lets it hand over what it carries. So the
+            // default is "drop the zone set only" and a quest drop is one authored stat away, instead of
+            // the quest silently delivering nothing on the day it is built.
+            //
+            // Scope is deliberately narrow. This block takes Contain, and Treasure-without-Wield; the
+            // WIELDED gear above is a separate path with its own creatures_drop_createlist_wield config
+            // and is untouched - which matters because every custom T11 monster authors its kit as
+            // DestinationType.Wield (its look), and NONE of them use Contain.
+            var carriedAllowed = zoneFloorTier <= 0
+                || (zoneLoot != null && zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DropCarriedInventory, 0.0) > 0.0);
+
+            if (Biota.PropertiesCreateList != null && carriedAllowed)
             {
                 var createList = Biota.PropertiesCreateList.Where(i => (i.DestinationType & DestinationType.Contain) != 0 ||
                                 (i.DestinationType & DestinationType.Treasure) != 0 && (i.DestinationType & DestinationType.Wield) == 0).ToList();
