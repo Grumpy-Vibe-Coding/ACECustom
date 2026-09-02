@@ -264,7 +264,7 @@ namespace ACE.Server.Managers.ZoneControl
             // The old proc PAIR is gone: only 50227 is stamped (= 1, presence flag); the combat side reads it MAX-wins.
             { 42, new Def { Key = 42, SlotSpecial = true, SpecialSlot = CoverageMask.OuterwearChest, Name = "Battle Mending", Effect = "death save: below 25 pct HP heal to full, 60 s cooldown (Chest special)", ValFmt = "", Min = 1, Max = 1, Ints = P(BattleMendChancePct, 0) } },
             // Gauntlets - flat pct of target max HP per hit, no crit/mults; value in TENTHS of a pct (40-60 = 4-6 pct at T11); 2 s CD; no-kill rule
-            { 44, new Def { Key = 44, SlotSpecial = true, SpecialSlot = CoverageMask.Hands, Name = "Pct HP Damage", Effect = "4-6 pct of target max HP per hit (Gauntlets special)", ValFmt = "{0}", Min = 40, Max = 60, Ints = P(PctHpDamagePct, 0) } },
+            { 44, new Def { Key = 44, SlotSpecial = true, SpecialSlot = CoverageMask.Hands, Name = "Pct HP Damage", Effect = "4-6 pct of target max HP per hit (Gauntlets special)", ValFmt = "{0} ({1:0.#} pct of max HP per hit)", Min = 40, Max = 60, Ints = P(PctHpDamagePct, 0) } },
             // Boots - Cheat Death: lethal hit -> 1 HP + 5 s immunity, 10 min CD per character; no magnitude
             { 45, new Def { Key = 45, SlotSpecial = true, SpecialSlot = CoverageMask.Feet, Name = "Cheat Death", Effect = "lethal hit leaves 1 HP + 5 s immunity, 10 min cooldown (Boots special)", ValFmt = "", Min = 1, Max = 1, Ints = P(CheatDeathFlag, 0) } },
             // Bracers - natural regen multiplier (x3 default), Prodigal stays suppressed
@@ -638,9 +638,9 @@ namespace ACE.Server.Managers.ZoneControl
 
             string line;
             if (def.SlotSpecial)
-                line = string.IsNullOrEmpty(def.ValFmt) ? $"Zone Cantrip: {def.Name}" : $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt, value)}";
+                line = string.IsNullOrEmpty(def.ValFmt) ? $"Zone Cantrip: {def.Name}" : $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt, value, value / 10.0)}";
             else
-                line = $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt ?? "+{0}", value)} [{band.Min}-{band.Max}]";
+                line = $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt ?? "+{0}", value, value / 10.0)} [{band.Min}-{band.Max}]";
             wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? line : wo.LongDesc + "\n\n" + line;
             return value;
         }
@@ -670,7 +670,7 @@ namespace ACE.Server.Managers.ZoneControl
 
                 var specialLine = string.IsNullOrEmpty(def.ValFmt)
                     ? $"Zone Cantrip: {def.Name}"
-                    : $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt, value)}";
+                    : $"Zone Cantrip: {def.Name} {string.Format(def.ValFmt, value, value / 10.0)}";
                 wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? specialLine : wo.LongDesc + "\n\n" + specialLine;
                 return;
             }
@@ -701,7 +701,7 @@ namespace ACE.Server.Managers.ZoneControl
             }
 
             var (min, max) = band ?? (def.Min, def.Max);
-            var rolled = string.Format(def.ValFmt ?? "+{0}", value);
+            var rolled = string.Format(def.ValFmt ?? "+{0}", value, value / 10.0);
             var line = $"Zone Cantrip: {def.Name} {rolled} [{min}-{max}]";
             wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? line : wo.LongDesc + "\n\n" + line;
         }

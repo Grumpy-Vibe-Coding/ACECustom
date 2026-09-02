@@ -82,6 +82,12 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string MagicDefense = "magic_defense";
         public const string DamageRating = "damage_rating";
         public const string DamageResistRating = "damage_resist_rating";
+        // Rank twins (owner 2026-09-02: "we tune through damage resist", HP is 1M for every rank and tier
+        // forever). ABSOLUTE values, not multipliers: a leader / boss reads its twin when authored and
+        // falls back to damage_resist_rating when not. Read LIVE in Creature_Rating.GetDamageResistRating,
+        // same as the base stat. Minion = the base stat; there is no minion twin.
+        public const string DamageResistRatingLeader = "damage_resist_rating_leader";
+        public const string DamageResistRatingBoss = "damage_resist_rating_boss";
         public const string ArmorLevel = "armor_level";
         // damage_taken_mult REMOVED 2026-08-03 (owner): redundant with damage_resist_rating's
         // replace (and server-clamped to <= 1.0 anyway). The prestige-gated v11_mob_dmg_taken_*
@@ -471,7 +477,7 @@ namespace ACE.Server.Managers.ZoneScaling
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
             MonsterLevel, MonsterCreatureType, AttackSkill, MagicSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
-            DamageResistRating, ArmorLevel, VulnCap, PercentHpBase,
+            DamageResistRating, DamageResistRatingLeader, DamageResistRatingBoss, ArmorLevel, VulnCap, PercentHpBase,
             CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
             AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,
             ReliefAugStart, ReliefAugMax, ReliefAugCap, ReliefAugBend,

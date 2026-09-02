@@ -212,7 +212,9 @@ namespace ACE.Server.Managers.ZoneControl
                 wo.IconUnderlayId = 0x060067A1;
         }
 
-        private static void StampWeaponCard(WorldObject wo, EvaluatedProfile p,
+        /// <returns>The DISPLAY value that landed (Crushing Blow: the advertised multiplier, not the
+        /// stored one) - for a caller that reports what it stamped. TrySpecialRolls ignores it.</returns>
+        private static double StampWeaponCard(WorldObject wo, EvaluatedProfile p,
             ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
         {
             var (lo, hi) = ZoneStatResolver.WeaponDropBand(p, ws, tier);
@@ -224,7 +226,23 @@ namespace ACE.Server.Managers.ZoneControl
             // walk a 7.5x weapon down to 6.5x, then 5.5x, on every login, silently.
             wo.SetProperty(ws.Prop, ZoneStatResolver.EngineValue(ws, display));
             ZoneStatResolver.AddLine(wo, ws.Key, grade);
+            return display;
         }
+
+        /// <summary>
+        /// THE FORGE'S DOOR into the one weapon-card write site above (owner 2026-09-01, `/wsforge
+        /// cards:premade`). A premade test weapon has to carry exactly what a drop at the tier carries -
+        /// same band precedence (WeaponDropBand), same grade roll (RollGrade: forceMax = band top for
+        /// bis, the tier-weighted random grade for avg), same EngineValue conversion, same recorded
+        /// grade line so a band retune re-resolves it. Routing the forge through this method instead of
+        /// letting it compute its own number is what keeps the two paths from drifting; the forge
+        /// must never re-implement the arithmetic. <paramref name="p"/> is the tier Default flattened
+        /// (see WeaponScalingCommands.TierDefaultProfile); pass an EMPTY profile, not null, when no
+        /// Default is authored and the ladder should rule.
+        /// </summary>
+        public static double StampWeaponCardForForge(WorldObject wo, EvaluatedProfile p,
+            ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
+            => StampWeaponCard(wo, p, ws, tier, forceMax);
 
         // ── pre-applied craft deltas that land on a CARD's own property ────────────────────────────
         // These two mirror the live Bandit Hilt recipe (527870063) and are stamped by the hilt block at

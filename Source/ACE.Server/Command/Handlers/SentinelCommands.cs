@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 using ACE.Database;
 using ACE.Database.Models.Auth;
@@ -223,6 +224,32 @@ namespace ACE.Server.Command.Handlers
             Player target = CommandHandlerHelper.GetPlayerAsCommandTarget(session, string.Join(" ", parameters), fallbackToSelf: true);
             if (target == null) return;
             session.Player.CreateSentinelBuffPlayers(new Player[] { target }, target == session.Player, maxLevel);
+
+            // Owner 2026-09-01: proper test buffing includes the surges the WORN aetheria would proc.
+            // Self-targeted surges (Destruction / Protection / Regeneration) are cast now through the
+            // real proc path at 100 pct; the two that land on a monster (Affliction / Festering) cannot
+            // be pre-cast and are reported. No aetheria worn = nothing happens.
+            var surged = new List<string>();
+            var skipped = new List<string>();
+            foreach (var item in target.EquippedObjects.Values.ToList())
+            {
+                if (!Aetheria.IsAetheria(item.WeenieClassId) || item.ProcSpell == null)
+                    continue;
+                var surge = new Spell(item.ProcSpell.Value);
+                if (surge.NotFound)
+                    continue;
+                if (item.ProcSpellSelfTargeted)
+                {
+                    item.ForceProcSpell(target, target, true);
+                    surged.Add(surge.Name);
+                }
+                else
+                    skipped.Add(surge.Name);
+            }
+            if (surged.Count > 0)
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Aetheria surges cast: {string.Join(", ", surged)}", ChatMessageType.Broadcast));
+            if (skipped.Count > 0)
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Aetheria surges that only land on a monster (not cast): {string.Join(", ", skipped)}", ChatMessageType.Broadcast));
         }
 
         // run < on | off | toggle | check >

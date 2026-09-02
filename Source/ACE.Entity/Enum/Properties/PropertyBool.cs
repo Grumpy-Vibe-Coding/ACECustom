@@ -363,6 +363,13 @@
         /// place; this bool exempts a zone boss from it.</summary>
         ZcPctHpImmune = 50051,
 
+        /// <summary>FORGE-ONLY "slayer of all creatures" (owner 2026-09-01): TRUE = the weapon's SlayerDamageBonus
+        /// applies against EVERY target regardless of CreatureType (WorldObject_Weapon.GetWeaponCreatureSlayerModifier;
+        /// still subject to the weapon zone lock). Set only by /wsforge (cards:premade, or slayertype=all) on test
+        /// weapons; the drop path (ZoneLootMutator.TrySpecialRolls) attunes to the killed monster's kind and must
+        /// never set this. Appraisal reads "All Creatures Slayer".</summary>
+        SlayerAllCreatures = 50052,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }

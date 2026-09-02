@@ -632,8 +632,11 @@ namespace ACE.Server.WorldObjects
             if (ZcPowerSuppressed(weapon, wielder))
                 return defaultModifier;
 
-            if (weapon != null && weapon.SlayerCreatureType != null && weapon.SlayerDamageBonus != null &&
-                target != null && weapon.SlayerCreatureType == target.CreatureType)
+            if (weapon != null && weapon.SlayerDamageBonus != null && target != null
+                && ((weapon.SlayerCreatureType != null && weapon.SlayerCreatureType == target.CreatureType)
+                    // forge-only "slayer of all creatures" (PropertyBool 50052; /wsforge cards:premade or
+                    // slayertype=all): the bonus applies to every target. Drops never carry it.
+                    || weapon.GetProperty(PropertyBool.SlayerAllCreatures) == true))
             {
                 // TODO: scale with base weapon skill?
                 return (float)weapon.SlayerDamageBonus;
@@ -1343,6 +1346,17 @@ namespace ACE.Server.WorldObjects
 
         /// <summary>The body that was TryProcItem before the card gained a second slot - one roll, one
         /// spell. Unchanged in behaviour; it just takes the spell and rate as arguments now.</summary>
+        /// <summary>Fires this item's primary proc spell with a 100 pct chance - the owner's /buff leg
+        /// (2026-09-01) uses it to pre-cast the self-targeted surge of each worn aetheria, through the
+        /// exact cast path a real proc takes (item caster, no creature-aug bake), so a test character
+        /// starts a fight with the surges a real fight would have produced.</summary>
+        public void ForceProcSpell(WorldObject attacker, Creature target, bool selfTarget)
+        {
+            if (ProcSpell == null)
+                return;
+            TryProcOneSpell(attacker, target, selfTarget, ProcSpell.Value, 1.0, 1.0f);
+        }
+
         private void TryProcOneSpell(WorldObject attacker, Creature target, bool selfTarget, uint procSpellId, double baseChance, float chanceMultiplier)
         {
             var chance = Math.Clamp(baseChance * Math.Max(0f, chanceMultiplier), 0.0, 1.0);

@@ -11,6 +11,7 @@ using ACE.Entity.Enum.Properties;
 using ACE.Server.Factories.Tables;
 using ACE.Server.Managers.WeaponScaling;
 using ACE.Server.Managers.ZoneControl;
+using ACE.Server.Managers.ZoneScaling;
 using ACE.Server.Network;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
@@ -624,6 +625,10 @@ namespace ACE.Server.Command.Handlers
             public double? ArmorRend;
             public double? ShieldCleave;
             public double? Slayer; public CreatureType SlayerType = CreatureType.Drudge;
+            public bool SlayerAll;          // slayertype=all -> PropertyBool.SlayerAllCreatures, no species
+            // premade (owner 2026-09-01): the drop-equivalent four-card set for the tier; when set, every
+            // other key in the clause is ignored. bis = band top, avg = the drop's own random grade.
+            public bool Premade; public bool PremadeBis = true;
         }
 
         private const ImbuedEffectType ForgeAllRends =
@@ -663,9 +668,23 @@ namespace ACE.Server.Command.Handlers
                     case "shieldcleave": cards.ShieldCleave = Math.Clamp(Num(0.5), 0.0, 1.0); break;
                     case "slayer": cards.Slayer = Math.Clamp(Num(1.5), 1.5, 10.0); break;
                     case "slayertype":
+                        if (val != null && val.Equals("all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            cards.SlayerAll = true;
+                            break;
+                        }
                         if (val == null || !Enum.TryParse<CreatureType>(val, true, out var ct) || ct == CreatureType.Invalid)
-                            return $"cards: unknown slayertype '{val}' (use a CreatureType name, e.g. drudge, olthoi, virindi)";
+                            return $"cards: unknown slayertype '{val}' (use a CreatureType name, e.g. drudge, olthoi, virindi, or all)";
                         cards.SlayerType = ct;
+                        break;
+                    case "premade":
+                        cards.Premade = true;
+                        switch ((val ?? "bis").ToLowerInvariant())
+                        {
+                            case "bis": case "best": cards.PremadeBis = true; break;
+                            case "avg": case "average": cards.PremadeBis = false; break;
+                            default: return $"cards: premade must be bis or avg, got '{val}'";
+                        }
                         break;
                     default: return $"cards: unknown key '{key}'";
                 }
@@ -688,8 +707,13 @@ namespace ACE.Server.Command.Handlers
 
         /// <summary>Stamps the enabled cards; returns a " | cards: ... | skipped: ..." note for the
         /// forge message (empty when no cards).</summary>
-        private static string ApplyForgeCards(WorldObject wo, ForgeCards c)
+        private static string ApplyForgeCards(WorldObject wo, ForgeCards c, int tier)
         {
+            // premade wins outright - it IS a card set, and mixing hand-set keys into it would make
+            // the weapon something no drop at the tier can be (owner 2026-09-01)
+            if (c.Premade)
+                return ApplyPremadeCards(wo, c.PremadeBis, tier);
+
             var isMelee = wo is MeleeWeapon;
             var isMissile = wo is MissileLauncher;
             var applied = new List<string>();
@@ -813,9 +837,19 @@ namespace ACE.Server.Command.Handlers
 
             if (c.Slayer.HasValue)
             {
-                wo.SlayerCreatureType = c.SlayerType;
-                wo.SlayerDamageBonus = c.Slayer.Value;
-                applied.Add($"slayer {c.SlayerType} {c.Slayer.Value:0.##}x");
+                if (c.SlayerAll)
+                {
+                    // forge-only all-creatures flag (PropertyBool 50052): no species is stamped
+                    wo.SetProperty(PropertyBool.SlayerAllCreatures, true);
+                    wo.SlayerDamageBonus = c.Slayer.Value;
+                    applied.Add($"slayer all {c.Slayer.Value:0.##}x");
+                }
+                else
+                {
+                    wo.SlayerCreatureType = c.SlayerType;
+                    wo.SlayerDamageBonus = c.Slayer.Value;
+                    applied.Add($"slayer {c.SlayerType} {c.Slayer.Value:0.##}x");
+                }
             }
 
             // paragon / hilt / bowstring REMOVED 2026-08-25 with their loot cards (owner).
@@ -831,6 +865,80 @@ namespace ACE.Server.Command.Handlers
             var note = "";
             if (applied.Count > 0) note += " | cards: " + string.Join(", ", applied);
             if (skipped.Count > 0) note += " | skipped: " + string.Join(", ", skipped);
+            return note;
+        }
+
+        // ─────────────── premade (owner 2026-09-01) ───────────────
+        // "A weapon carrying exactly what a monster of that tier can actually DROP." Owner ruling the
+        // same night: EXACTLY FOUR cards at EVERY tier and the modifier cap is NOT consulted -
+        // Rending (+Rend Power), Slayer, Biting Strike, Crushing Blow. No Cast on Strike, no Armor
+        // Rend, no Shield Cleave, no Cleave / Split Arrows. Every value comes from the SAME write
+        // site a drop uses (ZoneLootMutator.StampWeaponCardForForge -> StampWeaponCard): same band
+        // precedence, same grade roll (bis = band top, avg = the tier-weighted random grade), same
+        // EngineValue conversion, same recorded grade line. Slayer is the forge-only ALL-CREATURES
+        // flag, never a species - the drop path attunes to the killed monster's kind, and a test
+        // weapon has no kill behind it.
+
+        /// <summary>The tier Default an ITEM at this tier resolves against, flattened to the shape the
+        /// drop path's write site takes. /asforge premade reads the raw GetVariationDefault(tier) for
+        /// its bands; this reads the ANCHORED accessor instead (v11 anchor board under the tier's own
+        /// Default, stat toggles applied), which is what ZoneStatResolver resolves a weapon card against
+        /// on equip - so a forged card and its later re-resolve agree. The flatten is EvaluateVariant's
+        /// Stats step (StatCurve.Evaluate(1)). EMPTY, never null, when nothing is authored: every Has()
+        /// then misses and WeaponDropBand falls through to the ladder, exactly like a drop in a zone that
+        /// authors no pin.</summary>
+        private static EvaluatedProfile TierDefaultProfile(int tier, out bool authored)
+        {
+            var def = ZoneControlManager.GetAnchoredDefaultProfile(tier);
+            authored = def != null;
+            var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            if (def?.Stats != null)
+                foreach (var kv in def.Stats)
+                    if (kv.Value != null)
+                        values[kv.Key] = kv.Value.Evaluate(1);
+            return new EvaluatedProfile($"T{tier} Default", 1, ZoneVariant.Minion, values,
+                weaponCardToggles: def?.CustomWeaponCards);
+        }
+
+        /// <summary>Stamps the four premade cards and returns the forge note, e.g.
+        /// " | premade bis T11: Rending Fire 2.13x, Slayer(all) 2.10x, Biting Strike 0.40, Crushing Blow 4.00x".</summary>
+        private static string ApplyPremadeCards(WorldObject wo, bool bis, int tier)
+        {
+            var p = TierDefaultProfile(tier, out var authored);
+            var landed = new List<string>();
+            var skipped = new List<string>();
+
+            // 1. Rending + Rend Power: the rend matching the weapon's own element, the way the drop
+            // path picks it. A plain bow (element from the ammo) or an elementless caster has none.
+            var rend = ForgeMatchingRend(wo.W_DamageType);
+            if (rend != ImbuedEffectType.Undef)
+            {
+                wo.ImbuedEffect |= rend;
+                ZoneLootMutator.ApplyRendUnderlay(wo, rend);
+                var power = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecRendPower, tier, bis);
+                landed.Add($"Rending {rend.ToString().Replace("Rending", "")} {power:0.00}x");
+            }
+            else
+                skipped.Add("Rending (no resolvable damage type - forge with an element)");
+
+            // 2. Slayer of all creatures (forge-only flag; the drop path never sets it)
+            wo.SetProperty(PropertyBool.SlayerAllCreatures, true);
+            var slayer = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecSlayer, tier, bis);
+            landed.Add($"Slayer(all) {slayer:0.00}x");
+
+            // 3. Biting Strike (crit chance, a 0..1 fraction)
+            var bite = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecBite, tier, bis);
+            landed.Add($"Biting Strike {bite:0.00}");
+
+            // 4. Crushing Blow - the wrapper returns the DISPLAY multiplier; what it stored is display - 1
+            var crush = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecCrush, tier, bis);
+            landed.Add($"Crushing Blow {crush:0.00}x");
+
+            var note = $" | premade {(bis ? "bis" : "avg")} T{tier}: " + string.Join(", ", landed);
+            if (!authored)
+                note += " [no tier Default authored - ladder bands]";
+            if (skipped.Count > 0)
+                note += " | skipped: " + string.Join(", ", skipped);
             return note;
         }
 
@@ -920,6 +1028,11 @@ namespace ACE.Server.Command.Handlers
             if (wo is ACE.Server.WorldObjects.Caster && tier >= 11)
                 wo.ElementalDamageMod = 1.5;
 
+            // premade weapons carry the mode in the name so a BiS and an Avg at one tier never collide
+            // on the duplicate guard below (the "(BiS)" convention /asforge premade already uses)
+            var tag = (tier == 10 ? "Test T10" : $"Test q{quality}")
+                + (cards != null && cards.Premade ? (cards.PremadeBis ? " BiS" : " Avg") : "");
+
             if (element != null)
             {
                 wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.DamageType, (int)element.Value);
@@ -939,10 +1052,10 @@ namespace ACE.Server.Command.Handlers
                 };
                 wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.UiEffects, (int)uiEffect);
 
-                wo.Name = tier == 10 ? $"{element.Value} {cleanName} (Test T10)" : $"{element.Value} {cleanName} (Test q{quality})";
+                wo.Name = $"{element.Value} {cleanName} ({tag})";
             }
             else
-                wo.Name = tier == 10 ? $"{wo.Name} (Test T10)" : $"{wo.Name} (Test q{quality})";
+                wo.Name = $"{wo.Name} ({tag})";
 
             // Provenance, mirroring real drops' "Dropped by / Location" block (owner 2026-08-01):
             // who forged it + the tier it was stamped at. AppraiseInfo's per-viewer bonus line
@@ -971,7 +1084,7 @@ namespace ACE.Server.Command.Handlers
                 }
             }
 
-            var cardNote = cards != null ? ApplyForgeCards(wo, cards) : "";
+            var cardNote = cards != null ? ApplyForgeCards(wo, cards, tier) : "";
 
             // Bagged runs fill the Weapon Pack; if it is full (or could not be made) the weapon still
             // lands normally rather than being lost.
@@ -997,7 +1110,8 @@ namespace ACE.Server.Command.Handlers
             "Classes: sword sword_ms dagger dagger_ms axe mace spear staff ua cleaver spear2h bow crossbow atlatl wand\n" +
             "cards: proc (Cast on Strike, BOTH slots) procarc procring (one slot only) procrate=0-1 procdmg=<n> procspellcraft=<n> procaugcap=<n> procvariance=0-1 rend (matching rend imbue)\n" +
             "rendpower=1.5-10 cleave=1-10 (melee) split=1-10 splitrange=0-50 splitdmg=0-1 (bows) bite=0-1 (crit chance)\n" +
-            "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 slayer=1.5-10 slayertype=<name>\n" +
+            "crush=2-10 (crit damage mult) armorrend=0-1 shieldcleave=0-1 slayer=1.5-10 slayertype=<name|all>\n" +
+            "premade[=bis|avg] = the drop-equivalent set for the tier: Rending, Slayer (all creatures), Biting Strike, Crushing Blow; bis = band top, avg = drop roll; other card keys ignored\n" +
             "bag = mint into a 102-slot \"Weapon Pack\" instead of loose in the main pack (costs one pack slot, reused across runs)\n" +
             "force = mint even if you already hold that exact weapon at that tier (default is to skip it, so repeat presses cannot stack sets)")]
         public static void HandleWsForge(Session session, params string[] parameters)

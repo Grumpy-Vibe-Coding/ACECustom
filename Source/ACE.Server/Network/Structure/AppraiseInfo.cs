@@ -1213,12 +1213,14 @@ namespace ACE.Server.Network.Structure
 
             CreatureSkill skill = examiner.GetCreatureSkill(checkSkill);
 
-            // Slayer
-            if (weapon.SlayerCreatureType.HasValue)
+            // Slayer. The forge-only all-creatures flag (PropertyBool 50052) has no species to name.
+            var slayerAll = weapon.GetProperty(PropertyBool.SlayerAllCreatures) == true;
+            if (weapon.SlayerCreatureType.HasValue || slayerAll)
             {
                 var bonus = weapon.SlayerDamageBonus ?? 1.0;
-                var rawName = weapon.SlayerCreatureType.ToString();
-                var niceName = CreatureNameRegex().Replace(rawName, " $1");
+                var niceName = slayerAll
+                    ? "All Creatures"
+                    : CreatureNameRegex().Replace(weapon.SlayerCreatureType.ToString(), " $1");
                 effectDescriptions.Add($"- {niceName} Slayer: {bonus:0.##}x Damage");
             }
 
