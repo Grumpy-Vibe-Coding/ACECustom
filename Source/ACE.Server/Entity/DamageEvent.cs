@@ -106,6 +106,11 @@ namespace ACE.Server.Entity
         public float PkDamageResistanceMod;
 
         public float DamageMitigated;
+        // pct-of-max-HP floor readout (2026-09-02): the floor value computed for this hit, the damage before
+        // the floor was applied, and whether the floor won. Player defenders only; 0 / false otherwise.
+        public float DebugPctHpFloor;
+        public float DebugPreFloorDamage;
+        public bool DebugPctHpFloorWon;
 
         /// <summary>Amount of damage absorbed by Mana Barrier on the defending player this hit.</summary>
         public uint AmountAbsorbed;
@@ -627,8 +632,16 @@ namespace ACE.Server.Entity
                 && DamageType != DamageType.Stamina && DamageType != DamageType.Mana)
             {
                 var pctHpFloor = Creature.GetPercentHpFloorDamage(attacker, pctHpPlayer, IsCritical);
+                // Debug readout (2026-09-02, mob->player tuning): the floor used to win SILENTLY here - the
+                // extensive block showed only the final Damage, so a floored hit and a normal hit were
+                // indistinguishable in the log. Recorded for BuildExtensiveDebugLog's "pctHpFloor:" line.
+                DebugPctHpFloor = pctHpFloor;
+                DebugPreFloorDamage = Damage;
                 if (pctHpFloor > Damage)
+                {
                     Damage = pctHpFloor;
+                    DebugPctHpFloorWon = true;
+                }
             }
 
             DebugDamagePrePetPhysicalMitigation = Damage;
@@ -1152,6 +1165,9 @@ namespace ACE.Server.Entity
             sb.AppendLine(
                 $"final: prePetPhysicalMit={DebugDamagePrePetPhysicalMitigation:F4} petCritMult={DebugCombatPetCritDamageTakenMultiplier:F4} petPhysicalMult={DebugCombatPetPhysicalMitigationMultiplier:F4} Damage={Damage:F4} mitigated(from preArmor pipeline)={DamageMitigated:F4}");
             sb.AppendLine($"defenderHealth: current={defender.Health.Current} max={defender.Health.MaxValue}");
+            // mob->player only (2026-09-02): the pct-of-max-HP floor, the pre-floor damage, and whether the floor won
+            if (defender is Player)
+                sb.AppendLine($"pctHpFloor: value={DebugPctHpFloor:F2} preFloor={DebugPreFloorDamage:F2} won={DebugPctHpFloorWon}");
 
             AppendLuminanceCombatSnapshot(sb, "Attacker luminance", attacker);
             AppendLuminanceCombatSnapshot(sb, "Defender luminance", defender);

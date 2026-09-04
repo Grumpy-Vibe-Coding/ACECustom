@@ -261,22 +261,11 @@ namespace ACE.Server.WorldObjects
             // (null for players/exempt/non-endgame/no-match -> weenie base). Uniform with every other zone stat.
             // Enchantment/equipment bonuses below still stack (all 0 for monsters).
             var zoneDrr = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
-            if (zoneDrr != null)
-            {
-                // Rank twins (owner 2026-09-02): a boss reads damage_resist_rating_boss, a leader reads
-                // damage_resist_rating_leader, each only when authored; everything else (and an unauthored
-                // twin) falls back to damage_resist_rating. Rank comes from the per-WCID flags the
-                // Bestiary stamps (50048 boss / 50049 leader), the same flags KILLXP and specials use.
-                var drrKey = ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating;
-                if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true
-                    && zoneDrr.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRatingBoss))
-                    drrKey = ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRatingBoss;
-                else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true
-                    && zoneDrr.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRatingLeader))
-                    drrKey = ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRatingLeader;
-                if (zoneDrr.Has(drrKey))
-                    damageResistRating = (int)Math.Round(zoneDrr.Get(drrKey));
-            }
+            // RANK LAYERS (2026-09-02 evening): the profile ResolveForCreature hands back is ALREADY the
+            // monster's rank chain (Default row with its Leader / Boss / Regular row merged on top), so
+            // one plain read replaces the day-old _leader/_boss twin branch that lived here.
+            if (zoneDrr != null && zoneDrr.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating))
+                damageResistRating = (int)Math.Round(zoneDrr.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.DamageResistRating));
 
             // additive enchantments
             var enchantments = EnchantmentManager.GetRating(PropertyInt.DamageResistRating);

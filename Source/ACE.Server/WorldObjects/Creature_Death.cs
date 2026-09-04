@@ -246,29 +246,12 @@ namespace ACE.Server.WorldObjects
             var killProfile = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(this);
             if (killProfile != null)
             {
-                if (killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion))
-                {
-                    var minionXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion);
-                    double zoneXp;
-                    // FIX 2026-08-29 (release audit blocker 1): a mob explicitly flagged MINION now
-                    // pays xp_minion. The old branch fell through to xp_default for minion-flagged
-                    // mobs, making IsZcMinion dead and inverting the documented contract - xp_minion
-                    // is the MASTER key; xp_default covers only UNRANKED spawns (else minion).
-                    if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true)
-                        zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpBoss, minionXp);
-                    else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true)
-                        zoneXp = killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpLeader, minionXp);
-                    else
-                        // UNRANKED NOW PAYS MINION (owner ruling 2026-08-31). It used to prefer
-                        // xp_default when that was authored, which on the live store meant an
-                        // unranked mob paid 100,000,000 against a minion's 500,000,000 - a silent
-                        // 5x shortfall that scaled with however far apart the two were authored.
-                        // Rank is a deliberate mark for the exceptions (Leader, Boss); the unmarked
-                        // majority ARE the minions, so minion is the honest default.
-                        // xp_default is left registered but is now unreachable here.
-                        zoneXp = minionXp;
-                    baseXp = (long)Math.Round(zoneXp);
-                }
+                // ONE key since 2026-09-02 (owner D3): xp_kill. The profile is already the mob's RANK
+                // chain, so a Leader reads the Leader row's xp_kill and an unranked mob the Default
+                // row's - the 08-29 / 08-31 branch logic (minion master key, unranked pays minion)
+                // now lives in the resolver's layer order instead of here.
+                if (killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.XpKill))
+                    baseXp = (long)Math.Round(killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.XpKill));
                 if (killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward))
                 {
                     var zoneLum = (long)Math.Round(killProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward));
@@ -325,10 +308,9 @@ namespace ACE.Server.WorldObjects
                 // Launch-day diagnostic (2026-08-23): the client filters XP/lum chat, so the log is the readout.
                 if (killProfile != null)
                 {
-                    var rank = GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true ? "boss"
-                             : GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true ? "leader"
-                             : GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcMinion) == true ? "minion" : "unranked";
-                    log.Info($"[KILLXP] {Name} ({WeenieClassId}, {rank}) -> {player.Name}: share {damagePercent:P0}, xp {(long)Math.Round(baseXp * damagePercent):N0} of {baseXp:N0}, lum {(luminanceAward.HasValue ? ((long)Math.Round(luminanceAward.Value * damagePercent)).ToString("N0") : "none")}, zone-authored xp={killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.XpMinion)} lum={killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward)}");
+                    var (zcRank, rankSrc) = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveRankForCreature(this);
+                    var rank = ACE.Server.Managers.ZoneScaling.ZoneRank.Key(zcRank) + "/" + rankSrc;
+                    log.Info($"[KILLXP] {Name} ({WeenieClassId}, {rank}) -> {player.Name}: share {damagePercent:P0}, xp {(long)Math.Round(baseXp * damagePercent):N0} of {baseXp:N0}, lum {(luminanceAward.HasValue ? ((long)Math.Round(luminanceAward.Value * damagePercent)).ToString("N0") : "none")}, zone-authored xp={killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.XpKill)} lum={killProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LumAward)}");
                 }
             }
 
@@ -1086,11 +1068,11 @@ namespace ACE.Server.WorldObjects
                 if (zoneLoot != null && ServerConfig.zonecontrol_enabled.Value
                     && effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
                 {
+                    // special_odds is ABSOLUTE per rank since 2026-09-02 (owner D4): the profile is the
+                    // mob's rank chain, so a Boss reads the Boss row's own denominator. The old
+                    // special_boss_mult / special_leader_mult divisors were folded into those rows
+                    // by the migration SQL (151,200 / 3 and / 2 at T11).
                     var odds = zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialOdds, 750000.0);
-                    if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcBoss) == true)
-                        odds /= Math.Max(1.0, zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialBossMult, 3.0));
-                    else if (GetProperty((PropertyBool)ACE.Server.Managers.ZoneScaling.ZoneStat.BoolIsZcLeader) == true)
-                        odds /= Math.Max(1.0, zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpecialLeaderMult, 2.0));
                     var denom = Math.Max(1, (int)Math.Round(odds));
 
                     if (ACE.Common.ThreadSafeRandom.Next(1, denom) == 1)

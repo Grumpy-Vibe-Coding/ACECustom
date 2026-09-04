@@ -1073,9 +1073,13 @@ namespace ACE.Server.Command.Handlers
             // stamped WeaponAugScaleTier too.
             if (!force)
             {
+                // Compare against what THIS forge stamped, not the requested tier: a T10 weapon is minted unscaled
+                // with NO WeaponAugScaleTier, so "== tier" (0 == 10) never matched and every premade press at T10
+                // stacked another full set (owner 2026-09-03: "extra are created when using twice").
+                var stampedTier = wo.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier) ?? 0;
                 var heldSame = player.GetAllPossessionsDeep().Any(i =>
                     i.Name == wo.Name
-                    && (i.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier) ?? 0) == tier);
+                    && (i.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier) ?? 0) == stampedTier);
 
                 if (heldSame)
                 {

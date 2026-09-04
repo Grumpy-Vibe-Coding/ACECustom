@@ -99,8 +99,15 @@ namespace ACE.Server.Managers.ZoneControl
             public string Name;
             public int Variation;
             public int LandblockCount;                       // for most-specific tie-break
-            public EvaluatedProfile Default;                 // precomputed default stat set
-            public Dictionary<uint, EvaluatedProfile> Wcid;  // precomputed per-WCID overrides
+            public EvaluatedProfile Default;                 // precomputed default stat set (rank None) - kept for the callers that want the zone floor
+            // RANK LAYERS (2026-09-02): the zone's stat set flattened for each rank (index = ZcRank),
+            // and each per-WCID bucket merged onto each rank chain. A monster's rank is read once
+            // per resolve (bucket PropBools first, then the creature's own bools) and indexes here.
+            public EvaluatedProfile[] ByRank;                // [None, Regular, Leader, Boss]
+            public Dictionary<uint, EvaluatedProfile[]> Wcid; // per-WCID, per rank
+            public Dictionary<uint, ZcRank> WcidRank;        // the rank a bucket AUTHORS via its PropBools (None = not authored there)
+            public HashSet<uint> ExemptWcids;                // master switch (2026-09-03): the zone does not govern these at all
+            public HashSet<uint> ExemptGenerators;           // master switch per generator (2026-09-03): nor anything these spawn
             public ZoneEffects Effects;                      // immutable copy (readers never touch the live zone)
             public ZoneAppearance AppearanceDefault;         // cosmetic default (separate from stats)
             public Dictionary<uint, ZoneAppearance> AppearanceByWcid; // per-WCID cosmetic overlays
@@ -223,6 +230,20 @@ namespace ACE.Server.Managers.ZoneControl
             string json = null;
             if (DatabaseManager.ShardConfig.StringExists(StoreKey))
                 json = DatabaseManager.ShardConfig.GetString(StoreKey)?.Value;
+
+            // Headroom readout at every start (2026-09-02): the store is one TEXT/MEDIUMTEXT cell, and a
+            // full cell fails every later edit. Say how full it is, and shout if the column is still TEXT.
+            {
+                var bytes = json == null ? 0 : System.Text.Encoding.UTF8.GetByteCount(json);
+                var cap = StoreValueCapacity();
+                if (cap > 0 && cap < 1_000_000)
+                    log.Warn($"[ZoneControl] config_properties_string.value is still a {cap:N0}-byte column (TEXT); the store is {bytes:N0} bytes. " +
+                             "Apply DatabaseSetupScripts/Updates/Shard/2026-09-02-00-ZoneControl-Store-Value-MediumText.sql (or run the ALTER) before it fills.");
+                else if (cap > 0)
+                    log.Info($"[ZoneControl] store loaded: {bytes:N0} bytes of {cap:N0} column capacity.");
+                if (cap > 0 && bytes > cap * 0.8)
+                    log.Warn($"[ZoneControl] store is at {bytes * 100.0 / cap:0} pct of the column - the next edits may fail to save.");
+            }
 
             if (!string.IsNullOrWhiteSpace(json))
                 json = UpgradeLegacyStoreKeys(json);
@@ -347,6 +368,35 @@ namespace ACE.Server.Managers.ZoneControl
                 && (vp.SpellRules == null || vp.SpellRules.Count == 0);
         }
 
+        /// <summary>
+        /// Capacity of config_properties_string.value in bytes (2026-09-02): TEXT = 65,535, MEDIUMTEXT =
+        /// 16,777,215. Read once from information_schema; -1 when the query fails (logged, never fatal).
+        /// WHY: the store JSON hit 62,843 bytes on a TEXT column that night and the next write failed
+        /// with ERROR 1406 - a plugin edit would have thrown the same way with nobody watching, and on a
+        /// non-strict SQL mode it would have TRUNCATED the JSON silently. Save() refuses to write past
+        /// the capacity; Load() logs the headroom at every start.
+        /// </summary>
+        private static long _storeCapacity = long.MinValue;   // MinValue = not queried yet
+        private static long StoreValueCapacity()
+        {
+            if (_storeCapacity != long.MinValue) return _storeCapacity;
+            try
+            {
+                using var ctx = new ACE.Database.Models.Shard.ShardDbContext();
+                var rows = ctx.Database.SqlQueryRaw<long>(
+                    "SELECT CAST(CHARACTER_OCTET_LENGTH AS SIGNED) AS `Value` FROM information_schema.COLUMNS " +   // OCTET: Save() compares UTF-8 BYTES (review 2026-09-03)
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'config_properties_string' AND COLUMN_NAME = 'value'")
+                    .AsEnumerable().ToList();
+                _storeCapacity = rows.Count > 0 ? rows[0] : -1;
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[ZoneControl] could not read config_properties_string.value capacity: {ex.Message}");
+                _storeCapacity = -1;
+            }
+            return _storeCapacity;
+        }
+
         private static void Save()
         {
             var store = new Store
@@ -357,10 +407,33 @@ namespace ACE.Server.Managers.ZoneControl
             };
             _ladderSnapshot = new Dictionary<int, LadderApply>(_ladderApplies);
             var jsonOut = JsonConvert.SerializeObject(store);
-            if (DatabaseManager.ShardConfig.StringExists(StoreKey))
-                DatabaseManager.ShardConfig.SaveString(new ConfigPropertiesString { Key = StoreKey, Value = jsonOut, Description = "Zone Control store (JSON)" });
-            else
-                DatabaseManager.ShardConfig.AddString(StoreKey, jsonOut, "Zone Control store (JSON)");
+
+            // SIZE GUARD (2026-09-02): never hand the DB a value it cannot hold. The in-memory store keeps
+            // the edit (so the operator sees their number) but the DB keeps the LAST GOOD store, and the
+            // log says exactly why. The fix is the shard update 2026-09-02-00-ZoneControl-Store-Value-MediumText.sql.
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(jsonOut);
+            var cap = StoreValueCapacity();
+            if (cap > 0 && bytes > cap)
+            {
+                log.Error($"[ZoneControl] STORE NOT SAVED: {bytes:N0} bytes exceeds config_properties_string.value capacity {cap:N0}. " +
+                          "Widen the column (ALTER TABLE config_properties_string MODIFY value MEDIUMTEXT) and re-save. The edit is in memory only until then.");
+                { _evalCache.Clear(); RebuildIndexes(); throw new InvalidOperationException($"Zone Control store is {bytes:N0} bytes; the DB column holds {cap:N0}. Widen config_properties_string.value to MEDIUMTEXT."); }   // keep the snapshot in step with the in-memory edit (review 2026-09-03 H3)
+            }
+            if (cap > 0 && bytes > cap * 0.8)
+                log.Warn($"[ZoneControl] store is {bytes:N0} of {cap:N0} bytes ({bytes * 100.0 / cap:0} pct of the column). Widen the column before it fills.");
+
+            try
+            {
+                if (DatabaseManager.ShardConfig.StringExists(StoreKey))
+                    DatabaseManager.ShardConfig.SaveString(new ConfigPropertiesString { Key = StoreKey, Value = jsonOut, Description = "Zone Control store (JSON)" });
+                else
+                    DatabaseManager.ShardConfig.AddString(StoreKey, jsonOut, "Zone Control store (JSON)");
+            }
+            catch (Exception ex)
+            {
+                log.Error($"[ZoneControl] STORE SAVE FAILED ({bytes:N0} bytes, column capacity {cap:N0}): {ex.GetBaseException().Message}");
+                throw;
+            }
             _evalCache.Clear();
             RebuildIndexes();
         }
@@ -523,17 +596,28 @@ namespace ACE.Server.Managers.ZoneControl
         private static ZoneRef BuildZoneRef(ControlledArea area)
         {
             var def = DefaultFor(area.Variation);
-            // stats read through the anchor stack (v11 anchors under the tier's own Default);
-            // Effects/Appearance below stay on the variation's own Default
-            var defProfile = AnchoredDefaultProfileFor(area.Variation);
 
-            // zone layer = variation Default + the zone's own stats
-            var zoneMerged = ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
-
-            // per-WCID = the zone layer + that monster's bucket (per stat, NOT a wholesale replacement)
-            var wcid = new Dictionary<uint, EvaluatedProfile>();
+            // RANK LAYERS (2026-09-02): one flattened chain per rank. Each layer is flattened for the
+            // rank FIRST (ForRank), then the layers merge in scope order - tier Default (with the v11
+            // anchor under it) -> zone -> per-WCID bucket - so a zone's Default row beats a tier's
+            // rank row (owner D2). Effects/Appearance below stay on the variation's own Default.
+            var byRank = new EvaluatedProfile[ZoneRank.All.Length];
+            var wcid = new Dictionary<uint, EvaluatedProfile[]>();
+            var wcidRank = new Dictionary<uint, ZcRank>();
             foreach (var kv in area.Profile.WcidOverrides)
-                wcid[kv.Key] = EvaluateVariant(area.Name, ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, kv.Value));
+            {
+                wcid[kv.Key] = new EvaluatedProfile[ZoneRank.All.Length];
+                wcidRank[kv.Key] = ZoneRank.FromPropBools(kv.Value?.PropBools);
+            }
+            foreach (var rank in ZoneRank.All)
+            {
+                var defProfile = AnchoredDefaultProfileFor(area.Variation, rank);
+                var zoneLayer = area.Profile.Minion?.ForRank(rank);
+                byRank[(int)rank] = EvaluateVariant(area.Name, ZoneVariantProfile.Merge(defProfile, zoneLayer));
+                // per-WCID = the rank chain + that monster's bucket (per stat, NOT a wholesale replacement)
+                foreach (var kv in area.Profile.WcidOverrides)
+                    wcid[kv.Key][(int)rank] = EvaluateVariant(area.Name, ZoneVariantProfile.Merge(defProfile, zoneLayer, kv.Value));
+            }
 
             // appearance layers the same way: Default -> zone -> wcid, per field
             var apZone = ZoneAppearance.Merge(def?.Appearance, area.AppearanceDefault) ?? new ZoneAppearance();
@@ -550,8 +634,12 @@ namespace ACE.Server.Managers.ZoneControl
                 Name = area.Name,
                 Variation = area.Variation,
                 LandblockCount = area.Landblocks.Count,
-                Default = EvaluateVariant(area.Name, zoneMerged),
+                Default = byRank[(int)ZcRank.None],
+                ByRank = byRank,
                 Wcid = wcid,
+                WcidRank = wcidRank,
+                ExemptWcids = area.Profile.ExemptWcids != null ? new HashSet<uint>(area.Profile.ExemptWcids) : new HashSet<uint>(),
+                ExemptGenerators = area.Profile.ExemptGenerators != null ? new HashSet<uint>(area.Profile.ExemptGenerators) : new HashSet<uint>(),
                 Effects = ZoneEffects.Merge(def?.Effects, area.Effects),
                 AppearanceDefault = apZone,
                 AppearanceByWcid = apWcid,
@@ -650,12 +738,15 @@ namespace ACE.Server.Managers.ZoneControl
         /// layer, no anchor underlay. STATS ONLY - Effects/Appearance keep reading the
         /// variation's own Default.
         /// </summary>
-        private static ZoneVariantProfile AnchoredDefaultProfileFor(int variation)
+        private static ZoneVariantProfile AnchoredDefaultProfileFor(int variation, ZcRank rank = ZcRank.None)
         {
-            var own = DefaultFor(variation)?.Profile;
+            // RANK LAYERS (2026-09-02): each Default is flattened for the rank BEFORE the anchor merge,
+            // so the tier's own Default row beats the v11 anchor's rank row (owner D2, applied between
+            // tiers exactly as between tier and zone). For rank None this is the pre-existing stack.
+            var own = DefaultFor(variation)?.Profile?.ForRank(rank);
             if (variation <= 11)
                 return own;
-            var anchor = DefaultFor(11)?.Profile;
+            var anchor = DefaultFor(11)?.Profile?.ForRank(rank);
             if (anchor == null)
                 return own;
             if (own == null)
@@ -710,6 +801,18 @@ namespace ACE.Server.Managers.ZoneControl
             if (IsZoneScalingExempt(creature))
                 return null;
 
+            var best = FindZoneRef(creature);
+            if (best == null)
+                return null;
+
+            var rank = RankOf(best, creature);
+            return best.Wcid.TryGetValue(creature.WeenieClassId, out var wp) ? wp[(int)rank] : best.ByRank[(int)rank];
+        }
+
+        /// <summary>The winning ZoneRef for a creature from the lock-free snapshot, or null: no enabled zone
+        /// covers its landblock, or none at its variation. Most-specific (fewest landblocks) wins.</summary>
+        private static ZoneRef FindZoneRef(Creature creature)
+        {
             // Fully lock-free: read the immutable published snapshot (no _lock, no EnsureInitialized on the hot path).
             var snap = _snapshot;
             var landblock = creature.Location?.LandblockId.Landblock ?? 0;
@@ -729,11 +832,74 @@ namespace ACE.Server.Managers.ZoneControl
                 if (best == null || zr.LandblockCount < best.LandblockCount)
                     best = zr;
             }
-
-            if (best == null)
+            // MASTER SWITCH (owner 2026-09-03): a WCID the winning zone exempts is UNGOVERNED here - every
+            // caller (stats, props, effects, hit gate) sees "no zone" for it.
+            if (best != null && best.ExemptWcids.Contains(creature.WeenieClassId))
                 return null;
+            // ... and so is anything spawned by an exempt GENERATOR, however deep the generator chain
+            // (owner 2026-09-03: "exempt wins from either side"). Spawns carry their generator link
+            // (GeneratorProfile.Spawn sets obj.Generator), so this is a short pointer walk, no lookups.
+            if (best != null && best.ExemptGenerators.Count > 0)
+            {
+                var g = creature.Generator;
+                for (var depth = 0; g != null && depth < 8; depth++, g = g.Generator)
+                    if (best.ExemptGenerators.Contains(g.WeenieClassId))
+                        return null;
+            }
+            return best;
+        }
 
-            return best.Wcid.TryGetValue(creature.WeenieClassId, out var wp) ? wp : best.Default;
+        /// <summary>
+        /// A monster's RANK for stat resolution (2026-09-02): the zone's per-WCID bucket decides when it
+        /// authors a rank bool (so a dev can rank a retail mob inside one zone without touching its
+        /// weenie, and so the FIRST spawn already resolves ranked - the bucket bools are stamped onto
+        /// the creature only AFTER the stamped stats, ZoneSpawnScaler:123-129); else the creature's own
+        /// bools (weenie-baked, or stamped by an earlier spawn); else None = the Default row only.
+        /// </summary>
+        private static ZcRank RankOf(ZoneRef zr, Creature creature)
+        {
+            if (zr.WcidRank.TryGetValue(creature.WeenieClassId, out var authored) && authored != ZcRank.None)
+                return authored;
+            return RankFromCreatureBools(creature);
+        }
+
+        private static ZcRank RankFromCreatureBools(WorldObject creature)
+        {
+            if (creature.GetProperty((PropertyBool)ZoneStat.BoolIsZcBoss) == true) return ZcRank.Boss;
+            if (creature.GetProperty((PropertyBool)ZoneStat.BoolIsZcLeader) == true) return ZcRank.Leader;
+            if (creature.GetProperty((PropertyBool)ZoneStat.BoolIsZcMinion) == true) return ZcRank.Regular;
+            return ZcRank.None;
+        }
+
+        /// <summary>The rank a LIVE creature resolves at, with its source: "zone" (the bucket authors it),
+        /// "weenie" (the creature's own bool), or "none". For the KILLXP log line and mobcheck.</summary>
+        public static (ZcRank Rank, string Source) ResolveRankForCreature(Creature creature)
+        {
+            var zr = creature != null && !IsZoneScalingExempt(creature) ? FindZoneRef(creature) : null;
+            if (zr != null && zr.WcidRank.TryGetValue(creature.WeenieClassId, out var authored) && authored != ZcRank.None)
+                return (authored, "zone");
+            var own = creature != null ? RankFromCreatureBools(creature) : ZcRank.None;
+            return (own, own == ZcRank.None ? "none" : "weenie");
+        }
+
+        /// <summary>The rank a WCID resolves at inside a zone, for display paths (payload, show, mobcheck)
+        /// where no live creature exists: bucket PropBools, else the WEENIE's bools, else None.</summary>
+        public static (ZcRank Rank, string Source) ResolveRankForWcid(ControlledArea area, uint wcid)
+        {
+            if (area?.Profile?.WcidOverrides != null
+                && area.Profile.WcidOverrides.TryGetValue(wcid, out var bucket))
+            {
+                var authored = ZoneRank.FromPropBools(bucket?.PropBools);
+                if (authored != ZcRank.None) return (authored, "zone");
+            }
+            var weenie = DatabaseManager.World.GetCachedWeenie(wcid);
+            if (weenie != null)
+            {
+                if (weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcBoss) == true) return (ZcRank.Boss, "weenie");
+                if (weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcLeader) == true) return (ZcRank.Leader, "weenie");
+                if (weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcMinion) == true) return (ZcRank.Regular, "weenie");
+            }
+            return (ZcRank.None, "none");
         }
 
         /// <summary>
@@ -750,23 +916,12 @@ namespace ACE.Server.Managers.ZoneControl
             if (IsZoneScalingExempt(creature))
                 return null;
 
-            var snap = _snapshot;
-            var landblock = creature.Location?.LandblockId.Landblock ?? 0;
-            if (!snap.EnabledLandblocks.Contains(landblock) || !snap.ByLandblock.TryGetValue(landblock, out var list))
+            var best = FindZoneRef(creature);
+            if (best == null)
                 return null;
-
-            var effVar = GetEffectiveVariation(creature);
-
-            ZoneRef best = null;
-            foreach (var zr in list)
-            {
-                if (zr.Variation != effVar)
-                    continue;
-                if (best == null || zr.LandblockCount < best.LandblockCount)
-                    best = zr;
-            }
-
-            return best?.Default;
+            // zone-level for the creature's RANK (2026-09-02): still ignores its per-WCID bucket, which
+            // is this method's whole point, but a Leader reads the zone's Leader row like everyone else.
+            return best.ByRank[(int)RankOf(best, creature)];
         }
 
         /// <summary>
@@ -1141,7 +1296,10 @@ namespace ACE.Server.Managers.ZoneControl
         private static EvaluatedProfile Evaluate(ControlledArea area, uint? wcid = null)
         {
             var hasWcidOverride = wcid.HasValue && area.Profile.WcidOverrides.ContainsKey(wcid.Value);
-            var cacheKey = area.Name + "|" + (hasWcidOverride ? "w" + wcid.Value : "default");
+            // RANK LAYERS (2026-09-02): a WCID evaluates on ITS rank's chain (bucket bools, else weenie
+            // bools); the bare zone evaluates on the Default row. Cache is per rank as well.
+            var rank = wcid.HasValue ? ResolveRankForWcid(area, wcid.Value).Rank : ZcRank.None;
+            var cacheKey = area.Name + "|" + (hasWcidOverride ? "w" + wcid.Value : "default") + "|r" + (int)rank;
 
             lock (_lock)
             {
@@ -1149,11 +1307,13 @@ namespace ACE.Server.Managers.ZoneControl
                     return cached;
 
                 // Same layering the combat snapshot uses, so the GUI/command readout matches what a mob
-                // actually gets: v11 anchors -> VariationDefault -> zone -> wcid, merged per stat.
-                var defProfile = AnchoredDefaultProfileFor(area.Variation);
+                // actually gets: v11 anchors -> VariationDefault -> zone -> wcid, each flattened for the
+                // rank first, merged per stat.
+                var defProfile = AnchoredDefaultProfileFor(area.Variation, rank);
+                var zoneLayer = area.Profile.Minion?.ForRank(rank);
                 var variantProfile = hasWcidOverride
-                    ? ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, area.Profile.WcidOverrides[wcid.Value])
-                    : ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
+                    ? ZoneVariantProfile.Merge(defProfile, zoneLayer, area.Profile.WcidOverrides[wcid.Value])
+                    : ZoneVariantProfile.Merge(defProfile, zoneLayer);
 
                 var eval = EvaluateVariant(area.Name, variantProfile);
                 _evalCache[cacheKey] = eval;
@@ -1176,11 +1336,27 @@ namespace ACE.Server.Managers.ZoneControl
                 if (area == null)
                     return null;
 
-                var defProfile = AnchoredDefaultProfileFor(area.Variation);
-                if (wcid.HasValue && area.Profile.WcidOverrides.TryGetValue(wcid.Value, out var bucket))
-                    return ZoneVariantProfile.Merge(defProfile, area.Profile.Minion, bucket);
+                // Bare zone: the UNFLATTENED merge, Ranks kept, so the plugin's tier / zone grids can show
+                // the Regular / Leader / Boss rows (AppendRankRows). A --wcid target: the SAME chain combat
+                // resolves for that monster (2026-09-03) - every layer flattened for ITS rank first, so a
+                // Leader's Damage Resist reads the Leader row, not the Default row.
+                if (!wcid.HasValue)
+                {
+                    // UNFLATTENED on purpose: AnchoredDefaultProfileFor goes through ForRank, which CLEARS Ranks, so the
+                    // tier Default's Regular / Leader / Boss rows never reached the zone-scope grid (review 2026-09-03).
+                    // Merge folds Ranks recursively, so the tier's rank rows survive under the zone's own.
+                    var tierOwn = DefaultFor(area.Variation)?.Profile;
+                    var tierAnchor = area.Variation > 11 ? DefaultFor(11)?.Profile : null;
+                    return ZoneVariantProfile.Merge(tierAnchor, tierOwn, area.Profile.Minion);
+                }
 
-                return ZoneVariantProfile.Merge(defProfile, area.Profile.Minion);
+                var rank = ResolveRankForWcid(area, wcid.Value).Rank;
+                var defProfile = AnchoredDefaultProfileFor(area.Variation, rank);
+                var zoneLayer = area.Profile.Minion?.ForRank(rank);
+                if (area.Profile.WcidOverrides.TryGetValue(wcid.Value, out var bucket))
+                    return ZoneVariantProfile.Merge(defProfile, zoneLayer, bucket);
+
+                return ZoneVariantProfile.Merge(defProfile, zoneLayer);
             }
         }
 
@@ -1200,18 +1376,32 @@ namespace ACE.Server.Managers.ZoneControl
                     && bucket?.Stats != null && bucket.Stats.ContainsKey(stat))
                     return "wcid";
 
-                if (area.Profile.Minion?.Stats != null && area.Profile.Minion.Stats.ContainsKey(stat))
+                // RANK LAYERS (2026-09-02): the WCID's rank row on a layer sits ABOVE that layer's
+                // Default row and BELOW the next more-local layer (owner D2). Same order as ForRank+Merge.
+                var rank = wcid.HasValue ? ResolveRankForWcid(area, wcid.Value).Rank : ZcRank.None;
+                var rankKey = ZoneRank.Key(rank);
+                static bool Authors(ZoneVariantProfile p, string s) => p?.Stats != null && p.Stats.ContainsKey(s);
+                static bool AuthorsRank(ZoneVariantProfile p, string key, string s)
+                    => p?.Ranks != null && p.Ranks.TryGetValue(key, out var r) && Authors(r, s);
+
+                if (rank != ZcRank.None && AuthorsRank(area.Profile.Minion, rankKey, stat))
+                    return "zone " + rankKey;
+                if (Authors(area.Profile.Minion, stat))
                     return "zone";
 
                 var def = DefaultFor(area.Variation);
-                if (def?.Profile?.Stats != null && def.Profile.Stats.ContainsKey(stat))
+                if (rank != ZcRank.None && AuthorsRank(def?.Profile, rankKey, stat))
+                    return "default v" + area.Variation + " " + rankKey;
+                if (Authors(def?.Profile, stat))
                     return "default v" + area.Variation;
 
                 // the v11 anchor layer rides under every 12+ Default (AnchoredDefaultProfileFor)
                 if (area.Variation > 11)
                 {
                     var anchor = DefaultFor(11);
-                    if (anchor?.Profile?.Stats != null && anchor.Profile.Stats.ContainsKey(stat))
+                    if (rank != ZcRank.None && AuthorsRank(anchor?.Profile, rankKey, stat))
+                        return "default v11 (anchor) " + rankKey;
+                    if (Authors(anchor?.Profile, stat))
                         return "default v11 (anchor)";
                 }
 

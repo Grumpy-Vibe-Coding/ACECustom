@@ -43,7 +43,14 @@ namespace ACE.Server.Command.Handlers
 
         /// <summary>An unchanged [[ZC]] payload is still re-sent this often, so a plugin holding a stale
         /// optimistic value (e.g. after a failed command) gets corrected without the old every-2s spam.</summary>
-        private const double SyncKeepaliveSeconds = 15.0;
+        // 15 -> 120 s (2026-09-03): every full-payload resend costs the client a ~260 ms freeze even chunked
+        // (measured), and the plugin does not track stream liveness - the resend is only a lost-push correction.
+        private const double SyncKeepaliveSeconds = 120.0;
+
+        /// <summary>The last `get` reply per session (2026-09-03): seeds the sync watch's change detector so the
+        /// first push after a target change is not a byte-identical duplicate of the get reply that just went out
+        /// (the plugin Pull()s AND re-handshakes on every pick - two identical 8 KB payloads a second apart).</summary>
+        private static readonly ConcurrentDictionary<Session, (string Name, uint? Wcid, string Payload, DateTime At)> _lastGet = new();
 
         /// <summary>Called from WorldManager.UpdateGameWorld() every frame; rate-limited to once per 2s.
         /// Pushes [[ZC]] to registered plugin sessions â€” but only when the payload actually CHANGED since
@@ -63,6 +70,7 @@ namespace ACE.Server.Command.Handlers
                 if (session.IsTerminated)
                 {
                     _pluginSessions.TryRemove(session, out _);
+                    _lastGet.TryRemove(session, out _);   // never leak a Session through the get cache (review 2026-09-03)
                     continue;
                 }
 
@@ -74,7 +82,27 @@ namespace ACE.Server.Command.Handlers
 
                 watch.LastPayload = payload;
                 watch.LastSentUtc = now;
+                SendChunked(session, payload);
+            }
+        }
+
+        /// <summary>Chat lines over this length go out as "[[ZC+]]i/n|piece" chunks (2026-09-03). MEASURED on the
+        /// test client: every 7.7-8.5 KB [[ZC]] line froze the client for ~1.5 s before Decal's chat hook even
+        /// fired (17 of 17), while 2.6 KB lines never did. The plugin (PluginCore) reassembles in order.</summary>
+        private const int ChatChunkChars = 600;   // 1800 -> 600 (2026-09-03 20:40): 5 x 1.8 KB still cost ~480 ms per payload; the cost is superlinear in line length
+
+        private static void SendChunked(Session session, string payload)
+        {
+            if (payload.Length <= ChatChunkChars)
+            {
                 ChatPacket.SendServerMessage(session, payload, ChatMessageType.Broadcast);
+                return;
+            }
+            var n = (payload.Length + ChatChunkChars - 1) / ChatChunkChars;
+            for (var i = 0; i < n; i++)
+            {
+                var piece = payload.Substring(i * ChatChunkChars, Math.Min(ChatChunkChars, payload.Length - i * ChatChunkChars));
+                ChatPacket.SendServerMessage(session, "[[ZC+]]" + i + "/" + n + "|" + piece, ChatMessageType.Broadcast);
             }
         }
 
@@ -118,7 +146,9 @@ namespace ACE.Server.Command.Handlers
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
 
-            if (parameters.Length == 0 || parameters[0].Equals("help", StringComparison.OrdinalIgnoreCase))
+            // Bare /zonecontrol = this usage dump. `help` no longer stops here (2026-09-03): it falls through to
+            // case "help" = the registry (prose, or [[ZCHELP]] rows with --wire for the Chat Commands tab).
+            if (parameters.Length == 0)
             {
                 Msg("Zone Control commands (zones â€” any world area):");
                 Msg("  /zonecontrol list | here | reload");
@@ -130,7 +160,8 @@ namespace ACE.Server.Command.Handlers
                 Msg("  /zonecontrol default <variation> <show|set|clearstat|copyfrom|clear> | default list");
                 Msg("      the per-variation BASELINE every zone at that variation inherits, per stat;");
                 Msg("      a zone (or a --wcid) overrides only the stats it sets. v11-v25 = the progression.");
-                Msg("  /zonecontrol set <name> <stat> <value> [--wcid <id>]   (--wcid = a specific monster's override)");
+                Msg("  /zonecontrol set <name> <stat> <value> [--wcid <id>] [--rank regular|leader|boss]   (--wcid = a specific monster's override; --rank = that rank's ROW on the zone, read over the Default row by monsters of that rank)");
+                Msg("      RANK ROWS (2026-09-02): every stat has Default / Regular / Leader / Boss rows on each layer (tier Default, zone). set / clearstat / togglestat / default ... / tier all take --rank. A monster's rank = its zone bucket's rank bool, else its weenie's. show / mobcheck print which.");
                 Msg("  /zonecontrol clearstat <name> <stat> [--wcid <id>] | show <name> [--wcid <id>]");
                 Msg("  /zonecontrol effect <name> [show | dot on|off | dmg <amount> | type <fire|cold|...|percent> | interval <secs>]   (player DoT)");
                 Msg("  /zonecontrol part <name> <part> <armor|damage|variance|dmgtype> <value> [--wcid <id>]   (per-body-part override; damage 0 = part stops attacking)");
@@ -181,6 +212,12 @@ namespace ACE.Server.Command.Handlers
             var args = RetokenizeParameters(parameters);
             if (args.Count == 0) { Msg("See /zonecontrol help."); return; }
             uint? wcid = ExtractWcidFlag(args);
+            // RANK LAYERS (2026-09-02): --rank default|regular|leader|boss picks which ROW of a layer a
+            // stat verb edits (set / clearstat / togglestat / default ... / tier). No flag = the Default
+            // row, exactly the pre-existing behaviour. A per-WCID bucket has no rows (a monster type IS
+            // one rank), so --wcid + --rank is refused at the verbs that take both.
+            var rank = ExtractRankFlag(args, out var rankErr);
+            if (rankErr != null) { Msg(rankErr); return; }
             var sub = args[0].ToLowerInvariant();
 
             // Unquoted multi-word zone names: for any subcommand whose <name> is args[1], collapse the
@@ -250,7 +287,14 @@ namespace ACE.Server.Command.Handlers
                         // Bare get = the GM Tools state alone (session flags + shard-combat rules).
                         // Those are not zone state, so the plugin asks for them zoneless.
                         if (args.Count < 2) { Msg(BuildSessionPayload(session)); return; }
-                        Msg(BuildZonePayload(args[1], wcid, session));
+                        var getPayload = BuildZonePayload(args[1], wcid, session, includeLive: true);
+                        SendChunked(session, getPayload);
+                        // seed the change detector (2026-09-03): a live watch on the same target need not re-push this
+                        var getNow = DateTime.UtcNow;
+                        var pushShaped = BuildZonePayload(args[1], wcid, session);   // what the stream would send (no live_)
+                        _lastGet[session] = (args[1], wcid, pushShaped, getNow);
+                        if (_pluginSessions.TryGetValue(session, out var gw) && gw.Name.Equals(args[1], StringComparison.OrdinalIgnoreCase) && gw.Wcid == wcid)
+                        { gw.LastPayload = pushShaped; gw.LastSentUtc = getNow; }
                         return;
                     }
 
@@ -263,9 +307,12 @@ namespace ACE.Server.Command.Handlers
                         var name = args[1];
                         var area = ZoneControlManager.GetArea(name);
                         var hasOverride = wcid.HasValue && area != null && area.Profile.WcidOverrides.ContainsKey(wcid.Value);
-                        // layered (Default -> zone -> wcid), same as combat
-                        var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
-                        var sb = new StringBuilder("[[ZCSIM]]scope=").Append(name)
+                        // layered (anchor -> Default -> zone -> wcid) AND rank-flattened for the wcid's rank (2026-09-02:
+                        // ResolveProfileForDisplay is the unflattened merge, so a Leader / Boss wcid came back with the
+                        // Default row's numbers). EvaluateForDisplay is what the Bestiary readouts and mobcheck use.
+                        var eval = area != null ? ZoneControlManager.EvaluateForDisplay(name, wcid) : null;
+                        var simRank = wcid.HasValue && area != null ? ZoneControlManager.ResolveRankForWcid(area, wcid.Value) : (ZcRank.None, "none");
+                        var sb = new StringBuilder("[[ZCSIM]]scope=").Append(WireName(name))
                             .Append("|wcid=").Append(wcid?.ToString() ?? "")
                             .Append("|found=").Append(area != null ? 1 : 0)
                             .Append("|override=").Append(hasOverride ? 1 : 0);
@@ -273,9 +320,11 @@ namespace ACE.Server.Command.Handlers
                         {
                             int defined = 0;
                             double value = 0;
-                            if (vp != null && vp.TryGet(stat, out var curve)) { defined = 1; value = curve.Base; }
+                            if (eval != null && eval.Values.TryGetValue(stat, out var v)) { defined = 1; value = v; }
                             sb.Append('|').Append(stat).Append('=').Append(defined).Append(',').Append(value.ToString(CultureInfo.InvariantCulture));
                         }
+                        // APPEND-ONLY (2026-09-02): the rank the wcid resolves at and its source
+                        sb.Append("|rank=").Append(ZoneRank.Key(simRank.Item1)).Append("|rank_src=").Append(simRank.Item2);
                         Msg(sb.ToString());
                         return;
                     }
@@ -288,12 +337,12 @@ namespace ACE.Server.Command.Handlers
                         // Override flags ride AFTER the name so an older plugin (which reads exactly three
                         // fields and takes parts[2] as the name) keeps working against this reply.
                         var ovFlags = ZoneControlManager.GetAreaMobOverrideFlags(name);
-                        var sb = new StringBuilder("[[ZCM]]scope=").Append(name);
+                        var sb = new StringBuilder("[[ZCM]]scope=").Append(WireName(name));
                         foreach (var m in mobs)
                             sb.Append('|').Append(m.Wcid).Append(',').Append(m.IsMonster ? 1 : 0).Append(',')
                               .Append(m.Name.Replace('|', ' ').Replace(',', ' ')).Append(',')
                               .Append(ovFlags.TryGetValue(m.Wcid, out var ov) ? ov : 0);
-                        Msg(sb.ToString());
+                        SendChunked(session, sb.ToString());   // [[ZCM]] 1.7 KB: chunked too (2026-09-03)
                         return;
                     }
 
@@ -305,6 +354,7 @@ namespace ACE.Server.Command.Handlers
                         if (args.Count >= 2 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase))
                         {
                             _pluginSessions.TryRemove(session, out _);
+                            _lastGet.TryRemove(session, out _);
                             return;
                         }
                         if (args.Count < 3 || !args[1].Equals("on", StringComparison.OrdinalIgnoreCase))
@@ -312,7 +362,21 @@ namespace ACE.Server.Command.Handlers
                             Msg("Usage: sync on <name> [--wcid <id>]  |  sync off");
                             return;
                         }
-                        _pluginSessions[session] = new SyncWatch { Name = args[2], Wcid = wcid };
+                        var newWatch = new SyncWatch { Name = args[2], Wcid = wcid };
+                        // a get reply for this exact target within the last 5 s already delivered the payload (2026-09-03)
+                        if (_lastGet.TryGetValue(session, out var lg) && lg.Name.Equals(args[2], StringComparison.OrdinalIgnoreCase) && lg.Wcid == wcid
+                            && (DateTime.UtcNow - lg.At).TotalSeconds < 5)
+                        { newWatch.LastPayload = lg.Payload; newWatch.LastSentUtc = lg.At; }
+                        _pluginSessions[session] = newWatch;
+                        // Push NOW (2026-09-03 round 4) instead of waiting for the tick: the plugin no longer sends a
+                        // separate `get` on a target change, so this is the only payload a pick costs (~260 ms chunked).
+                        var first = BuildZonePayload(newWatch.Name, newWatch.Wcid, session);
+                        if (first != newWatch.LastPayload)
+                        {
+                            newWatch.LastPayload = first;
+                            newWatch.LastSentUtc = DateTime.UtcNow;
+                            SendChunked(session, first);
+                        }
                         return;
                     }
 
@@ -480,11 +544,13 @@ namespace ACE.Server.Command.Handlers
                         // Emits one [[ZCL]] header then a [[ZCG]] knob line per wcid.
                         string scopeLabel;
                         List<ZoneControlManager.SurveyPlacedRow> placedGens;
+                        ControlledArea genArea = null;   // the zone whose per-generator switches ride the header (2026-09-03)
                         if (args.Count >= 2)
                         {
                             placedGens = ZoneControlManager.GetPlacedGenerators(args[1]);
                             if (placedGens == null) { Msg($"No zone '{args[1]}'."); return; }
                             scopeLabel = args[1];
+                            genArea = ZoneControlManager.GetArea(args[1]);
                         }
                         else
                         {
@@ -498,6 +564,7 @@ namespace ACE.Server.Command.Handlers
                             {
                                 placedGens = ZoneControlManager.GetPlacedGenerators(hereArea.Name) ?? new List<ZoneControlManager.SurveyPlacedRow>();
                                 scopeLabel = hereArea.Name;
+                                genArea = hereArea;
                             }
                             else
                             {
@@ -516,7 +583,15 @@ namespace ACE.Server.Command.Handlers
                         if (genListTrunc)
                             zcl.Append("|trunc=1");
                         zcl.Append("|g=").Append(string.Join(",", placedGens.Select(p => p.Wcid + "~" + p.Count)));
-                        Msg(zcl.ToString());
+                        // APPEND-ONLY (2026-09-03): the zone the per-generator master switches belong to, and
+                        // which generator wcids are exempt there. Absent = the scope is not a zone (bare landblock).
+                        if (genArea != null)
+                        {
+                            zcl.Append("|ezone=").Append(genArea.Name.Replace('|', ' ').Replace('~', ' ').Replace('=', ' ').Replace(',', ' '));
+                            if (genArea.Profile.ExemptGenerators is { Count: > 0 })
+                                zcl.Append("|exempt=").Append(string.Join(",", genArea.Profile.ExemptGenerators.OrderBy(x => x)));
+                        }
+                        SendChunked(session, zcl.ToString());   // up to ~2.6 KB at the 200-entry cap (review 2026-09-03)
 
                         foreach (var p in placedGens)
                         {
@@ -601,13 +676,15 @@ namespace ACE.Server.Command.Handlers
                         if (area == null) { Msg($"No zone '{name}' (create it first)."); return; }
                         var stat = NormalizeStat(args[2]); if (stat == null) { Msg("Unknown stat. Stats: " + string.Join(", ", ZoneStat.All)); return; }
                         if (!TryDouble(args[3], out var value)) { Msg("value must be a number."); return; }
+                        if (wcid.HasValue && rank != ZcRank.None)
+                        { StatRowFor(area.Profile, wcid, rank, false, out var refusal); Msg(refusal); return; }
 
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion;
+                            var vp = StatRowFor(a.Profile, wcid, rank, create: true, out _);
                             vp.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false };
                         });
-                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")} {stat} = {FmtStatEcho(value)}. " +
+                        Msg($"'{name}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")}{RankTag(rank)} {stat} = {FmtStatEcho(value)}. " +
                             $"{(area.Enabled ? "" : "Zone still DISABLED - /zonecontrol enable " + name)}");
                         return;
                     }
@@ -621,13 +698,15 @@ namespace ACE.Server.Command.Handlers
                         // same rule as the Default path: a key already in the store can always be
                         // cleared, even if it is no longer a known stat (see `default clearstat`)
                         var stat = NormalizeStat(args[2]) ?? args[2].Trim().ToLowerInvariant();
+                        if (wcid.HasValue && rank != ZcRank.None)
+                        { StatRowFor(area.Profile, wcid, rank, false, out var refusal); Msg(refusal); return; }
                         var removed = false;
                         ZoneControlManager.MutateArea(name, a =>
                         {
-                            var vp = wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value) : a.Profile.Minion;
+                            var vp = StatRowFor(a.Profile, wcid, rank, create: false, out _);
                             if (vp != null) removed = vp.Stats.Remove(stat);
                         });
-                        Msg(removed ? $"'{name}' {stat} cleared." : "That stat wasn't set.");
+                        Msg(removed ? $"'{name}'{RankTag(rank)} {stat} cleared." : "That stat wasn't set" + (rank != ZcRank.None ? " on that rank row." : "."));
                         return;
                     }
 
@@ -939,6 +1018,85 @@ namespace ACE.Server.Command.Handlers
                         }
                     }
 
+                    case "help":
+                    {
+                        // The command registry (ZoneControlCommandHelp.cs, owner 2026-09-03): prose here, one
+                        // [[ZCHELP]] row per entry with --wire for the plugin's GM Tools > Chat Commands tab.
+                        var helpWire = args.Any(a => a.Equals("--wire", StringComparison.OrdinalIgnoreCase));
+                        if (helpWire)
+                        {
+                            foreach (var line in ZoneControlCommandHelp.WireLines()) Msg(line);
+                            return;
+                        }
+                        var helpFilter = args.Count >= 2 && !args[1].StartsWith("--") ? args[1] : null;
+                        foreach (var g in ZoneControlCommandHelp.Groups)
+                        {
+                            var rows = ZoneControlCommandHelp.All.Where(e => e.Group == g
+                                && (helpFilter == null || e.Command.Contains(helpFilter, StringComparison.OrdinalIgnoreCase)
+                                    || e.Description.Contains(helpFilter, StringComparison.OrdinalIgnoreCase))).ToList();
+                            if (rows.Count == 0) continue;
+                            Msg("== " + g);
+                            foreach (var e in rows)
+                                Msg("  " + e.Command + (e.Usage.Length > 0 ? " " + e.Usage : "") + "  - " + e.Description);
+                        }
+                        return;
+                    }
+
+                    case "exempt":
+                    {
+                        // MASTER SWITCH per monster (owner 2026-09-03: "master switch only, retire the per-stat
+                        // off"): `exempt <zone> on|off --wcid <id>` puts the WCID on / takes it off the zone's
+                        // ExemptWcids set; `exempt <zone> list` prints the set. An exempt monster is ungoverned
+                        // in this zone (FindZoneRef returns null): weenie stats, no props, no effects, no hit gate.
+                        // --gen <wcid> (2026-09-03): the same switch per GENERATOR - everything it spawns, nested
+                        // generators included, is ungoverned here. Exempt wins from either side (owner).
+                        var exGen = ExtractGenFlag(args);
+                        if (args.Count < 3)
+                        { Msg("Usage: exempt <name> <on|off> --wcid <id> | exempt <name> <on|off> --gen <generator wcid> | exempt <name> list"); return; }
+                        var exName = args[1];
+                        var exArea = ZoneControlManager.GetArea(exName);
+                        if (exArea == null) { Msg($"No zone '{exName}' (create it first)."); return; }
+                        var exVerb = args[2].ToLowerInvariant();
+                        if (exVerb == "list")
+                        {
+                            var set = exArea.Profile.ExemptWcids;
+                            var gset = exArea.Profile.ExemptGenerators;
+                            Msg(set == null || set.Count == 0
+                                ? $"'{exName}': no exempt monsters - every WCID here is zone-governed."
+                                : $"'{exName}' exempt monsters (master switch OFF): {string.Join(", ", set.OrderBy(x => x))}");
+                            Msg(gset == null || gset.Count == 0
+                                ? $"'{exName}': no exempt generators."
+                                : $"'{exName}' exempt generators (everything they spawn is ungoverned): {string.Join(", ", gset.OrderBy(x => x))}");
+                            return;
+                        }
+                        if (!wcid.HasValue && !exGen.HasValue) { Msg("exempt needs --wcid <id> or --gen <generator wcid>: the master switch is per monster or per generator."); return; }
+                        if (wcid.HasValue && exGen.HasValue) { Msg("exempt takes --wcid OR --gen, not both."); return; }
+                        if (exVerb != "on" && exVerb != "off") { Msg("Usage: exempt <name> <on|off> --wcid <id> | --gen <generator wcid>"); return; }
+                        var exOn = exVerb == "on";
+                        var exChanged = false;
+                        if (exGen.HasValue)
+                        {
+                            ZoneControlManager.MutateArea(exName, a =>
+                            {
+                                a.Profile.ExemptGenerators ??= new HashSet<uint>();
+                                exChanged = exOn ? a.Profile.ExemptGenerators.Add(exGen.Value) : a.Profile.ExemptGenerators.Remove(exGen.Value);
+                            });
+                            Msg(exOn
+                                ? $"'{exName}' [generator {exGen.Value}] EXEMPT{(exChanged ? "" : " (already was)")} - everything it spawns here plays as its weenie says (nested generators included). Standing spawns change on their next respawn."
+                                : $"'{exName}' [generator {exGen.Value}] zone scaling ON{(exChanged ? "" : " (already was)")}.");
+                            return;
+                        }
+                        ZoneControlManager.MutateArea(exName, a =>
+                        {
+                            a.Profile.ExemptWcids ??= new HashSet<uint>();
+                            exChanged = exOn ? a.Profile.ExemptWcids.Add(wcid.Value) : a.Profile.ExemptWcids.Remove(wcid.Value);
+                        });
+                        Msg(exOn
+                            ? $"'{exName}' [wcid {wcid.Value}] EXEMPT from zone scaling{(exChanged ? "" : " (already was)")} - it plays as its weenie says; its override bucket is kept for when you switch it back on."
+                            : $"'{exName}' [wcid {wcid.Value}] zone scaling ON{(exChanged ? "" : " (already was)")}.");
+                        return;
+                    }
+
                     case "togglestat":
                     {
                         // ZONE-scope stat on/off (2026-08-29, release audit blocker 3): the weaponcard
@@ -947,18 +1105,22 @@ namespace ACE.Server.Command.Handlers
                         // cancel an inherited off; clear = this scope stops deciding. The authored value
                         // underneath is never touched. Tier-Default form: `default <var> togglestat ...`.
                         if (args.Count < 3)
-                        { Msg("Usage: togglestat <name> <stat> <on|off|clear> | togglestat <name> list   [--wcid <id>]"); return; }
+                        { Msg("Usage: togglestat <name> <stat> <on|off|clear> | togglestat <name> list   [--rank r]"); return; }
                         var tsName = args[1];
                         var tsArea = ZoneControlManager.GetArea(tsName);
                         if (tsArea == null) { Msg($"No zone '{tsName}' (create it first)."); return; }
-                        var tsScopeTag = $"'{tsName}'{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : "")}";
+                        // PER-MONSTER form RETIRED 2026-09-03 (owner: "master switch only, retire the per-stat
+                        // off"): a monster either takes the zone (override values in its bucket) or is exempt.
+                        if (wcid.HasValue)
+                        { Msg("Per-monster stat toggles were retired 2026-09-03. Use `exempt <name> on --wcid <id>` (master switch) or set an override value."); return; }
+                        var tsScopeTag = $"'{tsName}'{RankTag(rank)}";
 
                         HandleStatToggle(args, 2, tsScopeTag,
-                            "Usage: togglestat <name> <stat> <on|off|clear> | togglestat <name> list",
-                            wcid.HasValue ? tsArea.Profile.VariantForWcid(wcid.Value) : tsArea.Profile.Minion,
+                            "Usage: togglestat <name> <stat> <on|off|clear> | togglestat <name> list   [--rank r]",
+                            StatRowFor(tsArea.Profile, wcid, rank, create: false, out _),
                             ZoneControlManager.ResolveProfileForDisplay(tsName, wcid),
                             edit => ZoneControlManager.MutateArea(tsName, a =>
-                                edit(wcid.HasValue ? a.Profile.VariantForWcid(wcid.Value, create: true) : a.Profile.Minion)),
+                                edit(StatRowFor(a.Profile, wcid, rank, create: true, out _))),
                             Msg);
                         return;
                     }
@@ -2201,6 +2363,34 @@ namespace ACE.Server.Command.Handlers
                         return;
                     }
 
+                    case "propsof":
+                    {
+                        // The WEENIE's own values for a list of properties (2026-09-03, Props tab: "none of these are
+                        // auto populating"). `propsof <wcid> i:31,f:41,b:6,l:9` -> "[[ZCPV]]w=<wcid>|i:31=<v>|f:41=<v>|..."
+                        // (absent = the weenie does not carry it). Read from the weenie cache, never a live creature.
+                        if (args.Count < 3 || !uint.TryParse(args[1], out var pvWcid)) { Msg("Usage: propsof <wcid> <i|f|b|l>:<id>,..."); return; }
+                        var pvWeenie = ACE.Database.DatabaseManager.World.GetCachedWeenie(pvWcid);
+                        var pv = new StringBuilder("[[ZCPV]]w=").Append(pvWcid).Append("|found=").Append(pvWeenie != null ? 1 : 0);
+                        if (pvWeenie != null)
+                            foreach (var tok in args[2].Split(','))
+                            {
+                                var c = tok.IndexOf(':');
+                                if (c <= 0 || !int.TryParse(tok.Substring(c + 1), out var pid)) continue;
+                                var kind = tok.Substring(0, c);
+                                string val = null;
+                                switch (kind)
+                                {
+                                    case "i": if (pvWeenie.PropertiesInt != null && pvWeenie.PropertiesInt.TryGetValue((PropertyInt)pid, out var iv)) val = iv.ToString(CultureInfo.InvariantCulture); break;
+                                    case "l": if (pvWeenie.PropertiesInt64 != null && pvWeenie.PropertiesInt64.TryGetValue((PropertyInt64)pid, out var lv)) val = lv.ToString(CultureInfo.InvariantCulture); break;
+                                    case "f": if (pvWeenie.PropertiesFloat != null && pvWeenie.PropertiesFloat.TryGetValue((PropertyFloat)pid, out var fv)) val = fv.ToString("0.####", CultureInfo.InvariantCulture); break;
+                                    case "b": if (pvWeenie.PropertiesBool != null && pvWeenie.PropertiesBool.TryGetValue((PropertyBool)pid, out var bv)) val = bv ? "true" : "false"; break;
+                                }
+                                if (val != null) pv.Append('|').Append(kind).Append(':').Append(pid).Append('=').Append(val);
+                            }
+                        Msg(pv.ToString());
+                        return;
+                    }
+
                     case "clonezone":
                     {
                         // clonezone <src> <variation|lo-hi>
@@ -2276,7 +2466,7 @@ namespace ACE.Server.Command.Handlers
 
                     case "tier":
                     {
-                        HandleTierTune(args, Msg);
+                        HandleTierTune(args, rank, Msg);
                         return;
                     }
 
@@ -2307,6 +2497,11 @@ namespace ACE.Server.Command.Handlers
                             if (mcWire) Msg("[[ZCMC]]wcid=" + (mcWcid ?? 0) + "|found=0");
                         }
 
+                        // No wcid = the creature the admin has SELECTED in game (owner 2026-09-03: assess a
+                        // monster, click Check, read its readiness) - the same selection the live_ hints use.
+                        if (!mcWcid.HasValue && session.Player?.SelectedTarget is ACE.Server.WorldObjects.Creature mcSel && !(mcSel is ACE.Server.WorldObjects.Player))
+                            mcWcid = mcSel.WeenieClassId;
+
                         if (!mcWcid.HasValue)
                         {
                             McFail();
@@ -2314,6 +2509,7 @@ namespace ACE.Server.Command.Handlers
                             {
                                 Msg("Usage: mobcheck <wcid>            - checks the zone you are standing in");
                                 Msg("       mobcheck <zone> <wcid>     - checks a named zone");
+                                Msg("       mobcheck [<zone>]          - checks the creature you have selected");
                             }
                             return;
                         }
@@ -2354,8 +2550,10 @@ namespace ACE.Server.Command.Handlers
                         var area = ZoneControlManager.GetArea(name);
                         if (area == null) { Msg($"No zone '{name}'."); return; }
                         var eval = ZoneControlManager.EvaluateForDisplay(name, wcid);
+                        var showRank = wcid.HasValue ? ZoneControlManager.ResolveRankForWcid(area, wcid.Value) : (ZcRank.None, "none");
                         Msg($"'{name}' v{area.Variation} {(area.Enabled ? "ENABLED" : "disabled")}" +
-                            $"{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : " [zone]")}:");
+                            $"{(wcid.HasValue ? " [wcid " + wcid.Value + "]" : " [zone]")}" +
+                            (wcid.HasValue ? $" rank {ZoneRank.Label(showRank.Item1)} (from {showRank.Item2})" : " [Default row]") + ":");
                         if (eval == null || eval.Values.Count == 0) { Msg("  (no stats set)"); return; }
                         // Layered values with PROVENANCE, so it is obvious which layer each number came from.
                         foreach (var kv in eval.Values.OrderBy(k => k.Key))
@@ -2374,7 +2572,7 @@ namespace ACE.Server.Command.Handlers
                         // reuses its zone-grid parser.
                         if (args.Count < 2 || !int.TryParse(args[1].TrimStart('v', 'V'), out var getVar) || getVar < 0)
                         { Msg("Usage: defaultget <variation>"); return; }
-                        Msg(BuildVariationDefaultPayload(getVar));
+                        SendChunked(session, BuildVariationDefaultPayload(getVar));   // [[ZCD]] 2.6 KB: chunked too (2026-09-03)
                         return;
                     }
 
@@ -2427,6 +2625,15 @@ namespace ACE.Server.Command.Handlers
                             else
                                 foreach (var kv in stats.OrderBy(k => k.Key))
                                     Msg($"    {kv.Key,-22} = {kv.Value.Base:0.####}");
+                            // rank rows (2026-09-02): only what the row AUTHORS; everything else inherits the Default row
+                            foreach (var rr in ZoneRank.Ranked)
+                            {
+                                var row = d.Profile?.RankLayer(rr, create: false);
+                                if (row?.Stats == null || row.Stats.Count == 0) continue;
+                                Msg($"  {ZoneRank.Label(rr)} row:");
+                                foreach (var kv in row.Stats.OrderBy(k => k.Key))
+                                    Msg($"    {kv.Key,-22} = {kv.Value.Base:0.####}");
+                            }
                             if (d.Effects != null && !d.Effects.IsEmpty) Msg($"  effects: {DescribeDot(d.Effects)}");
                             return;
                         }
@@ -2457,8 +2664,10 @@ namespace ACE.Server.Command.Handlers
                             if (!TryDouble(args[4], out var dval)) { Msg("value must be a number."); return; }
 
                             ZoneControlManager.MutateVariationDefault(dvar, d =>
-                                d.Profile.Stats[dstat] = new StatCurve { Base = dval, Growth = 1.0, Additive = false });
-                            Msg($"Default v{dvar} {dstat} = {FmtStatEcho(dval)}. Every zone at v{dvar} that doesn't set it inherits this.");
+                                d.Profile.RankLayer(rank, create: true).Stats[dstat] = new StatCurve { Base = dval, Growth = 1.0, Additive = false });
+                            Msg($"Default v{dvar}{RankTag(rank)} {dstat} = {FmtStatEcho(dval)}. " + (rank == ZcRank.None
+                                ? $"Every zone at v{dvar} that doesn't set it inherits this."
+                                : $"Every {ZoneRank.Label(rank)} at v{dvar} reads this instead of the Default row."));
                             if (dstat == ZoneStat.CoreAnchorDr || dstat == ZoneStat.CoreAnchorCdr)
                                 AutoApplyForDefault(session, true, dvar, Msg);
                             return;
@@ -2475,8 +2684,12 @@ namespace ACE.Server.Command.Handlers
                             // validates - you may only clear rubbish, never author it.
                             var dstat = NormalizeStat(args[3]) ?? args[3].Trim().ToLowerInvariant();
                             var dremoved = false;
-                            ZoneControlManager.MutateVariationDefault(dvar, d => dremoved = d.Profile.Stats.Remove(dstat));
-                            Msg(dremoved ? $"Default v{dvar} {dstat} cleared." : "That stat wasn't set on the Default.");
+                            ZoneControlManager.MutateVariationDefault(dvar, d =>
+                            {
+                                var row = d.Profile.RankLayer(rank, create: false);
+                                if (row != null) dremoved = row.Stats.Remove(dstat);
+                            });
+                            Msg(dremoved ? $"Default v{dvar}{RankTag(rank)} {dstat} cleared." : $"That stat wasn't set on the Default{RankTag(rank)}.");
                             if (dremoved && (dstat == ZoneStat.CoreAnchorDr || dstat == ZoneStat.CoreAnchorCdr))
                                 AutoApplyForDefault(session, true, dvar, Msg);
                             return;
@@ -2502,11 +2715,12 @@ namespace ACE.Server.Command.Handlers
                         if (dop == "togglestat")
                         {
                             // TIER-DEFAULT stat on/off (2026-08-29) - same shape as weaponcard above.
-                            var dprof = ZoneControlManager.GetVariationDefault(dvar)?.Profile;
-                            HandleStatToggle(args, 3, $"Default v{dvar}",
-                                "Usage: default <var> togglestat <stat> <on|off|clear> | default <var> togglestat list",
+                            // --rank (2026-09-02) toggles inside that rank row.
+                            var dprof = ZoneControlManager.GetVariationDefault(dvar)?.Profile?.RankLayer(rank, create: false);
+                            HandleStatToggle(args, 3, $"Default v{dvar}{RankTag(rank)}",
+                                "Usage: default <var> togglestat <stat> <on|off|clear> | default <var> togglestat list   [--rank r]",
                                 dprof, dprof,
-                                edit => ZoneControlManager.MutateVariationDefault(dvar, d => edit(d.Profile)),
+                                edit => ZoneControlManager.MutateVariationDefault(dvar, d => edit(d.Profile.RankLayer(rank, create: true))),
                                 Msg);
                             return;
                         }
@@ -3013,6 +3227,8 @@ namespace ACE.Server.Command.Handlers
             // [[ZC]] sync, so the plugin Catalog at "Default v[N]" scope shows N's bands instead of the last
             // zone's. Sparse: absent keys fall back to the tier-scaled hardcoded band.
             var vp = d?.Profile;
+            // rank rows (2026-09-02), sparse, append-only - see AppendRankRows
+            AppendRankRows(sb, vp);
             if (vp?.CustomModifierBands is { Count: > 0 })
             {
                 sb.Append("|cantrips=");
@@ -3046,6 +3262,24 @@ namespace ACE.Server.Command.Handlers
             return sb.ToString();
         }
 
+        /// <summary>The sparse "<stat>@<rank>=1,<value>" rows for every rank row a profile authors
+        /// (2026-09-02). Shared by the [[ZC]] and [[ZCD]] builders. Plain decimal, never exponent (see
+        /// the 2026-08-30 note in BuildVariationDefaultPayload).</summary>
+        private static void AppendRankRows(StringBuilder sb, ZoneVariantProfile vp)
+        {
+            if (vp?.Ranks == null || vp.Ranks.Count == 0) return;
+            foreach (var rank in ZoneRank.Ranked)
+            {
+                var row = vp.RankLayer(rank, create: false);
+                if (row?.Stats == null || row.Stats.Count == 0) continue;
+                var key = ZoneRank.Key(rank);
+                foreach (var stat in ZoneStat.All)
+                    if (row.Stats.TryGetValue(stat, out var curve) && curve != null)
+                        sb.Append('|').Append(stat).Append('@').Append(key).Append("=1,")
+                          .Append(curve.Base.ToString("0.##########", CultureInfo.InvariantCulture));
+            }
+        }
+
         /// <summary>Stat echo in SHORT form (owner 2026-08-23): big numbers read as 100M / 5B, everything
         /// else as the plain value. Display only - the store keeps the exact double.</summary>
         private static string FmtStatEcho(double v)
@@ -3057,7 +3291,10 @@ namespace ACE.Server.Command.Handlers
             return v.ToString("0.####", CultureInfo.InvariantCulture);
         }
 
-        private static string BuildZonePayload(string name, uint? wcid, Session session)
+        /// <param name="includeLive">live_&lt;stat&gt; hints from the admin's in-game selection. ONLY the one-shot `get`
+        /// sends them (2026-09-03 round 5): in the push stream they made the payload flip with the selection, which
+        /// cost a second ~260 ms chunked push on every pick and one on every matching selection change.</param>
+        private static string BuildZonePayload(string name, uint? wcid, Session session, bool includeLive = false)
         {
             var area = ZoneControlManager.GetArea(name);
             // LAYERED view (2026-07-30): VariationDefault -> zone -> wcid, so the plugin shows the value combat
@@ -3066,7 +3303,7 @@ namespace ACE.Server.Command.Handlers
             var vp = ZoneControlManager.ResolveProfileForDisplay(name, wcid);
 
             var sb = new StringBuilder();
-            sb.Append("[[ZC]]scope=").Append(name)
+            sb.Append("[[ZC]]scope=").Append(WireName(name))
               .Append("|found=").Append(area != null ? 1 : 0)
               .Append("|enabled=").Append(area?.Enabled == true ? 1 : 0)
               .Append("|wcid=").Append(wcid?.ToString() ?? "")
@@ -3100,6 +3337,25 @@ namespace ACE.Server.Command.Handlers
                 double value = 0;
                 if (vp != null && vp.TryGet(stat, out var curve)) { defined = 1; value = curve.Base; }
                 sb.Append('|').Append(stat).Append('=').Append(defined).Append(',').Append(value.ToString(CultureInfo.InvariantCulture));
+            }
+            // RANK ROWS (2026-09-02), APPEND-ONLY and SPARSE: "<stat>@<rank>=1,<value>" for every stat a
+            // Regular / Leader / Boss row AUTHORS anywhere in the merged tier+zone stack (ResolveProfileForDisplay
+            // merges Ranks recursively). Absent = that rank inherits the Default row. Older plugins ignore
+            // unknown row keys (ParseZoneSync's default branch checks _rows first). A --wcid target also
+            // reports which rank it resolves at and where that came from.
+            AppendRankRows(sb, vp);
+            if (wcid.HasValue && area != null)
+            {
+                var (wr, wsrc) = ZoneControlManager.ResolveRankForWcid(area, wcid.Value);
+                sb.Append("|rank=").Append(ZoneRank.Key(wr)).Append("|rank_src=").Append(wsrc);
+                // own= (2026-09-03, APPEND-ONLY, SPARSE): the stats THIS monster's bucket authors. The stat
+                // rows above are the merged chain (defined=1 for anything ANY layer authors), so without
+                // this the single-monster grid cannot tell an override from an inherited value.
+                if (area.Profile.WcidOverrides.TryGetValue(wcid.Value, out var ownBucket) && ownBucket?.Stats is { Count: > 0 })
+                    sb.Append("|own=").Append(string.Join(",", ZoneStat.All.Where(st => ownBucket.Stats.ContainsKey(st))));
+                // exempt=1 (2026-09-03, APPEND-ONLY, SPARSE): the master switch is OFF for this monster here.
+                if (area.Profile.ExemptWcids != null && area.Profile.ExemptWcids.Contains(wcid.Value))
+                    sb.Append("|exempt=1");
             }
 
             // Live server-wide relief-curve defaults (v11_relief_* config, /modify-tunable) so the
@@ -3370,7 +3626,7 @@ namespace ACE.Server.Command.Handlers
             // (--wcid), only send them if the in-game target IS that monster â€” otherwise targeting some other
             // mob would overwrite the watched monster's weenie base values in the GUI. With no wcid watch
             // ("All monsters"), any target's live stats are useful context and flow through as before.
-            var target = session.Player?.SelectedTarget as ACE.Server.WorldObjects.Creature;
+            var target = includeLive ? session.Player?.SelectedTarget as ACE.Server.WorldObjects.Creature : null;
             if (target != null && (!wcid.HasValue || target.WeenieClassId == wcid.Value))
             {
                 foreach (var stat in ZoneStat.All)
@@ -3560,6 +3816,19 @@ namespace ACE.Server.Command.Handlers
             return true;
         }
 
+        /// <summary>A caller-supplied name echoed into a wire field: never let '|' '=' '~' ',' forge a field (review 2026-09-03 L8).</summary>
+        private static string WireName(string s) => (s ?? "").Replace('|', ' ').Replace('=', ' ').Replace('~', ' ').Replace(',', ' ');
+
+        /// <summary>--gen <generator wcid> (2026-09-03): the per-generator master switch's key. Removed from args.</summary>
+        private static uint? ExtractGenFlag(List<string> args)
+        {
+            var idx = args.FindIndex(a => a.Equals("--gen", StringComparison.OrdinalIgnoreCase));
+            if (idx < 0 || idx + 1 >= args.Count) return null;
+            var valStr = args[idx + 1];
+            args.RemoveRange(idx, 2);
+            return uint.TryParse(valStr, out var id) ? id : null;
+        }
+
         private static uint? ExtractWcidFlag(List<string> args)
         {
             var idx = args.FindIndex(a => a.Equals("--wcid", StringComparison.OrdinalIgnoreCase));
@@ -3568,6 +3837,39 @@ namespace ACE.Server.Command.Handlers
             args.RemoveRange(idx, 2);
             return uint.TryParse(valStr, out var id) ? id : null;
         }
+
+        /// <summary>--rank default|regular|leader|boss (2026-09-02). Absent = None (the Default row).
+        /// A present-but-unknown value is an ERROR, not None - silently editing the Default row when the
+        /// operator typed "--rank lead" is exactly the invisible mistake the rank view exists to prevent.</summary>
+        private static ZcRank ExtractRankFlag(List<string> args, out string error)
+        {
+            error = null;
+            var idx = args.FindIndex(a => a.Equals("--rank", StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return ZcRank.None;
+            if (idx + 1 >= args.Count) { error = "--rank needs a value: default | regular | leader | boss"; return ZcRank.None; }
+            var valStr = args[idx + 1];
+            args.RemoveRange(idx, 2);
+            if (ZoneRank.TryParse(valStr, out var r)) return r;
+            error = $"Unknown rank '{valStr}'. Use default | regular | leader | boss.";
+            return ZcRank.None;
+        }
+
+        /// <summary>The row a stat verb edits: the zone layer or the per-WCID bucket, then the rank row
+        /// inside it. Returns null with <paramref name="refusal"/> set for --wcid + --rank (a bucket has
+        /// no rows). <paramref name="create"/> = author (set) vs inspect/clear.</summary>
+        private static ZoneVariantProfile StatRowFor(ZoneScalingProfile profile, uint? wcid, ZcRank rank, bool create, out string refusal)
+        {
+            refusal = null;
+            if (wcid.HasValue && rank != ZcRank.None)
+            {
+                refusal = "A monster override has no rank rows - it IS one rank. Drop --rank, or set the rank row on the zone / tier without --wcid.";
+                return null;
+            }
+            var layer = wcid.HasValue ? profile.VariantForWcid(wcid.Value, create) : profile.Minion;
+            return layer?.RankLayer(rank, create);
+        }
+
+        private static string RankTag(ZcRank rank) => rank == ZcRank.None ? "" : " [" + ZoneRank.Label(rank) + " row]";
 
         private static bool TryHex(string s, out int value)
         {
@@ -4499,9 +4801,15 @@ namespace ACE.Server.Command.Handlers
             if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var iv))
             {
                 id = iv;
-                var enumName = Enum.IsDefined(enumType, iv) ? Enum.GetName(enumType, iv) : null;
+                // Enum.IsDefined(type, int) THROWS when the enum's underlying type is not int (PropertyBool is
+                // ushort) - "Enum underlying type and the object must be same type" on every `prop bool <id>`,
+                // i.e. every Rank button click (owner 2026-09-03). Box through the enum's own type first.
+                if (iv <= 0 || iv > ushort.MaxValue) return false;   // every Property* enum is ushort - never let 65537 box to 1 (review 2026-09-03)
+                string enumName = null;
+                var boxed = Enum.ToObject(enumType, iv);
+                if (Enum.IsDefined(enumType, boxed)) enumName = boxed.ToString();
                 label = enumName != null ? $"{enumName} ({iv})" : $"#{iv}";
-                return iv > 0;
+                return true;
             }
 
             try
@@ -4729,14 +5037,15 @@ namespace ACE.Server.Command.Handlers
         /// Writes ONLY the stat named. Everything else on each tier Default is untouched, and the v11
         /// anchor still supplies every stat below these (AnchoredDefaultProfileFor).
         /// </summary>
-        private static void HandleTierTune(List<string> args, Action<string> Msg)
+        private static void HandleTierTune(List<string> args, ZcRank rank, Action<string> Msg)
         {
             if (args.Count < 2)
             {
-                Msg("Usage: tier <stat> <t11value> <t25value> [--curve augs|linear]");
-                Msg("       tier show <stat>          what each tier is authored at");
-                Msg("       tier clear <stat>         drop it from every tier Default");
-                Msg("       tier curves               the aug ladder this interpolates on");
+                Msg("Usage: tier <stat> <t11value> <t25value> [--curve augs|linear] [--rank regular|leader|boss]");
+                Msg("       tier show <stat> [--rank r]      what each tier is authored at (that rank row)");
+                Msg("       tier clear <stat> [--rank r]     drop it from every tier Default (that rank row)");
+                Msg("       tier curves                      the aug ladder this interpolates on");
+                Msg("       --rank (2026-09-02): author the Leader / Boss / Regular ROW instead of the Default row.");
                 return;
             }
 
@@ -4765,11 +5074,11 @@ namespace ACE.Server.Command.Handlers
                 if (args.Count < 3) { Msg("Usage: tier show <stat>"); return; }
                 var showStat = NormalizeStat(args[2]);
                 if (showStat == null) { Msg($"Unknown stat '{args[2]}'."); return; }
-                Msg($"{showStat} across the tier Defaults:");
+                Msg($"{showStat} across the tier Defaults{RankTag(rank)}:");
                 var any = false;
                 for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
                 {
-                    var prof = ZoneControlManager.GetVariationDefault(t)?.Profile;
+                    var prof = ZoneControlManager.GetVariationDefault(t)?.Profile?.RankLayer(rank, create: false);
                     if (prof?.Stats != null && prof.Stats.TryGetValue(showStat, out var c) && c != null)
                     { Msg($"  T{t,-4} {c.Evaluate(1),14:0.####}"); any = true; }
                     else Msg($"  T{t,-4} {"(not authored)",14}");
@@ -4787,10 +5096,14 @@ namespace ACE.Server.Command.Handlers
                 for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
                 {
                     var removed = false;
-                    ZoneControlManager.MutateVariationDefault(t, d => removed = d.Profile.Stats.Remove(clrStat));
+                    ZoneControlManager.MutateVariationDefault(t, d =>
+                    {
+                        var row = d.Profile.RankLayer(rank, create: false);
+                        if (row != null) removed = row.Stats.Remove(clrStat);
+                    });
                     if (removed) cleared++;
                 }
-                Msg($"Cleared {clrStat} from {cleared} tier Default(s).");
+                Msg($"Cleared {clrStat} from {cleared} tier Default(s){RankTag(rank)}.");
                 return;
             }
 
@@ -4817,7 +5130,7 @@ namespace ACE.Server.Command.Handlers
             var pw11 = AugPowerAt(MinBoundedTier);
             var pw25 = AugPowerAt(MaxTunedTier);
 
-            Msg($"{stat}: T{MinBoundedTier} {v11:0.####} -> T{MaxTunedTier} {v25:0.####}  (curve: {(useAugs ? "augs" : "linear")})");
+            Msg($"{stat}{RankTag(rank)}: T{MinBoundedTier} {v11:0.####} -> T{MaxTunedTier} {v25:0.####}  (curve: {(useAugs ? "augs" : "linear")})");
             for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
             {
                 double frac;
@@ -4829,10 +5142,10 @@ namespace ACE.Server.Command.Handlers
                 var value = v11 + (v25 - v11) * frac;
                 var tier = t;    // captured per iteration - a shared loop variable would author the last tier fifteen times
                 ZoneControlManager.MutateVariationDefault(tier, d =>
-                    d.Profile.Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false });
+                    d.Profile.RankLayer(rank, create: true).Stats[stat] = new StatCurve { Base = value, Growth = 1.0, Additive = false });
                 Msg($"  T{tier,-4} {value,14:0.####}");
             }
-            Msg($"Authored on {MaxTunedTier - MinBoundedTier + 1} tier Defaults. Stamped stats land on RESPAWN.");
+            Msg($"Authored on {MaxTunedTier - MinBoundedTier + 1} tier Defaults{RankTag(rank)}. Stamped stats land on RESPAWN.");
         }
 
         /// <summary>Top of the band the tuning generator writes. The ladders in ZoneModifiers clamp to
@@ -4891,6 +5204,7 @@ namespace ACE.Server.Command.Handlers
             }
             else Ok("no spells - magic_skill not needed");
 
+            if (r.Exempt) Msg("  --    EXEMPT (master switch off): this zone leaves it alone - it plays as its weenie says; the rows below are what it WOULD get");
             Ok("rank: " + r.RankLabel);
 
             if (r.CoreMissing.Count == 0) Ok($"all {r.CoreTotal} core stats authored");
@@ -4919,6 +5233,7 @@ namespace ACE.Server.Command.Handlers
             public string MobName = "";
             public int Variation;
             public bool ZoneEnabled;
+            public string RankSource = "none";   // zone | weenie | none (2026-09-02)
             public int Level;
             public MobCheckSource LevelSource;
             public int CreatureType;
@@ -4929,6 +5244,7 @@ namespace ACE.Server.Command.Handlers
             public bool HasMagicSkill;
             public int MagicSkill;
             public string RankLabel = "";
+            public bool Exempt;   // master switch OFF for this wcid in this zone (2026-09-03) - information, never an issue
             public List<string> CoreMissing = new();
             public int CoreTotal;
             public bool HasZoneAppearance;
@@ -5002,11 +5318,15 @@ namespace ACE.Server.Command.Handlers
             r.HasMagicSkill = Has(ZoneStat.MagicSkill);
             r.MagicSkill = r.HasMagicSkill ? (int)Val(ZoneStat.MagicSkill) : 0;
 
-            // rank. Unranked pays xp_minion since 2026-08-31, so this is information, not a fault.
-            var boss = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcBoss) == true;
-            var leader = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcLeader) == true;
-            var minion = weenie.GetProperty((PropertyBool)ZoneStat.BoolIsZcMinion) == true;
-            r.RankLabel = boss ? "Boss" : leader ? "Leader" : minion ? "Minion" : "unranked (pays xp_minion)";
+            // rank (2026-09-02 rank layers): what this WCID RESOLVES at in this zone - the zone bucket's
+            // rank bools first, then the weenie's - and where that came from. Unranked reads the Default
+            // row only (and so pays the Default row's xp_kill); information, not a fault.
+            var (mcRank, mcRankSrc) = ZoneControlManager.ResolveRankForWcid(area, mobWcid);
+            r.RankSource = mcRankSrc;
+            r.Exempt = area.Profile.ExemptWcids != null && area.Profile.ExemptWcids.Contains(mobWcid);
+            r.RankLabel = mcRank == ZcRank.None
+                ? "unranked - Default row only"
+                : $"{ZoneRank.Label(mcRank)} (from {mcRankSrc}) - reads the {ZoneRank.Label(mcRank)} rows over Default";
 
             // the stats that actually make a T11 monster. Unauthored means the WEENIE value passes
             // through at every read site - nothing is code-defaulted for creatures.
@@ -5016,6 +5336,8 @@ namespace ACE.Server.Command.Handlers
                 ZoneStat.Quickness, ZoneStat.Focus, ZoneStat.Self, ZoneStat.AttackSkill,
                 ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
                 ZoneStat.ArmorLevel, ZoneStat.AttackDamage,
+                // offense coverage (2026-09-02, mob->player lane): what makes a T11 monster HIT like one
+                ZoneStat.DamageRating, ZoneStat.CritRating, ZoneStat.CritDamageRating, ZoneStat.PercentHpBase,
             };
             r.CoreTotal = core.Length;
             r.CoreMissing = core.Where(c => !Has(c)).ToList();
@@ -5059,7 +5381,11 @@ namespace ACE.Server.Command.Handlers
               .Append("|coretotal=").Append(r.CoreTotal)
               .Append("|coremissing=").Append(string.Join(",", r.CoreMissing))
               .Append("|look=").Append(r.HasZoneAppearance ? 1 : 0)
-              .Append("|issues=").Append(r.Issues);
+              .Append("|issues=").Append(r.Issues)
+              // APPEND-ONLY (2026-09-02): where the rank came from - zone bucket | weenie | none
+              .Append("|rank_src=").Append(r.RankSource)
+              // APPEND-ONLY (2026-09-03): master switch state
+              .Append("|exempt=").Append(r.Exempt ? 1 : 0);
             return sb.ToString();
         }
 

@@ -1356,7 +1356,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("asforge", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1,
             "Forges VoD test armor/clothing/jewelry (the /testchar look) at a chosen tier. All pieces Attuned + Bonded.",
             "<piece|suit|jewel|all> [tier 10-25, default 11] [cards:key=val,key,...]\n" +
-            "premade <tier 11-25> <avg|bis> [force] = the 18-piece suit with EXPLICIT modifier lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted into a 'T<tier> <Avg|BiS> Suit' bag.\n" +
+            "premade <tier 10-25> <avg|bis> [force] = the 18-piece suit with EXPLICIT modifier lines: bis = core at cap + max lines at band max; avg = core at midpoint + expected lines at band midpoint. Minted loose into your main pack (no suit bag since 2026-09-03). Tier 10 = the ENTRY-CASE suit: the measured top T10 set (no lines, no wield gate).\n" +
             "Pieces: helm coat pauldrons bracers gloves girth tassets greaves sollerets shirt pants cloak neck ring bracelet trinket\n" +
             "suit = 9 armor + shirt/pants/cloak; jewel = necklace + 2 rings + 2 bracelets + trinket; all = both.\n" +
             "ring/bracelet mint the left + right pair.\n" +
@@ -1625,8 +1625,8 @@ namespace ACE.Server.Command.Handlers
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
 
-            const string usage = "asforge premade <tier 11-25> <avg|bis> [force]";
-            if (parameters.Length < 3 || !int.TryParse(parameters[1], out var tier) || tier < 11 || tier > 25)
+            const string usage = "asforge premade <tier 10-25> <avg|bis> [force]";
+            if (parameters.Length < 3 || !int.TryParse(parameters[1], out var tier) || tier < 10 || tier > 25)
             {
                 Msg($"Usage: {usage}");
                 return;
@@ -1652,6 +1652,14 @@ namespace ACE.Server.Command.Handlers
                         Msg($"asforge premade: unknown option '{a}'. {usage}");
                         return;
                 }
+            }
+            // T10 (2026-09-02, owner: "T10 premade is missing" for the entry-case test): the T11-25 path below
+            // reads every number off the anchored tier ladder, which clamps 10 up to 11 - so T10 is its own
+            // builder with the MEASURED T10-top values (ref-t10-best-geared-baseline, 2026-08-21).
+            if (tier == 10)
+            {
+                HandleAsForgePremadeT10(session, player, bis, force);
+                return;
             }
 
             var tierLabel = $"T{tier}";
@@ -1689,7 +1697,7 @@ namespace ACE.Server.Command.Handlers
 
             var bagName = $"{tierLabel} {modeTag} Suit";
             Container bag = null;
-            var bagWarned = false;
+            var bagWarned = true;   // owner 2026-09-03: premade pieces stay in the MAIN pack - no suit bag is ever created
 
             var minted = 0;
             var skipped = 0;
@@ -1820,7 +1828,107 @@ namespace ACE.Server.Command.Handlers
                 + (lines > 0 ? $", {lines} modifier lines" : "")
                 + (failed > 0 ? $", {failed} failed" : "")
                 + (skipped > 0 ? $", {skipped} skipped (already held - add 'force' to re-mint)" : "")
-                + (minted > 0 ? $" - in '{bagName}'." : "."));
+                + (minted > 0 ? " - in your main pack." : "."));
+        }
+
+        /// <summary>
+        /// `/asforge premade 10 <avg|bis> [force]` (2026-09-02): the T10 ENTRY-CASE suit - what a well-geared
+        /// T10 player brings into T11. Numbers are the MEASURED top T10 sets (Drexel / Nerd Parade, pulled
+        /// from the shard 2026-08-21, ref-t10-best-geared-baseline): gear-set totals Dmg ~205, DR ~88,
+        /// CritDmg ~200, CritDR ~73, Crit 40, CritRes 19, HealBoost 355, AL ~6,200 over 12 armor pieces.
+        /// BiS = those totals spread over the 18 pieces; Avg = about 70 pct of them (GOM-class). Ratings go
+        /// on as plain Gear* props (the worn-sum reads them exactly as retail cantrips' ratings), AL as the
+        /// piece's ArmorLevel. No modifier lines, no wield gate, no slot specials - T10 has none of those.
+        /// The Aetheria surge (the other half of T10 feel) comes from /testchar's T10 aetheria package.
+        /// </summary>
+        private static void HandleAsForgePremadeT10(Session session, Player player, bool bis, bool force)
+        {
+            void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
+            const string tierLabel = "T10";
+            var modeTag = bis ? "BiS" : "Avg";
+            // per-piece values (18 pieces; AL on the 9 VoD armor pieces + shirt/pants count as 12 AL carriers
+            // in the measured sets, here the 9 armor pieces carry it at 12/9 the per-piece share)
+            int dmg = bis ? 12 : 8, critDmg = bis ? 11 : 8, dr = bis ? 5 : 3, cdr = bis ? 4 : 3,
+                crit = bis ? 2 : 1, critRes = bis ? 1 : 1, heal = bis ? 20 : 14;
+            int al = bis ? 690 : 560;   // 9 pieces x 690 = 6,210 (Nerd Parade 6,482 over 12 pcs); avg = GOM 5,021
+
+            var roster = new List<(string Piece, WorldObject Wo)>();
+            foreach (var p in VodArmorPieces)
+                roster.Add((p.Label, BuildVodArmorPiece(p.Wcid, p.Label, tierLabel)));
+            roster.Add(("Shirt", BuildTestShirt(tierLabel)));
+            roster.Add(("Pants", BuildTestPants(tierLabel)));
+            roster.Add(("Cloak", BuildTestCloak(tierLabel)));
+            roster.Add(("Necklace", BuildTestNecklace(tierLabel)));
+            roster.Add(("Ring 1", BuildTestRing1(tierLabel)));
+            roster.Add(("Ring 2", BuildTestRing2(tierLabel)));
+            roster.Add(("Bracelet 1", BuildTestBracelet1(tierLabel)));
+            roster.Add(("Bracelet 2", BuildTestBracelet2(tierLabel)));
+            roster.Add(("Trinket", BuildTestTrinket(tierLabel)));
+            foreach (var (piece, wo) in roster)
+            {
+                if (wo == null) continue;
+                var name = $"{tierLabel} {piece} ({modeTag})";
+                wo.Name = name;
+                wo.SetProperty(PropertyString.Name, name);
+            }
+
+            var bagName = $"{tierLabel} {modeTag} Suit";
+            Container bag = null;
+            var bagWarned = true;   // owner 2026-09-03: premade pieces stay in the MAIN pack - no suit bag is ever created
+            int minted = 0, skipped = 0, failed = 0;
+            foreach (var (piece, wo) in roster)
+            {
+                if (wo == null) { Msg($"asforge premade: {piece} failed to create (missing weenie?)"); failed++; continue; }
+                if (!force && HasItemNamed(player, wo.Name)) { skipped++; wo.Destroy(); continue; }
+
+                // T10 = the basic set: no item-aug wield gate at all (matches the main verb's tier-10 rule)
+                ACE.Server.Factories.LootGenerationFactory.StripWieldRequirements(wo);
+                wo.Attuned = AttunedStatus.Attuned;
+                wo.Bonded = BondedStatus.Bonded;
+                wo.Biota.ClearSpells(wo.BiotaDatabaseLock);
+                foreach (var ratingProp in ForgeStrippedRatings)
+                    wo.RemoveProperty(ratingProp);
+                wo.RemoveProperty(PropertyInt.EquipmentSetId);
+
+                // the measured ratings, as plain worn-sum props
+                wo.SetProperty(PropertyInt.GearDamage, dmg);
+                wo.SetProperty(PropertyInt.GearCritDamage, critDmg);
+                wo.SetProperty(PropertyInt.GearDamageResist, dr);
+                wo.SetProperty(PropertyInt.GearCritDamageResist, cdr);
+                wo.SetProperty(PropertyInt.GearCrit, crit);
+                wo.SetProperty(PropertyInt.GearCritResist, critRes);
+                wo.SetProperty(PropertyInt.GearHealingBoost, heal);
+                if (wo.ItemType == ItemType.Armor && VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId))
+                    wo.ArmorLevel = al;
+
+                // owner defaults as the main verb: armor carries Legendary Impen, the necklace the buff suite
+                if (VodArmorPieces.Any(p => p.Wcid == wo.WeenieClassId))
+                    AddForgeSpells(wo, ImpenSpells);
+                if (wo.WeenieClassId == 27445)
+                    AddForgeSpells(wo, NecklaceBuffSpells);
+                wo.ChangesDetected = true;
+                wo.LongDesc = $"T10 entry-case premade ({modeTag}): the measured top T10 set (2026-08-21) spread over 18 pieces.\n"
+                            + $"Dmg +{dmg}  CritDmg +{critDmg}  DR +{dr}  CritDR +{cdr}  Crit +{crit}  CritRes +{critRes}  Heal +{heal}"
+                            + (wo.ItemType == ItemType.Armor ? $"  AL {al}" : "")
+                            + $"\n\nCreated by: {player.Name}\nTier: 10\nPremade: {modeTag}";
+
+                if (bag == null && !bagWarned)
+                {
+                    bag = GetOrCreatePack(player, bagName);
+                    if (bag == null) { Msg($"asforge premade: no free pack slot for {bagName} - placing pieces loose in your main pack."); bagWarned = true; }
+                }
+                if (bag != null && TryPlaceInPack(player, wo, bag)) minted++;
+                else if (player.TryCreateInInventoryWithNetworking(wo))
+                {
+                    minted++;
+                    if (bag != null) Msg($"asforge premade: {bagName} is full - {wo.Name} placed loose.");
+                }
+                else { Msg($"asforge premade: could not place {wo.Name} anywhere (inventory full) - destroyed."); wo.Destroy(); failed++; }
+            }
+            Msg($"Premade {tierLabel} {modeTag} suit: {minted} pieces created"
+                + (failed > 0 ? $", {failed} failed" : "")
+                + (skipped > 0 ? $", {skipped} skipped (already held - add 'force' to re-mint)" : "")
+                + (minted > 0 ? $" - in your main pack. Set totals: Dmg {dmg * 18} CritDmg {critDmg * 18} DR {dr * 18} CritDR {cdr * 18} Crit {crit * 18} CritRes {critRes * 18} Heal {heal * 18}, AL {al} x 9. Pair with /testchar T10 (aetheria surge) and /wsforge <weapon> 10." : "."));
         }
 
         private static void SpawnCharms(Player player)

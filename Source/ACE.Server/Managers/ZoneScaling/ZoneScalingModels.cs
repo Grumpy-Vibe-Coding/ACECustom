@@ -82,12 +82,9 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string MagicDefense = "magic_defense";
         public const string DamageRating = "damage_rating";
         public const string DamageResistRating = "damage_resist_rating";
-        // Rank twins (owner 2026-09-02: "we tune through damage resist", HP is 1M for every rank and tier
-        // forever). ABSOLUTE values, not multipliers: a leader / boss reads its twin when authored and
-        // falls back to damage_resist_rating when not. Read LIVE in Creature_Rating.GetDamageResistRating,
-        // same as the base stat. Minion = the base stat; there is no minion twin.
-        public const string DamageResistRatingLeader = "damage_resist_rating_leader";
-        public const string DamageResistRatingBoss = "damage_resist_rating_boss";
+        // damage_resist_rating_leader / _boss (2026-09-02 morning) lived ONE day: superseded the same
+        // evening by RANK LAYERS - every stat now has Default / Regular / Leader / Boss rows via
+        // ZoneVariantProfile.Ranks, so per-stat rank twins are gone. Migration SQL moved the values.
         public const string ArmorLevel = "armor_level";
         // damage_taken_mult REMOVED 2026-08-03 (owner): redundant with damage_resist_rating's
         // replace (and server-clamped to <= 1.0 anyway). The prestige-gated v11_mob_dmg_taken_*
@@ -286,9 +283,7 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string CoreAnchorDr = "core_anchor_dr";               // Damage Resist worn-set anchor (ladder 1250, authored on Default 11; ZoneFallback.AnchorDr 92 when off)
         public const string CoreAnchorCdr = "core_anchor_cdr";             // CritDmgResist / CritResist / NetherResist worn-set anchor (ladder 750, authored on Default 11; ZoneFallback.AnchorCdr 73 when off)
         // Slot specials: ONE roll per KILL (retail-rare model), 1-in-odds; boss/leader divide the odds
-        public const string SpecialOdds = "special_odds";                  // denominator (default 750000)
-        public const string SpecialBossMult = "special_boss_mult";         // IsZcBoss: odds / this (default 3.0)
-        public const string SpecialLeaderMult = "special_leader_mult";     // IsZcLeader: odds / this (default 2.0)
+        public const string SpecialOdds = "special_odds";                  // denominator (default 750000). Per rank via the Ranks rows (2026-09-02, owner D4: absolute per rank - special_boss_mult / special_leader_mult divisors RETIRED)
         // Special behaviour knobs (read by the combat side)
         public const string BattleMendThreshold = "battlemend_threshold";  // HP fraction below which Battle Mending fires (default .25)
         public const string BattleMendCooldown = "battlemend_cooldown";    // seconds (default 60)
@@ -306,21 +301,15 @@ namespace ACE.Server.Managers.ZoneScaling
         public const string GearCapDr = "gear_cap_dr";                     // worn Damage Resist sum (ladder ceiling 2500; ZoneFallback.CapDr 92 when zonecontrol_enabled is off)
         public const string GearCapCdr = "gear_cap_cdr";                   // worn CritDmgResist / CritResist / NetherResist sums, EACH (ladder ceiling 1500; ZoneFallback.CapCdr 73 when off)
         public const string GearCapLine = "gear_cap_line";                 // every anchored cantrip line: Dmg / CritDmg / MaxHP / MaxStam / MaxMana / HealBoost / each aug track / each attribute (ladder ceiling 2500; ZoneFallback.CapLine 211 when off)
-        // Kill rewards (2026-08-23): authored per zone, by rank. xp_minion is the MASTER key - when set,
-        // weenie XpOverride is ignored for every mob the zone governs (boss/leader fall back to minion
-        // when their own key is unset; unranked random mobs pay minion). lum_award set = LuminanceAward
-        // ignored; 0 = no luminance. Values are doubles and may exceed int range (read as long).
-        public const string XpMinion = "xp_minion";
-        public const string XpLeader = "xp_leader";
-        public const string XpBoss = "xp_boss";
+        public const string XpKill = "xp_kill";
         public const string LumAward = "lum_award";
-        public const string XpDefault = "xp_default";   // unranked/uncategorized spawns; unset = pay xp_minion
 
         // PropertyBool ids the loot side reads by cast (the enum entries live with the combat work):
         // 50048 IsZcBoss / 50049 IsZcLeader / 50050 IsZcMinion / 50051 ZcPctHpImmune (owner 50000+ block)
         public const int BoolIsZcBoss = 50048;
         public const int BoolIsZcLeader = 50049;
-        public const int BoolIsZcMinion = 50050;
+        public const int BoolIsZcMinion = 50050;   // UI label "Regular" since 2026-09-02 (owner D1); the id and the JSON key "regular" are the same rank
+
         public const int BoolZcPctHpImmune = 50051;
         // Card amounts are min/max PAIRS: set one = exact value, set both = each drop rolls uniformly
         // in the range, reversed bounds auto-swap.
@@ -477,7 +466,7 @@ namespace ACE.Server.Managers.ZoneScaling
         {
             Strength, Endurance, Coordination, Quickness, Focus, Self, MaxHealth, MaxStamina, MaxMana,
             MonsterLevel, MonsterCreatureType, AttackSkill, MagicSkill, MeleeDefense, MissileDefense, MagicDefense, DamageRating,
-            DamageResistRating, DamageResistRatingLeader, DamageResistRatingBoss, ArmorLevel, VulnCap, PercentHpBase,
+            DamageResistRating, ArmorLevel, VulnCap, PercentHpBase,
             CritRating, CritDamageRating, CritResistRating, CritDamageResistRating,
             AttackDamage, AttackVariance, AttackDamageType, SpellDamage, SpellVariance, SpellDamageMult,
             ReliefAugStart, ReliefAugMax, ReliefAugCap, ReliefAugBend,
@@ -520,12 +509,12 @@ namespace ACE.Server.Managers.ZoneScaling
             // matches by NAME - adding, reordering or REMOVING an entry mid-list is safe. (The genuinely
             // positional lists are the bare comma payloads combatdefs= / diagdefs= in ZoneControlCommands.)
             CoreAnchorDr, CoreAnchorCdr,
-            SpecialOdds, SpecialBossMult, SpecialLeaderMult,
+            SpecialOdds,
             BattleMendThreshold, BattleMendCooldown, PctHpCooldown, CheatDeathCooldown, CheatDeathImmunity,
             LifeOnHitCap, LifeOnHitCooldown,
             GearCapDr, GearCapCdr, GearCapLine,
             // Kill rewards (2026-08-23): authored per zone, by rank - APPEND-ONLY
-            XpMinion, XpLeader, XpBoss, LumAward, XpDefault,
+            XpKill, LumAward,
             // Armor base values (2026-08-24) - APPEND-ONLY, added at the END. The wire matches by NAME
             // (see the note above), so appending is safe for an older plugin / older server.
             ArmorBaseLevel, ArmorProtBase, ArmorProtEqualize,
@@ -739,6 +728,68 @@ namespace ACE.Server.Managers.ZoneScaling
         public static bool IsBlockedBool(int id) => BlockedBools.Contains(id);
     }
 
+    /// <summary>A monster's rank for stat resolution. None = unranked: reads the Default row only.</summary>
+    public enum ZcRank { None = 0, Regular = 1, Leader = 2, Boss = 3 }
+
+    /// <summary>Rank vocabulary shared by the resolver, the commands and the wire: store keys,
+    /// the marker bool ids, and the precedence when a monster somehow carries two marks.</summary>
+    public static class ZoneRank
+    {
+        public static readonly ZcRank[] All = { ZcRank.None, ZcRank.Regular, ZcRank.Leader, ZcRank.Boss };
+        public static readonly ZcRank[] Ranked = { ZcRank.Regular, ZcRank.Leader, ZcRank.Boss };
+
+        public static string Key(ZcRank r) => r switch
+        {
+            ZcRank.Regular => "regular",
+            ZcRank.Leader => "leader",
+            ZcRank.Boss => "boss",
+            _ => "default",
+        };
+
+        /// <summary>Owner-facing label (2026-09-02 D1: "Regular", never "Minion").</summary>
+        public static string Label(ZcRank r) => r switch
+        {
+            ZcRank.Regular => "Regular",
+            ZcRank.Leader => "Leader",
+            ZcRank.Boss => "Boss",
+            _ => "Default",
+        };
+
+        public static int BoolId(ZcRank r) => r switch
+        {
+            ZcRank.Regular => ZoneStat.BoolIsZcMinion,
+            ZcRank.Leader => ZoneStat.BoolIsZcLeader,
+            ZcRank.Boss => ZoneStat.BoolIsZcBoss,
+            _ => 0,
+        };
+
+        /// <summary>Parse a command / wire token: default|none, regular|minion, leader, boss.</summary>
+        public static bool TryParse(string s, out ZcRank rank)
+        {
+            rank = ZcRank.None;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            switch (s.Trim().ToLowerInvariant())
+            {
+                case "default": case "none": case "base": rank = ZcRank.None; return true;
+                case "regular": case "minion": rank = ZcRank.Regular; return true;
+                case "leader": rank = ZcRank.Leader; return true;
+                case "boss": rank = ZcRank.Boss; return true;
+                default: return false;
+            }
+        }
+
+        /// <summary>Rank from a set of authored bool props (a zone bucket's PropBools). Boss beats
+        /// Leader beats Regular when more than one is set - same order the old read sites used.</summary>
+        public static ZcRank FromPropBools(IReadOnlyDictionary<int, bool> bools)
+        {
+            if (bools == null || bools.Count == 0) return ZcRank.None;
+            if (bools.TryGetValue(ZoneStat.BoolIsZcBoss, out var b) && b) return ZcRank.Boss;
+            if (bools.TryGetValue(ZoneStat.BoolIsZcLeader, out var l) && l) return ZcRank.Leader;
+            if (bools.TryGetValue(ZoneStat.BoolIsZcMinion, out var m) && m) return ZcRank.Regular;
+            return ZcRank.None;
+        }
+    }
+
     /// <summary>
     /// One stat's value. Only <see cref="Base"/> is live: <c>EvaluateVariant</c> always calls
     /// <c>Evaluate(1)</c>, so a stat is a flat number.
@@ -848,6 +899,45 @@ namespace ACE.Server.Managers.ZoneScaling
         public Dictionary<int, long> PropInt64s { get; set; } = new();
         public Dictionary<int, double> PropFloats { get; set; } = new();
         public Dictionary<int, bool> PropBools { get; set; } = new();
+
+        /// <summary>
+        /// RANK LAYERS (owner 2026-09-02, Plan_RankLayers): per-rank sub-profiles keyed "regular" /
+        /// "leader" / "boss", the same shape as this profile (a nested Ranks inside one is ignored).
+        /// Everything in the parent is the DEFAULT row - what every monster in scope gets; a rank
+        /// row overrides it for monsters of that rank only. Resolution flattens EACH layer for the
+        /// monster's rank (<see cref="ForRank"/>) and then merges the layers in scope order, so a
+        /// zone's Default row beats a tier's rank row (owner D2: local beats global). A per-WCID
+        /// bucket never carries Ranks - a monster type has exactly one rank - so <see cref="ForRank"/>
+        /// is the identity for it. Missing on deserialize of older stores = empty.
+        /// </summary>
+        public Dictionary<string, ZoneVariantProfile> Ranks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Newtonsoft hook: an empty Ranks map is not written (it was "Ranks":{} on every layer, bucket and
+        /// rank row of a store that just overflowed 64 KB - review 2026-09-03).</summary>
+        public bool ShouldSerializeRanks() => Ranks != null && Ranks.Count > 0;
+
+        /// <summary>The rank sub-profile to EDIT (created on demand when <paramref name="create"/>), or
+        /// this profile itself for <see cref="ZcRank.None"/>. Null when absent and not creating.</summary>
+        public ZoneVariantProfile RankLayer(ZcRank rank, bool create = false)
+        {
+            if (rank == ZcRank.None) return this;
+            Ranks ??= new Dictionary<string, ZoneVariantProfile>(StringComparer.OrdinalIgnoreCase);
+            var key = ZoneRank.Key(rank);
+            if (Ranks.TryGetValue(key, out var v) && v != null) return v;
+            if (!create) return null;
+            Ranks[key] = v = new ZoneVariantProfile();
+            return v;
+        }
+
+        /// <summary>This layer flattened for one rank: the Default row with the rank row merged on top,
+        /// Ranks stripped. Always a fresh object (safe to hand to lock-free readers). For None, or a
+        /// rank this layer does not author, it is a plain clone of the Default row.</summary>
+        public ZoneVariantProfile ForRank(ZcRank rank)
+        {
+            var rankLayer = rank == ZcRank.None ? null : RankLayer(rank);
+            var flat = rankLayer == null ? Merge(this) : Merge(this, rankLayer);
+            flat.Ranks.Clear();
+            return flat;
+        }
 
         public bool TryGet(string statKey, out StatCurve curve) => Stats.TryGetValue(statKey, out curve);
 
@@ -959,6 +1049,20 @@ namespace ACE.Server.Managers.ZoneScaling
                         if (at >= 0) result.SpellRules[at] = rule.Clone();
                         else result.SpellRules.Add(rule.Clone());
                     }
+
+                // Rank rows (2026-09-02): merged per rank key, recursively, so a deep copy
+                // (Merge(one)) carries them and a two-layer merge stacks leader-on-leader. This is
+                // the COPY semantics only - resolution never merges unflattened layers, it calls
+                // ForRank on each layer first (see the Ranks doc comment).
+                if (layer.Ranks is { Count: > 0 })
+                    foreach (var kv in layer.Ranks)
+                    {
+                        if (kv.Value == null) continue;
+                        result.Ranks.TryGetValue(kv.Key, out var lower);
+                        var mergedRank = Merge(lower, kv.Value);
+                        mergedRank.Ranks.Clear();
+                        result.Ranks[kv.Key] = mergedRank;
+                    }
             }
 
             return result;
@@ -979,7 +1083,16 @@ namespace ACE.Server.Managers.ZoneScaling
             && (CustomWeaponCards == null || CustomWeaponCards.Count == 0)
             && (StatToggles == null || StatToggles.Count == 0)
             && (CurrencyDrops == null || CurrencyDrops.Count == 0)
-            && (SpellRules == null || SpellRules.Count == 0);
+            && (SpellRules == null || SpellRules.Count == 0)
+            && RanksEmpty();
+
+        private bool RanksEmpty()
+        {
+            if (Ranks == null) return true;
+            foreach (var r in Ranks.Values)
+                if (r != null && !r.IsEmpty) return false;
+            return true;
+        }
     }
 
     /// <summary>
@@ -1009,6 +1122,18 @@ namespace ACE.Server.Managers.ZoneScaling
         /// the zone layer, PER STAT (2026-07-30 — it used to REPLACE the whole profile wholesale). A bucket
         /// that sets one stat overrides one stat. Missing on deserialize of older profiles = empty dict.</summary>
         public Dictionary<uint, ZoneVariantProfile> WcidOverrides { get; set; } = new();
+
+        /// <summary>MASTER SWITCH per monster (owner 2026-09-03: "master switch only, retire the per-stat
+        /// off"): WCIDs this zone leaves ALONE - the resolver returns null for them, so no stat, prop,
+        /// effect or hit gate applies and the weenie plays as authored. Zone-scoped on purpose: the
+        /// weenie bool ExemptFromZoneScaling is global and is refused as a zone stamp. Missing on
+        /// deserialize of older profiles = empty set.</summary>
+        public HashSet<uint> ExemptWcids { get; set; } = new();
+
+        /// <summary>MASTER SWITCH per GENERATOR (owner 2026-09-03: "same On / Off per generator", "exempt wins
+        /// from either side"): generator WCIDs whose spawns - through nested generators too - this zone
+        /// leaves alone. Keyed by generator WCID (every placement of it), matching the Generators tab.</summary>
+        public HashSet<uint> ExemptGenerators { get; set; } = new();
 
         /// <summary>The per-WCID bucket to EDIT, or null when absent and <paramref name="create"/> is false.
         /// Callers that want the RESOLVED stats for a monster must not use this — resolution layers
