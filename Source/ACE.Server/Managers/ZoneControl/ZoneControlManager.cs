@@ -609,8 +609,27 @@ namespace ACE.Server.Managers.ZoneControl
                 wcid[kv.Key] = new EvaluatedProfile[ZoneRank.All.Length];
                 wcidRank[kv.Key] = ZoneRank.FromPropBools(kv.Value?.PropBools);
             }
+            // A rank that NO layer in this zone's chain authors (tier Default, its v11 anchor, the zone
+            // layer; buckets never carry Ranks) flattens to exactly the Default row, so its profiles are
+            // ALIASED to the None ones instead of re-merged - the rank rewrite made every Save ~4x the
+            // work under _lock for zones that author no rank row at all (review 2026-09-04 M3).
+            // EvaluatedProfile is immutable, so sharing the reference is safe. ZoneRank.All lists None first.
+            var ownDefault = def?.Profile;
+            var anchorDefault = area.Variation > 11 ? DefaultFor(11)?.Profile : null;
+            var zoneMinion = area.Profile.Minion;
+            bool RankAuthored(ZcRank r) => r == ZcRank.None
+                || ownDefault?.RankLayer(r) != null
+                || anchorDefault?.RankLayer(r) != null
+                || zoneMinion?.RankLayer(r) != null;
             foreach (var rank in ZoneRank.All)
             {
+                if (!RankAuthored(rank))
+                {
+                    byRank[(int)rank] = byRank[(int)ZcRank.None];
+                    foreach (var kv in area.Profile.WcidOverrides)
+                        wcid[kv.Key][(int)rank] = wcid[kv.Key][(int)ZcRank.None];
+                    continue;
+                }
                 var defProfile = AnchoredDefaultProfileFor(area.Variation, rank);
                 var zoneLayer = area.Profile.Minion?.ForRank(rank);
                 byRank[(int)rank] = EvaluateVariant(area.Name, ZoneVariantProfile.Merge(defProfile, zoneLayer));
@@ -789,7 +808,7 @@ namespace ACE.Server.Managers.ZoneControl
             => creature == null
             || creature is Player
             || creature is Pet
-            || creature.GetProperty(PropertyBool.ExemptFromZoneScaling) == true;
+            || ExemptBoolOf(creature);   // cached bool read - no biota lock on the per-hit path (2026-09-04)
 
         /// <summary>
         /// Resolves the winning zone for a creature and evaluates its stat profile. Returns null when the
@@ -863,12 +882,55 @@ namespace ACE.Server.Managers.ZoneControl
             return RankFromCreatureBools(creature);
         }
 
-        private static ZcRank RankFromCreatureBools(WorldObject creature)
+        /// <summary>The creature's own rank bools, read ONCE per creature (review 2026-09-04 M2): the
+        /// three GetProperty(PropertyBool) calls this used to make each took the biota lock on the per-hit
+        /// resolve path. Cached on the Creature; any write to 50047-50050 through SetProperty /
+        /// RemoveProperty drops the cache (WorldObject_Properties.InvalidateZcBoolCache).</summary>
+        private static ZcRank RankFromCreatureBools(WorldObject wo)
         {
-            if (creature.GetProperty((PropertyBool)ZoneStat.BoolIsZcBoss) == true) return ZcRank.Boss;
-            if (creature.GetProperty((PropertyBool)ZoneStat.BoolIsZcLeader) == true) return ZcRank.Leader;
-            if (creature.GetProperty((PropertyBool)ZoneStat.BoolIsZcMinion) == true) return ZcRank.Regular;
-            return ZcRank.None;
+            if (wo is Creature c)
+            {
+                if (c.ZcRankCache < 0) ReadZcBools(c);
+                return (ZcRank)c.ZcRankCache;
+            }
+            ReadZcBoolsRaw(wo, out var rank, out _);
+            return rank;
+        }
+
+        private static bool ExemptBoolOf(Creature c)
+        {
+            if (c.ZcExemptCache < 0) ReadZcBools(c);
+            return c.ZcExemptCache == 1;
+        }
+
+        private static void ReadZcBools(Creature c)
+        {
+            ReadZcBoolsRaw(c, out var rank, out var exempt);
+            c.ZcRankCache = (int)rank;
+            c.ZcExemptCache = exempt ? 1 : 0;
+        }
+
+        /// <summary>One read-lock pass over the biota's bools for the four Zone Control flags. Boss beats
+        /// Leader beats Regular when more than one is set - the order the old read sites used.</summary>
+        private static void ReadZcBoolsRaw(WorldObject wo, out ZcRank rank, out bool exempt)
+        {
+            rank = ZcRank.None;
+            exempt = false;
+            var bools = wo.Biota?.PropertiesBool;
+            if (bools == null || bools.Count == 0)
+                return;
+            wo.BiotaDatabaseLock.EnterReadLock();
+            try
+            {
+                if (bools.TryGetValue(PropertyBool.ExemptFromZoneScaling, out var e) && e) exempt = true;
+                if (bools.TryGetValue((PropertyBool)ZoneStat.BoolIsZcBoss, out var b) && b) rank = ZcRank.Boss;
+                else if (bools.TryGetValue((PropertyBool)ZoneStat.BoolIsZcLeader, out var l) && l) rank = ZcRank.Leader;
+                else if (bools.TryGetValue((PropertyBool)ZoneStat.BoolIsZcMinion, out var m) && m) rank = ZcRank.Regular;
+            }
+            finally
+            {
+                wo.BiotaDatabaseLock.ExitReadLock();
+            }
         }
 
         /// <summary>The rank a LIVE creature resolves at, with its source: "zone" (the bucket authors it),
@@ -973,19 +1035,23 @@ namespace ACE.Server.Managers.ZoneControl
         /// </summary>
         public static bool WeaponPowerSuppressed(WorldObject weapon, Creature wielder)
         {
-            if (!(wielder is Player player))
+            if (!(wielder is Player player) || weapon == null)
                 return false;
-            if (weapon == null || (weapon.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.ZcTier) ?? 0) < 11)
+            // Config gates FIRST (review 2026-09-04): this runs at every card / scaling read site per swing,
+            // and the ZcTier read below takes the item's biota lock. In the default configuration (Zone
+            // Control on, lock off) the answer is "not suppressed" without touching the item at all.
+            var zcOn = ServerConfig.zonecontrol_enabled.Value;
+            if (zcOn && !ServerConfig.zc_weapon_zone_lock.Value)
+                return false;
+            if ((weapon.GetProperty(ACE.Entity.Enum.Properties.PropertyInt.ZcTier) ?? 0) < 11)
                 return false;
             // MASTER SWITCH (owner 2026-08-30, "weapons need same treatment"): Zone Control OFF
             // suppresses every ZC weapon's custom power EVERYWHERE - armor already dropped to its
             // T10 fallback pricing on this toggle via live stat resolution, but weapon cards and
             // scaling never had a fallback ladder, so the toggle silently skipped them. Base
             // weapon stats are the fallback, same as the zone lock.
-            if (!ServerConfig.zonecontrol_enabled.Value)
+            if (!zcOn)
                 return true;
-            if (!ServerConfig.zc_weapon_zone_lock.Value)
-                return false;
             return ResolveZoneDefaultForPlayer(player) == null;
         }
 

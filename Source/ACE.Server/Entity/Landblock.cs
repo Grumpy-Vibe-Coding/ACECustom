@@ -2097,7 +2097,7 @@ namespace ACE.Server.Entity
             try
             {
                 foreach (var cell in PhysicsLandblock.LandCells.Values.ToList())
-                    foreach (var pobj in cell.ObjectList)
+                    foreach (var pobj in cell.ObjectList.ToList())   // leave_cell below removes from ObjectList
                     {
                         var fwo = pobj?.WeenieObj?.WorldObject;
                         if (fwo == null || fwo.IsDestroyed || fwo is Player || fwo.Location == null)

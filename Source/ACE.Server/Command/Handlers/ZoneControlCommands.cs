@@ -29,6 +29,8 @@ namespace ACE.Server.Command.Handlers
     /// </summary>
     public static class ZoneControlCommands
     {
+        private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
         /// <summary>What a plugin "sync on" session is watching; rebuilt + pushed each <see cref="PushTick"/>.</summary>
         private class SyncWatch
         {
@@ -289,9 +291,11 @@ namespace ACE.Server.Command.Handlers
                         if (args.Count < 2) { Msg(BuildSessionPayload(session)); return; }
                         var getPayload = BuildZonePayload(args[1], wcid, session, includeLive: true);
                         SendChunked(session, getPayload);
-                        // seed the change detector (2026-09-03): a live watch on the same target need not re-push this
+                        // seed the change detector (2026-09-03): a live watch on the same target need not re-push this.
+                        // The push-shaped twin is this payload minus its live_ fields - ONE build, not two
+                        // (review 2026-09-04 M4); includeLive changes nothing else in BuildZonePayload.
                         var getNow = DateTime.UtcNow;
-                        var pushShaped = BuildZonePayload(args[1], wcid, session);   // what the stream would send (no live_)
+                        var pushShaped = StripLiveFields(getPayload);   // what the stream would send (no live_)
                         _lastGet[session] = (args[1], wcid, pushShaped, getNow);
                         if (_pluginSessions.TryGetValue(session, out var gw) && gw.Name.Equals(args[1], StringComparison.OrdinalIgnoreCase) && gw.Wcid == wcid)
                         { gw.LastPayload = pushShaped; gw.LastSentUtc = getNow; }
@@ -1620,8 +1624,12 @@ namespace ACE.Server.Command.Handlers
                         if (cloneName.Length > 64) cloneName = cloneName.Substring(0, 64);
 
                         // 1) Full-fidelity clone: the Adapter's SQL writer emits the source weenie's
-                        //    complete per-wcid SQL (every table incl. emotes); re-pointing every
-                        //    whole-word occurrence of the source wcid also remaps self-references.
+                        //    complete per-wcid SQL (every table incl. emotes). The wcid is re-pointed on
+                        //    the loaded MODEL (ClassId + self-references) before the writer runs.
+                        RemapWeenieModel(srcWeenie, srcWcid, newWcid);
+                        // weenie.class_Name is UNIQUE (className_UNIQUE): the clone needs its own before
+                        // the INSERT, not a fix-up UPDATE after it (which never ran - the INSERT threw).
+                        srcWeenie.ClassName = $"{srcWeenie.ClassName}_{newWcid}";
                         if (Processors.DeveloperContentCommands.WeenieSQLWriter == null)
                         {
                             Processors.DeveloperContentCommands.WeenieSQLWriter = new ACE.Database.SQLFormatters.World.WeenieSQLWriter
@@ -1645,16 +1653,11 @@ namespace ACE.Server.Command.Handlers
                             }
                             cloneSql = System.Text.Encoding.UTF8.GetString(ms.ToArray());
                         }
-                        cloneSql = System.Text.RegularExpressions.Regex.Replace(
-                            cloneSql, $@"\b{srcWcid}\b", newWcid.ToString(CultureInfo.InvariantCulture));
 
                         using (var cloneCtx = new WorldDbContext())
                         {
                             cloneCtx.Database.SetCommandTimeout(0);
                             cloneCtx.Database.ExecuteSqlRaw(cloneSql.Replace("\r\n", "\n"));
-                            // unique class_Name (the clone inherited the source's)
-                            cloneCtx.Database.ExecuteSqlRaw(
-                                $"UPDATE `weenie` SET `class_Name` = CONCAT(`class_Name`, '_{newWcid}') WHERE `class_Id` = {newWcid}");
                         }
 
                         // 1b) Copy the source's per-monster ZONE buckets too (stats/props/loot/cantrips/
@@ -1721,8 +1724,12 @@ namespace ACE.Server.Command.Handlers
                         using (var bmCtx = new WorldDbContext())
                             bmKeepClassName = bmCtx.Weenie.Where(x => x.ClassId == bmTarget).Select(x => x.ClassName).FirstOrDefault();
 
-                        // Same engine as clonemob: full-fidelity donor SQL, every occurrence of the
-                        // donor wcid re-pointed at the target (covers emote self-references too).
+                        // Same engine as clonemob: full-fidelity donor SQL, the donor wcid re-pointed at
+                        // the target on the loaded model (ClassId + emote/create/generator self-references).
+                        RemapWeenieModel(bmDonorWeenie, bmDonor, bmTarget);
+                        // weenie.class_Name is UNIQUE: the copy carries the TARGET's class_Name (kept identity)
+                        // into the INSERT itself - the donor's would clash with the donor's own row.
+                        bmDonorWeenie.ClassName = !string.IsNullOrEmpty(bmKeepClassName) ? bmKeepClassName : $"{bmDonorWeenie.ClassName}_{bmTarget}";
                         if (Processors.DeveloperContentCommands.WeenieSQLWriter == null)
                         {
                             Processors.DeveloperContentCommands.WeenieSQLWriter = new ACE.Database.SQLFormatters.World.WeenieSQLWriter
@@ -1746,33 +1753,30 @@ namespace ACE.Server.Command.Handlers
                             }
                             bmSql = System.Text.Encoding.UTF8.GetString(ms.ToArray());
                         }
-                        bmSql = System.Text.RegularExpressions.Regex.Replace(
-                            bmSql, $@"\b{bmDonor}\b", bmTarget.ToString(CultureInfo.InvariantCulture));
 
                         using (var bmCtx = new WorldDbContext())
                         {
                             bmCtx.Database.SetCommandTimeout(0);
+                            // ONE transaction (review 2026-09-04): the target's old self is wiped before the
+                            // donor copy lands, so a failure half-way (a key clash, a bad row) must roll the
+                            // wipe back rather than leave the target gone from the world DB.
+                            using var bmTx = bmCtx.Database.BeginTransaction();
                             // Wipe the target's OLD self first (the remapped DELETE also targets it,
                             // but be explicit), then import the donor copy.
                             bmCtx.Database.ExecuteSqlRaw($"DELETE FROM `weenie` WHERE `class_Id` = {bmTarget}");
                             bmCtx.Database.ExecuteSqlRaw(bmSql.Replace("\r\n", "\n"));
-                            // Restore the kept identity.
-                            if (!string.IsNullOrEmpty(bmKeepClassName))
-                            {
-                                var cn = bmKeepClassName.Replace("'", "''");
-                                bmCtx.Database.ExecuteSqlRaw($"UPDATE `weenie` SET `class_Name` = '{cn}' WHERE `class_Id` = {bmTarget}");
-                            }
+                            // Restore the kept identity (class_Name rode in on the model above).
                             if (!string.IsNullOrEmpty(bmKeepName))
                             {
-                                var nm = bmKeepName.Replace("'", "''");
                                 bmCtx.Database.ExecuteSqlRaw($"DELETE FROM `weenie_properties_string` WHERE `object_Id` = {bmTarget} AND `type` = 1");
-                                bmCtx.Database.ExecuteSqlRaw($"INSERT INTO `weenie_properties_string` (`object_Id`, `type`, `value`) VALUES ({bmTarget}, 1, '{nm}')");
+                                bmCtx.Database.ExecuteSqlRaw($"INSERT INTO `weenie_properties_string` (`object_Id`, `type`, `value`) VALUES ({bmTarget}, 1, {SqlStr(bmKeepName)})");
                             }
                             if (bmKeepScale.HasValue)
                             {
                                 bmCtx.Database.ExecuteSqlRaw($"DELETE FROM `weenie_properties_float` WHERE `object_Id` = {bmTarget} AND `type` = 39");
                                 bmCtx.Database.ExecuteSqlRaw($"INSERT INTO `weenie_properties_float` (`object_Id`, `type`, `value`) VALUES ({bmTarget}, 39, {bmKeepScale.Value.ToString(CultureInfo.InvariantCulture)})");
                             }
+                            bmTx.Commit();
                         }
                         ACE.Database.DatabaseManager.World.ClearCachedWeenie(bmTarget);
 
@@ -1886,7 +1890,7 @@ namespace ACE.Server.Command.Handlers
                         pvCreature.Tolerance = Tolerance.NoAttack;
                         pv.Name = (pv.Name ?? "Preview") + " (Preview)";
 
-                        if (!pv.EnterWorld()) { Msg("Preview failed to spawn (physics placement)."); return; }
+                        if (!pv.EnterWorld()) { pv.Destroy(); Msg("Preview failed to spawn (physics placement)."); return; }
                         ZcPreviews[session.Player.Guid.Full] = pv;
                         Msg($"Previewing {pvWeenie.GetProperty(PropertyString.Name) ?? pvWcid.ToString()} ({pvWcid}) for 60s.");
                         return;
@@ -2832,6 +2836,8 @@ namespace ACE.Server.Command.Handlers
             }
             catch (Exception ex)
             {
+                // the chat line keeps only the message; the stack goes to the server log (review 2026-09-04 C4)
+                log.Warn($"[ZC] /zonecontrol {string.Join(" ", parameters ?? Array.Empty<string>())} threw: {ex}");
                 Msg("Error: " + ex.Message);
             }
         }
@@ -4421,6 +4427,33 @@ namespace ACE.Server.Command.Handlers
 
         private static string SqlStr(string s) => "'" + (s ?? "").Replace("\\", "\\\\").Replace("'", "''") + "'";
 
+        /// <summary>A [[ZC]] payload with its `|live_&lt;stat&gt;=value` fields removed - the push-shaped twin of a
+        /// `get` reply (the live block is the only thing includeLive adds).</summary>
+        private static string StripLiveFields(string payload)
+            => System.Text.RegularExpressions.Regex.Replace(payload, @"\|live_[^|=]+=[^|]*", "");
+
+        /// <summary>Re-point a loaded world-DB weenie MODEL at a new wcid before the SQL writer runs: ClassId
+        /// (the writer emits input.ClassId for every child row) plus the self-references that name the source
+        /// wcid (emote actions, create list, generator rows). Replaces the whole-word text replace over the
+        /// exported SQL, which for a low wcid also rewrote property types, values, spell ids and emote amounts
+        /// (review 2026-09-04 C1). GetWeenie(uint) hands back a fresh NoTracking model - the entity cache holds
+        /// a converted copy - so mutating it touches nothing live.</summary>
+        private static void RemapWeenieModel(ACE.Database.Models.World.Weenie w, uint from, uint to)
+        {
+            w.ClassId = to;
+            if (w.WeeniePropertiesEmote != null)
+                foreach (var e in w.WeeniePropertiesEmote)
+                    if (e.WeeniePropertiesEmoteAction != null)
+                        foreach (var a in e.WeeniePropertiesEmoteAction)
+                            if (a.WeenieClassId == from) a.WeenieClassId = to;
+            if (w.WeeniePropertiesCreateList != null)
+                foreach (var c in w.WeeniePropertiesCreateList)
+                    if (c.WeenieClassId == from) c.WeenieClassId = to;
+            if (w.WeeniePropertiesGenerator != null)
+                foreach (var g in w.WeeniePropertiesGenerator)
+                    if (g.WeenieClassId == from) g.WeenieClassId = to;
+        }
+
         /// <summary>`ladder migrate [here|&lt;player&gt;] [--dry]` - grade a player's pre-grade Zone Cantrip pieces
         /// (plan Â§5): the stamped numbers become grades against the tier's live bands, the record is written,
         /// identity stamped, biota saved, and the same rows land in a dated SQL file.</summary>
@@ -4563,7 +4596,9 @@ namespace ACE.Server.Command.Handlers
             {
                 try
                 {
-                    var path = $@"C:\AI\ZoneControl\T11_LiveStat_Migration_{DateTime.UtcNow:yyyy-MM-dd}.sql";
+                    // next to the server binary (the seticon log's convention) - never a workstation path
+                    var path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                        $"T11_LiveStat_Migration_{DateTime.UtcNow:yyyy-MM-dd}.sql");
                     var isNew = !System.IO.File.Exists(path);
                     var block = new StringBuilder();
                     if (isNew)

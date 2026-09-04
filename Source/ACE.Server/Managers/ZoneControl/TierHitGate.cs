@@ -118,8 +118,6 @@ namespace ACE.Server.Managers.ZoneControl
             if (needTriune) sb.Append('\n').Append($"Triune Weave: {triune:N0} of {row.MinWieldTriune:N0}");
             reason = sb.ToString();
             return false;
-
-            return true;
         }
 
         /// <summary>

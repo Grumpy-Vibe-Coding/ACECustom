@@ -1966,7 +1966,11 @@ namespace ACE.Server.WorldObjects
                             // crit = CritX x the fully composed base, computed AFTER the aug term
                             // below. Life: CritX x the drained base (0.5 coefficient gone). PvP
                             // keeps the retail halved-min rule.
-                            var earlyMod = GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature);
+                            // only the life / PvP branches use the mod here; the war/void PvE crit reads it
+                            // once in the unified block below (review 2026-09-04: it was computed twice)
+                            var earlyMod = isLifeProjectile || isPvP
+                                ? GetWeaponCritDamageMod(weapon, this as Creature, attackSkill, creature)
+                                : 0f;
                             critDamageBonus = isLifeProjectile
                                 ? lifeMagicDamage * earlyMod
                                 : (isPvP ? spell.MinDamage * 0.5f * earlyMod : 0f);
@@ -2158,8 +2162,9 @@ namespace ACE.Server.WorldObjects
                         percent = finalDamage / creature.Health.MaxValue;
                     }
 
-                    // [ZCPROC] diagnostic - see SpellProjectile for why. Fires only for our ring procs.
-                    if (procBaseDamage > 0)
+                    // [ZCPROC] diagnostic - see SpellProjectile for why. Fires only for our ring procs,
+                    // and only with the zc_proc_diag server property on (off by default since 2026-09-04).
+                    if (procBaseDamage > 0 && ServerConfig.zc_proc_diag.Value)
                         zcLog.Info($"[ZCPROC] ring spell={spell.Name} ({spell.Id}) B={baseDamage} " +
                                  $"weapon={(weapon?.Name ?? "NULL")} rendMod={weaponResistanceMod:F3} " +
                                  $"resistMod={resistanceMod:F4} attrib={attribBonus:F2} crit={criticalHit} " +

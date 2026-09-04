@@ -306,7 +306,8 @@ namespace ACE.Server.WorldObjects
                 }
 
                 // Launch-day diagnostic (2026-08-23): the client filters XP/lum chat, so the log is the readout.
-                if (killProfile != null)
+                // One line per player per governed kill - switchable via zc_killxp_diag (review 2026-09-04).
+                if (killProfile != null && ServerConfig.zc_killxp_diag.Value)
                 {
                     var (zcRank, rankSrc) = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveRankForCreature(this);
                     var rank = ACE.Server.Managers.ZoneScaling.ZoneRank.Key(zcRank) + "/" + rankSrc;

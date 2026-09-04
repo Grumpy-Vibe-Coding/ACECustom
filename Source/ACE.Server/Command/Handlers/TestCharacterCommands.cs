@@ -498,12 +498,14 @@ namespace ACE.Server.Command.Handlers
                     if (missing <= 0) { Msg($"extra: {label} already at {have} - skipped"); return; }
                     var wo = WorldObjectFactory.CreateNewWorldObject(wcid);
                     if (wo == null) { Msg($"extra: {label} (wcid {wcid}) failed to create"); return; }
+                    // never past the weenie's own stack cap (an over-stack is an item no player can hold)
+                    missing = Math.Min(missing, wo.MaxStackSize ?? 1);
                     if (missing > 1)
                         wo.SetStackSize(missing);
                     if (TryPlaceInPack(player, wo, pack))
-                        Msg($"extra: {label} +{missing} (now {target}) [{pack.Name}]");
+                        Msg($"extra: {label} +{missing} (now {have + missing}) [{pack.Name}]");
                     else if (player.TryCreateInInventoryWithNetworking(wo))
-                        Msg($"extra: {label} +{missing} (now {target})");
+                        Msg($"extra: {label} +{missing} (now {have + missing})");
                     else
                         Msg($"extra: {label} could not be added (inventory full?)");
                 }
@@ -1695,10 +1697,7 @@ namespace ACE.Server.Command.Handlers
             var bisKeys = PremadeBisLines;
             var bisCount = Math.Min(PremadeLineMax(tier), bisKeys.Length);
 
-            var bagName = $"{tierLabel} {modeTag} Suit";
-            Container bag = null;
-            var bagWarned = true;   // owner 2026-09-03: premade pieces stay in the MAIN pack - no suit bag is ever created
-
+            // owner 2026-09-03: premade pieces mint loose into the MAIN pack - no suit bag is ever created
             var minted = 0;
             var skipped = 0;
             var failed = 0;
@@ -1796,24 +1795,9 @@ namespace ACE.Server.Command.Handlers
                 var provenance = $"Created by: {player.Name}\nTier: {tier}\nPremade: {modeTag}";
                 wo.LongDesc = string.IsNullOrEmpty(wo.LongDesc) ? provenance : wo.LongDesc + "\n\n" + provenance;
 
-                // the bag is created lazily so a fully-skipped re-press leaves no empty bag behind
-                if (bag == null && !bagWarned)
-                {
-                    bag = GetOrCreatePack(player, bagName);
-                    if (bag == null)
-                    {
-                        Msg($"asforge premade: no free pack slot for {bagName} - placing pieces loose in your main pack.");
-                        bagWarned = true;
-                    }
-                }
-                if (bag != null && TryPlaceInPack(player, wo, bag))
+                if (player.TryCreateInInventoryWithNetworking(wo))
                 {
                     minted++;
-                }
-                else if (player.TryCreateInInventoryWithNetworking(wo))
-                {
-                    minted++;
-                    if (bag != null) Msg($"asforge premade: {bagName} is full - {wo.Name} placed loose.");
                 }
                 else
                 {
@@ -1872,9 +1856,7 @@ namespace ACE.Server.Command.Handlers
                 wo.SetProperty(PropertyString.Name, name);
             }
 
-            var bagName = $"{tierLabel} {modeTag} Suit";
-            Container bag = null;
-            var bagWarned = true;   // owner 2026-09-03: premade pieces stay in the MAIN pack - no suit bag is ever created
+            // owner 2026-09-03: premade pieces mint loose into the MAIN pack - no suit bag is ever created
             int minted = 0, skipped = 0, failed = 0;
             foreach (var (piece, wo) in roster)
             {
@@ -1912,17 +1894,7 @@ namespace ACE.Server.Command.Handlers
                             + (wo.ItemType == ItemType.Armor ? $"  AL {al}" : "")
                             + $"\n\nCreated by: {player.Name}\nTier: 10\nPremade: {modeTag}";
 
-                if (bag == null && !bagWarned)
-                {
-                    bag = GetOrCreatePack(player, bagName);
-                    if (bag == null) { Msg($"asforge premade: no free pack slot for {bagName} - placing pieces loose in your main pack."); bagWarned = true; }
-                }
-                if (bag != null && TryPlaceInPack(player, wo, bag)) minted++;
-                else if (player.TryCreateInInventoryWithNetworking(wo))
-                {
-                    minted++;
-                    if (bag != null) Msg($"asforge premade: {bagName} is full - {wo.Name} placed loose.");
-                }
+                if (player.TryCreateInInventoryWithNetworking(wo)) minted++;
                 else { Msg($"asforge premade: could not place {wo.Name} anywhere (inventory full) - destroyed."); wo.Destroy(); failed++; }
             }
             Msg($"Premade {tierLabel} {modeTag} suit: {minted} pieces created"

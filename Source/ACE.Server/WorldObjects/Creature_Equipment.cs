@@ -297,6 +297,12 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         private Dictionary<int, int> zoneModifierCache;
 
+        /// <summary>Per-prop MAX across worn pieces - the slot specials' combine rule - maintained beside the
+        /// sum cache (review 2026-09-04): GetZoneModifierMax used to scan every equipped item under its biota
+        /// lock on each read, and CreatureVital.GetMaxValue reads it (Fortify Vitals) many times per hit.
+        /// Add = Math.Max; remove = recompute the touched keys from what is still worn (dequip is rare).</summary>
+        private Dictionary<int, int> zoneModifierMaxCache;
+
         /// <summary>
         /// Live stat resolution, `ladder apply` online path (owner 2026-08-23): re-resolve every WORN piece
         /// whose tier ladder moved, keeping the rating + cantrip caches exact (subtract the old numbers,
@@ -322,6 +328,7 @@ namespace ACE.Server.WorldObjects
 
         private void UpdateZoneModifierCache(WorldObject wo, int sign)
         {
+            List<int> removedKeys = null;
             wo.BiotaDatabaseLock.EnterReadLock();
             try
             {
@@ -337,11 +344,46 @@ namespace ACE.Server.WorldObjects
                     zoneModifierCache ??= new Dictionary<int, int>();
                     zoneModifierCache.TryGetValue(id, out var cur);
                     zoneModifierCache[id] = cur + sign * kv.Value;
+
+                    if (sign > 0)
+                    {
+                        zoneModifierMaxCache ??= new Dictionary<int, int>();
+                        zoneModifierMaxCache.TryGetValue(id, out var curMax);
+                        if (kv.Value > curMax)
+                            zoneModifierMaxCache[id] = kv.Value;
+                    }
+                    else
+                        (removedKeys ??= new List<int>()).Add(id);
                 }
             }
             finally
             {
                 wo.BiotaDatabaseLock.ExitReadLock();
+            }
+
+            // the departing piece may have been the max for a key: recompute those keys from what is still
+            // worn, EXCLUDING the piece itself (TryDequipObject has already removed it; ReresolveWornZoneGear
+            // has not, and re-adds it with its re-resolved values right after)
+            if (removedKeys != null)
+                RecomputeZoneModifierMax(removedKeys, wo);
+        }
+
+        private void RecomputeZoneModifierMax(List<int> propIds, WorldObject except)
+        {
+            if (zoneModifierMaxCache == null)
+                return;
+            foreach (var id in propIds)
+            {
+                var max = 0;
+                foreach (var item in EquippedObjects.Values)
+                {
+                    if (ReferenceEquals(item, except))
+                        continue;
+                    var v = item.GetProperty((PropertyInt)id) ?? 0;
+                    if (v > max)
+                        max = v;
+                }
+                zoneModifierMaxCache[id] = max;
             }
         }
 
@@ -414,13 +456,13 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// MAX (not sum) of a Zone Control cantrip prop across this creature's equipped items — the
         /// combine rule for the slot SPECIALS (Fortify 41, Battle Mending 42, pct-HP 44, Cheat Death 45,
-        /// Regen 46): the highest single piece wins, two pieces never stack. Scans EquippedObjects on
-        /// read (the cache only holds sums); bails on the cache so creatures wearing nothing cantripped
-        /// pay nothing. 0 when no equipped item carries the prop.
+        /// Regen 46): the highest single piece wins, two pieces never stack. Read from the max cache
+        /// maintained on equip/dequip (review 2026-09-04) - O(1), no biota lock - so creatures wearing
+        /// nothing cantripped pay nothing. 0 when no equipped item carries the prop.
         /// </summary>
         public int GetZoneModifierMax(int propId)
         {
-            if (zoneModifierCache == null || !zoneModifierCache.ContainsKey(propId))
+            if (zoneModifierMaxCache == null || !zoneModifierMaxCache.TryGetValue(propId, out var max) || max <= 0)
                 return 0;
 
             // armor zone lock: the slot specials (Cheat Death, Battle Mending, Fortify, pct-HP,
@@ -428,13 +470,6 @@ namespace ACE.Server.WorldObjects
             if (ACE.Server.Managers.ZoneControl.ZoneControlManager.WornPowerSuppressed(this))
                 return 0;
 
-            var max = 0;
-            foreach (var item in EquippedObjects.Values)
-            {
-                var v = item.GetProperty((PropertyInt)propId) ?? 0;
-                if (v > max)
-                    max = v;
-            }
             return max;
         }
 

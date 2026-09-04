@@ -850,7 +850,7 @@ namespace ACE.Server.WorldObjects
                 // never reaches ACE_Log.txt, so without this the only way to read a proc's terms is the
                 // owner pasting client text. Fires ONLY for our procs, so it cannot spam a live shard.
                 // REMOVE once the card is tuned.
-                if (isZcProc)
+                if (isZcProc && ServerConfig.zc_proc_diag.Value)
                     log.Info($"[ZCPROC] arc spell={Spell.Name} ({Spell.Id}) B={baseDamage} " +
                              $"rendMod={weaponResistanceMod:F3} resistMod={resistanceMod:F4} " +
                              $"attrib={attribBonus:F2} crit={criticalHit} preRating={finalDamage:F0} target={target.Name}");

@@ -497,8 +497,20 @@ namespace ACE.Server.Managers.Rifts
                 return;
             }
 
-            run.GuardianGuid = guardian.Guid.Full;
-            run.State = RiftRunState.GuardianUp;
+            // Same lock as TryEndRun: the timer (world thread) or /rift abandon can end the run while
+            // the guardian was being placed; an unlocked write here would overwrite that Failed state
+            // and the next tick would fail the run a second time.
+            lock (run)
+            {
+                if (run.State != RiftRunState.Active)
+                {
+                    log.Info($"[RIFT] Run {run.RunId}: run ended ({run.State}) while the guardian was spawning - guardian discarded.");
+                    guardian.Destroy();
+                    return;
+                }
+                run.GuardianGuid = guardian.Guid.Full;
+                run.State = RiftRunState.GuardianUp;
+            }
             Message(run, $"The rift is at full power! {guardian.Name} has appeared - defeat it! {FormatTime(RemainingSeconds(run))} remaining.");
             log.Info($"[RIFT] Run {run.RunId}: guardian {guardian.Name} ({wcid}) spawned.");
         }
