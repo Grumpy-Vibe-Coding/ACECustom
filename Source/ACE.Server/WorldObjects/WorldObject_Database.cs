@@ -114,6 +114,9 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public virtual void SaveBiotaToDatabase(bool enqueueSave = true)
         {
+            if (SuppressShardPersistence)
+                return;   // ephemeral object: never creates or updates a shard row
+
             // Capture name and guid early to avoid lock recursion when logging
             // The Name property getter calls GetProperty which tries to enter a read lock
             // If we're already in a read lock (like when checking biota properties below),
@@ -386,6 +389,12 @@ namespace ACE.Server.WorldObjects
         /// <param name="onCompleted">Optional callback to invoke when the save operation completes</param>
         public virtual void SaveBiotaToDatabase(bool enqueueSave, Action<bool> onCompleted)
         {
+            if (SuppressShardPersistence)
+            {
+                onCompleted?.Invoke(true);   // nothing to persist for an ephemeral object; the caller's wait is satisfied
+                return;
+            }
+
             // Capture name and guid early to avoid lock recursion in callbacks
             var itemName = Name;
             var itemGuid = Guid;

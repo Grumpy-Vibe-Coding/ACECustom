@@ -275,7 +275,12 @@ namespace ACE.Server.WorldObjects
             var _zcTexOverrides = Biota.PropertiesTextureMap.Clone(BiotaDatabaseLock);
             if (_zcTexOverrides != null)
                 foreach (var t in _zcTexOverrides)
+                {
+                    // AddTextureChange only de-duplicates an identical (part, old, new) triple; drop any earlier
+                    // mapping for the same part + source texture so the biota override is the one that ships
+                    objDesc.TextureChanges.RemoveAll(c => c.PartIndex == t.PartIndex && c.OldTexture == t.OldTexture);
                     objDesc.AddTextureChange(t);
+                }
 
             return objDesc;
         }

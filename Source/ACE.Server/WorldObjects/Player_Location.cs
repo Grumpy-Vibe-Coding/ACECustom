@@ -850,9 +850,17 @@ namespace ACE.Server.WorldObjects
         private const int NoLogAllKey = -2;    // base AND every variation
 
         private static readonly object NoLogParseLock = new();
-        private static string _noLogParsedFrom;
-        private static Dictionary<ushort, HashSet<int>> _noLogAdds = new();
-        private static Dictionary<ushort, HashSet<int>> _noLogRemoves = new();
+        /// <summary>One parsed override set, published as a single reference so a reader never pairs a new
+        /// raw string with stale dictionaries (writers replace the whole object under NoLogParseLock).</summary>
+        private sealed class NoLogOverrides
+        {
+            public readonly string Raw;
+            public readonly Dictionary<ushort, HashSet<int>> Adds;
+            public readonly Dictionary<ushort, HashSet<int>> Removes;
+            public NoLogOverrides(string raw, Dictionary<ushort, HashSet<int>> adds, Dictionary<ushort, HashSet<int>> removes)
+            { Raw = raw; Adds = adds; Removes = removes; }
+        }
+        private static volatile NoLogOverrides _noLog = new(null, new(), new());
 
         /// <summary>
         /// Parse ServerConfig.nolog_landblocks on demand, caching against the exact string it was built
@@ -863,12 +871,12 @@ namespace ACE.Server.WorldObjects
         private static void EnsureNoLogOverrides()
         {
             var raw = ServerConfig.nolog_landblocks?.Value ?? "";
-            if (_noLogParsedFrom == raw)
+            if (_noLog.Raw == raw)
                 return;
 
             lock (NoLogParseLock)
             {
-                if (_noLogParsedFrom == raw)
+                if (_noLog.Raw == raw)
                     return;
 
                 var adds = new Dictionary<ushort, HashSet<int>>();
@@ -884,9 +892,7 @@ namespace ACE.Server.WorldObjects
                     set.Add(key);
                 }
 
-                _noLogAdds = adds;
-                _noLogRemoves = removes;
-                _noLogParsedFrom = raw;
+                _noLog = new NoLogOverrides(raw, adds, removes);
             }
         }
 
@@ -922,6 +928,8 @@ namespace ACE.Server.WorldObjects
             if (varText.Equals("all", StringComparison.OrdinalIgnoreCase)) { variationKey = NoLogAllKey; return true; }
             if (!int.TryParse(varText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v))
                 return false;
+            if (v < 0)
+                return false;   // -1 / -2 would alias the base / all pseudo-keys
 
             variationKey = NoLogVariationKey(v);
             return true;
@@ -954,12 +962,13 @@ namespace ACE.Server.WorldObjects
         public static bool IsNoLogArea(ushort landblock, int? variation)
         {
             EnsureNoLogOverrides();
+            var o = _noLog;
 
             var key = NoLogVariationKey(variation);
 
-            if (NoLogSetMatches(_noLogRemoves, landblock, key))
+            if (NoLogSetMatches(o.Removes, landblock, key))
                 return false;
-            if (NoLogSetMatches(_noLogAdds, landblock, key))
+            if (NoLogSetMatches(o.Adds, landblock, key))
                 return true;
 
             return key == NoLogBaseKey && NoLog_Landblocks.ContainsKey(landblock);
@@ -976,6 +985,7 @@ namespace ACE.Server.WorldObjects
         public static List<(ushort Landblock, int VariationKey)> NoLogEntries()
         {
             EnsureNoLogOverrides();
+            var o = _noLog;
 
             var result = new List<(ushort, int)>();
 
@@ -983,12 +993,12 @@ namespace ACE.Server.WorldObjects
                 if (IsNoLogArea(lb, null))
                     result.Add((lb, NoLogBaseKey));
 
-            foreach (var kvp in _noLogAdds)
+            foreach (var kvp in o.Adds)
                 foreach (var key in kvp.Value)
                 {
                     if (IsNoLogSeed(kvp.Key, key))
                         continue;                                 // already listed from the seed
-                    if (NoLogSetMatches(_noLogRemoves, kvp.Key, key))
+                    if (NoLogSetMatches(o.Removes, kvp.Key, key))
                         continue;
                     result.Add((kvp.Key, key));
                 }

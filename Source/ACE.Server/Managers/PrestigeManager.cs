@@ -462,7 +462,12 @@ namespace ACE.Server.Managers
             // Tier N == PRESTIGE_VAR_OFFSET + N (see GetTier). Use the ForceEndgameSystems-aware
             // effective variation (not the raw Location.Variation) so a test dummy resolves the same
             // way the live combat systems do while standing in a normal (variation 0) landblock.
-            var tier = GetTier(VariationManager.GetEffectiveEndgameVariation(creature));
+            // An explicit endgame variation from the caller (spawn paths pass the generator's / admin's
+            // variation before Location is settled) wins; anything else resolves through the effective
+            // variation so a ForceEndgameSystems dummy still behaves like a real Tide mob.
+            var tier = GetTier(variation.HasValue && variation.Value >= VariationManager.EndgameMinVariation
+                ? variation.Value
+                : VariationManager.GetEffectiveEndgameVariation(creature));
 
             if (tier <= 0)
             {

@@ -624,6 +624,7 @@ namespace ACE.Server.Physics
         {
             if (newCell == null) return SetPositionError.NoCell;
             set_frame(pos.Frame);
+            Position.Variation = pos.Variation;   // the forced cell is in pos's variation; keep the physics position in step
             if (CurCell != newCell)
             {
                 change_cell(newCell);
