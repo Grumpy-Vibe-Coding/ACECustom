@@ -272,9 +272,13 @@ namespace ACE.Server.Factories.Tables
         /// </summary>
         public static int RollForTier(WorldObject wo, TreasureDeath profile, TreasureRoll roll)
         {
-            return profile.Tier >= 11
-                ? RollT11(wo, profile, roll)
-                : RollT10(wo, profile, roll);
+            return profile.Tier switch
+            {
+                >= 11 => RollT11(wo, profile, roll),
+                10 => RollT10(wo, profile, roll),
+                9 => RollT9(wo, profile, roll),
+                _ => Roll(wo, profile, roll),
+            };
         }
 
         public enum GearRatingCategory

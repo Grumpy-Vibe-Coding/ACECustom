@@ -25,7 +25,7 @@ Tier chances: 1, 1, 1, 1, 1, 1, 1, 1, 0
 
 Bow (MissileWeapons) Mutation #2 (6,996 samples):
 
-Tier chances: 0, 0, 0, 0, 0, 0, 0, 0, 1
+Tier chances: 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0
 
     - Chance: 10%:
         DamageMod = 2.46
@@ -367,7 +367,7 @@ Tier chances: 0, 0, 0, 0, 0, 0, 0, 1, 0
 
 Bow (MissileWeapons) Mutation #9 (1,607 samples):
 
-Tier chances: 0, 0, 0, 0, 0, 0, 0, 0, 1
+Tier chances: 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0
 
     - Chance: 13%:
         ElementalDamageBonus = 21
