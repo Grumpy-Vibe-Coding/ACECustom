@@ -5,7 +5,8 @@
 -- of the Tou Tou mob layer — see 2026-08-08-01-GrumpyPack-BenchedGens-ILT-Delete.sql and
 -- Migration pruned-archive\toutou-mobs-2026-08-08.)
 
-DELETE FROM `weenie` WHERE `class_Id` = 777700029;
+DELETE FROM `weenie`
+WHERE `class_Id` = 777700029;
 
 INSERT INTO `weenie` (`class_Id`, `class_Name`, `type`, `last_Modified`)
 VALUES ('777700029','777700029TouTouPrestigeRecallGem','38','2026-06-04 23:25:00');
