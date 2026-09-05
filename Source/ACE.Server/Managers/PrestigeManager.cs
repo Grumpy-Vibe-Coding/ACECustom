@@ -363,8 +363,8 @@ namespace ACE.Server.Managers
         }
 
         /// <summary>
-        /// Returns the XP multiplier for a player killing a monster.
-        /// Applies a 20% penalty for each tier the player is ABOVE the monster.
+        /// Returns the XP multiplier for a player killing a monster. Retired 2026-08-23 together with the
+        /// reward modifier: always 1.0f, no tier-difference penalty.
         /// </summary>
         public static float GetXPPenaltyMultiplier(int playerTier, int monsterTier)
         {

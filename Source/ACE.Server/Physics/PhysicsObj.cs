@@ -1045,6 +1045,7 @@ namespace ACE.Server.Physics
 
             // modified: maintain consistency for Position.Frame in change_cell
             set_frame(curPos.Frame);
+            Position.Variation = curPos.Variation;   // change_cell / enter_cell never touch it; a variation-only move must not keep the old one
 
             // Outdoor LandCells never carry a VariationId and ObjCell.Equals is ID-only, so a
             // same-spot variation switch (e.g. /tv) yielded "equal" cells from two different
@@ -1160,6 +1161,11 @@ namespace ACE.Server.Physics
             if (!CheckPositionInternal(newCell, pos, transition, setPos))
             {
                 var collided = handle_all_collisions(transition.CollisionInfo, false, false);
+                // handle_all_collisions only reports whether a collision CALLBACK fired; a non-reporting object can
+                // hit the environment with collided == false. Key the exception on the physical collision state.
+                var physicalCollision = collided
+                    || transition.CollisionInfo.CollidedWithEnvironment
+                    || (transition.CollisionInfo.CollideObject?.Count ?? 0) > 0;
 
                 // Shallow-water spawn tolerance (2026-07-19): this world's water is knee-deep, walkable "land",
                 // but the physics won't SPAWN an object onto a water-typed terrain cell -- ValidateWalkable
@@ -1169,7 +1175,7 @@ namespace ACE.Server.Physics
                 // exactly the shallow-water case: force the object into its resolved cell so water-camp generators
                 // AND their spawned creatures populate. Solid collisions and dry no-floor failures (e.g. a spawn
                 // point in mid-air off a cliff) still fail normally.
-                if (!collided && newCell.WaterType != LandDefs.WaterType.NotWater)
+                if (!physicalCollision && newCell.WaterType != LandDefs.WaterType.NotWater)
                     return ForceIntoCell(newCell, pos);
 
                 return collided ? SetPositionError.Collided : SetPositionError.NoValidPosition;

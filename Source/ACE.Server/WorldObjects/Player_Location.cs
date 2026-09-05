@@ -920,8 +920,10 @@ namespace ACE.Server.WorldObjects
             if (!ushort.TryParse(lbText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out landblock))
                 return false;
 
-            if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+            if (parts.Length == 1)
                 return true;                                     // no variation given = base only
+            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[1]))
+                return false;                                    // '0002:' or '0002:all:x' are not tokens
 
             var varText = parts[1].Trim();
             if (varText.Equals("base", StringComparison.OrdinalIgnoreCase)) { variationKey = NoLogBaseKey; return true; }
@@ -962,8 +964,12 @@ namespace ACE.Server.WorldObjects
         public static bool IsNoLogArea(ushort landblock, int? variation)
         {
             EnsureNoLogOverrides();
-            var o = _noLog;
+            return IsNoLogArea(_noLog, landblock, variation);
+        }
 
+        /// <summary>Same test against one captured snapshot, so a caller walking several sets sees one configuration.</summary>
+        private static bool IsNoLogArea(NoLogOverrides o, ushort landblock, int? variation)
+        {
             var key = NoLogVariationKey(variation);
 
             if (NoLogSetMatches(o.Removes, landblock, key))
@@ -990,7 +996,7 @@ namespace ACE.Server.WorldObjects
             var result = new List<(ushort, int)>();
 
             foreach (var lb in NoLog_Landblocks.Keys)
-                if (IsNoLogArea(lb, null))
+                if (IsNoLogArea(o, lb, null))
                     result.Add((lb, NoLogBaseKey));
 
             foreach (var kvp in o.Adds)

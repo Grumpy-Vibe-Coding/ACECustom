@@ -391,7 +391,15 @@ namespace ACE.Server.WorldObjects
         {
             if (SuppressShardPersistence)
             {
-                onCompleted?.Invoke(true);   // nothing to persist for an ephemeral object; the caller's wait is satisfied
+                // nothing to persist for an ephemeral object; the caller's wait is satisfied
+                try
+                {
+                    onCompleted?.Invoke(true);
+                }
+                catch (Exception ex)
+                {
+                    log.Error($"Exception in suppressed save callback for {Name} (0x{Guid}): {ex.Message}");
+                }
                 return;
             }
 

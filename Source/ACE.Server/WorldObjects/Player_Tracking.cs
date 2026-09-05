@@ -182,13 +182,16 @@ namespace ACE.Server.WorldObjects
             // variation refusal, the bare resend cemented a ONE-WAY state — the client renders an
             // object whose death/despawn broadcasts skip this player. Re-add the inverse here:
             // AddKnownPlayer is variation-guarded and idempotent (no-op when the link is intact).
-            // Runs before the clamp/debounce so links heal even when the CO resend is suppressed.
-            if (PhysicsObj != null)
-                worldObject.PhysicsObj.ObjMaint?.AddKnownPlayer(PhysicsObj);
-
+            // Runs AFTER the initial-distance clamp (physics can mark an object known before the client has
+            // its CreateObject, and a clamped resend never sends one, so restoring the link there could
+            // aim broadcasts at a client without the object) but BEFORE the debounce, whose suppression only
+            // means a resend went out moments ago - that client has the object, so the link must heal.
             var dist2D = VisibilityCreateObjectDiag.Distance2D(this, worldObject);
             if (ObjectMaint.InitialClamp && dist2D > ObjectMaint.InitialClamp_Dist)
                 return false;
+
+            if (PhysicsObj != null)
+                worldObject.PhysicsObj.ObjMaint?.AddKnownPlayer(PhysicsObj);
 
             var key = worldObject.Guid.Full;
             var now = Environment.TickCount64;

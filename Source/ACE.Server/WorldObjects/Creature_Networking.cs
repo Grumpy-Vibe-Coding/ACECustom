@@ -237,9 +237,10 @@ namespace ACE.Server.WorldObjects
                 {
                     var baseObjDesc = base.CalculateObjDesc();
                     baseObjDesc.TextureChanges.AddRange(CreatureVariantHelper.GetTextureChanges(this, coverage));
-                    return baseObjDesc;
+                    return ApplyBiotaPartOverrides(baseObjDesc);
                 }
-                return base.CalculateObjDesc();
+                // base.CalculateObjDesc only copies biota parts for players: overlay ours here too
+                return ApplyBiotaPartOverrides(base.CalculateObjDesc());
             }
 
             // Add the "naked" body parts. These are the ones not already covered.
@@ -259,6 +260,13 @@ namespace ACE.Server.WorldObjects
                 objDesc.TextureChanges.AddRange(CreatureVariantHelper.GetTextureChanges(this, coverage));
             }
 
+            return ApplyBiotaPartOverrides(objDesc);
+        }
+
+        /// <summary>Overlay the biota anim-part + texture overrides (zone appearance, baked looks) onto an ObjDesc,
+        /// replacing any change at the same index / source texture so ours wins. No-op when the biota has none.</summary>
+        private ACE.Entity.ObjDesc ApplyBiotaPartOverrides(ACE.Entity.ObjDesc objDesc)
+        {
             // Zone per-part / baked custom part overrides must win even when the creature has equipped items
             // (eo.Count>0). That case skips the biota-parts early-return near the top, and the ObjDesc is re-sent
             // whenever a creature equips - which clobbers a part swap that only survived the no-equipment path.
