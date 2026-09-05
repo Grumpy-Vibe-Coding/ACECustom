@@ -809,6 +809,9 @@ namespace ACE.Server.Managers.ZoneScaling
         /// <summary>tier -&gt; pinned value; when present for a tier, replaces the curve for that tier only.</summary>
         public Dictionary<int, double> Overrides { get; set; }
 
+        /// <summary>Deep copy - Merge publishes results to lock-free readers, so it must not share the live admin-mutable object.</summary>
+        public StatCurve Clone() => new StatCurve { Base = Base, Growth = Growth, Additive = Additive, Overrides = Overrides == null ? null : new Dictionary<int, double>(Overrides) };
+
         public double Evaluate(int tier)
         {
             if (Overrides != null && Overrides.TryGetValue(tier, out var pinned))
@@ -967,7 +970,7 @@ namespace ACE.Server.Managers.ZoneScaling
                 if (layer.Stats != null)
                     foreach (var kv in layer.Stats)
                     {
-                        result.Stats[kv.Key] = kv.Value;
+                        result.Stats[kv.Key] = kv.Value?.Clone();
                         // THE SHADOW RULE (owner 2026-08-30, per-tier authoring): a layer that
                         // authors a BASE stat WITHOUT its "_t25" twin means "this value, FLAT" -
                         // an inherited twin from a lower layer must not keep bending it onto the
@@ -1140,7 +1143,7 @@ namespace ACE.Server.Managers.ZoneScaling
         /// Default -&gt; zone -&gt; wcid and happens in ZoneControlManager.</summary>
         public ZoneVariantProfile VariantForWcid(uint wcid, bool create = false)
         {
-            if (WcidOverrides.TryGetValue(wcid, out var v))
+            if (WcidOverrides.TryGetValue(wcid, out var v) && v != null)   // a null stored bucket (JSON) counts as absent
                 return v;
             if (!create)
                 return null;

@@ -543,14 +543,24 @@ namespace ACE.Server.Managers.Rifts
             var player = PlayerManager.GetOnlinePlayer(run.OwnerGuid);
             if (player != null)
             {
-                var best = player.GetProperty((PropertyInt)PropHighestClearedTier) ?? 0;
-                if (run.Tier > best)
+                // OnCreatureDeath runs on the rift instance's landblock thread; the owner may be standing in another
+                // landblock group (Leave keeps the run Active), so the property write and the inventory grant hop onto
+                // the owner's own queue and re-resolve the player there in case they logged off in between.
+                var ownerGuid = run.OwnerGuid; var clearedRun = run; var clearedCfg = cfg;
+                player.EnqueueAction(new ACE.Server.Entity.Actions.ActionEventDelegate(ACE.Server.Entity.Actions.ActionType.ControlFlowDelay, () =>
                 {
-                    player.SetProperty((PropertyInt)PropHighestClearedTier, run.Tier);
-                    Message(run, $"New personal best - Tier {run.Tier}!");
-                }
+                    var owner = PlayerManager.GetOnlinePlayer(ownerGuid);
+                    if (owner == null)
+                        return;
+                    var best = owner.GetProperty((PropertyInt)PropHighestClearedTier) ?? 0;
+                    if (clearedRun.Tier > best)
+                    {
+                        owner.SetProperty((PropertyInt)PropHighestClearedTier, clearedRun.Tier);
+                        Message(clearedRun, $"New personal best - Tier {clearedRun.Tier}!");
+                    }
 
-                GiveCurrencyReward(player, run, cfg);
+                    GiveCurrencyReward(owner, clearedRun, clearedCfg);
+                }));
             }
         }
 

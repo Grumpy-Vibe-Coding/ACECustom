@@ -79,7 +79,7 @@ namespace ACE.Server.Factories
         {
             if (tier >= 10)
             {
-                wo.ItemMaxLevel = AetheriaChance.Roll_ItemMaxLevel(tier);
+                wo.ItemMaxLevel = AetheriaChance.Roll_ItemMaxLevel(Math.Min(tier, 10));   // authored through T10; T11+ clamps to it
 
             }
             else

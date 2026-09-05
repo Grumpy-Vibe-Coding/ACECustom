@@ -1937,8 +1937,14 @@ namespace ACE.Server.Command.Handlers
             }
             Msg($"Max Health {hp.MaxValue:N0} = (starting {hp.StartingValue:N0} + formula {formula:N0} + enl {p.Enlightenment * 2:N0} + ranks {hp.Ranks:N0} + gear {p.GetGearMaxHealth():N0}) x ench {p.EnchantmentManager.GetVitalMod_Multiplier(hp):0.###} x fortify (1 + ({fortify} + {pctHp}) / 100) x vitae {p.Vitae:0.###} + additives {p.EnchantmentManager.GetVitalMod_Additives(hp):N0}");
             Msg($"Worn: {worn} items, {wornWithRecord} with a ZcModifiers record. Raw on items: Fortify max {rawFortifyMax}, Max Health Pct sum {rawPct}, GearMaxHealth sum {rawGearHp:N0}. Cache says: Fortify {fortify}, Pct {pctHp}, GearMaxHealth {p.GetGearMaxHealth():N0}.");
-            if (rawFortifyMax != fortify || rawPct != pctHp)
+            // the cache applies two rules the raw item sums do not: zone-lock suppression (everything reads 0) and the
+            // gear cap on cap-line props (the cache may be LOWER than the raw sum, never higher)
+            if (ACE.Server.Managers.ZoneControl.ZoneControlManager.WornPowerSuppressed(p))
+                Msg("Zone lock: worn power is SUPPRESSED here (outside an authored zone) - the cache reads 0 by design.");
+            else if (rawFortifyMax != fortify || pctHp > rawPct)
                 Msg("MISMATCH: the cantrip cache does not match what is worn - equip/dequip hook missed (report this).");
+            else if (pctHp < rawPct)
+                Msg($"Max Health Pct clamped by the gear cap: raw {rawPct} -> effective {pctHp}.");
 
             // Regeneration (key 46, bracers): prop 50231 = FLAT pct of max vital added per natural tick (2026-08-23)
             var regenSpecial = p.GetZoneModifierMax(ACE.Server.Managers.ZoneControl.ZoneModifiers.RegenSpecialMult);

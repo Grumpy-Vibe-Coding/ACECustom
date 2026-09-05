@@ -199,6 +199,8 @@ namespace ACE.Server.WorldObjects
         private void ActivateCommon(Creature creature, bool isActive, Func<Creature, bool> isDamageable)
         {
             if (!isActive) return;
+            // one gate for every damage type: Invincible, dead, and the Zone Control Cheat Death window
+            if (isDamageable != null && !isDamageable(creature)) return;
 
             var amount = DamageNext;
             var iAmount = (int)Math.Round(amount);
@@ -208,9 +210,6 @@ namespace ACE.Server.WorldObjects
             switch (DamageType)
             {
                 default:
-
-                    if (creature.Invincible) return;
-                    if (player != null && player.ZcDamageImmune) return;   // Zone Control Cheat Death window
 
                     amount *= creature.GetResistanceMod(DamageType, this, null);
 

@@ -448,6 +448,11 @@ namespace ACE.Server.Managers.ZoneControl
         public static void SetMinTier(int tier)
         {
             EnsureInitialized();
+            if (tier < 1)
+            {
+                log.Warn($"ZoneCraftGateStore.SetMinTier({tier}) ignored: the tier must be 1 or more (Load rejects less).");
+                return;
+            }
             lock (_lock) { _minTier = tier; Save(); }
         }
 
@@ -637,6 +642,7 @@ namespace ACE.Server.Managers.ZoneControl
                     }
                     rows.Add(new ImbueMaterial(g.Key, MaterialName(g.Key), effect));
                 }
+                _catalog = rows;   // cache only a successful read; a transient DB failure must not pin an empty catalog
             }
             catch (Exception ex)
             {
@@ -644,7 +650,6 @@ namespace ACE.Server.Managers.ZoneControl
                 rows.Clear();
             }
 
-            _catalog = rows;
             return rows;
         }
 

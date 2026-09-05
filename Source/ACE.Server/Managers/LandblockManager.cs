@@ -329,16 +329,16 @@ namespace ACE.Server.Managers
         /// O(landblocks x players) tick-path cost into a single O(players) build plus O(9) lookups.
         /// Rebuilt before the parallel tick and only read during it, so no synchronization is needed.
         /// </summary>
-        internal static HashSet<ushort> OccupiedLandblocks { get; private set; } = new();
+        internal static HashSet<(ushort Landblock, int? Variation)> OccupiedLandblocks { get; private set; } = new();
 
         private static void RefreshOccupiedLandblocks()
         {
-            var set = new HashSet<ushort>();
+            var set = new HashSet<(ushort Landblock, int? Variation)>();
             foreach (var player in PlayerManager.GetAllOnline())
             {
                 var loc = player.Location;
                 if (loc != null)
-                    set.Add((ushort)loc.LandblockId.Landblock);
+                    set.Add(((ushort)loc.LandblockId.Landblock, VariationManager.NormalizeBase(loc.Variation)));
             }
             OccupiedLandblocks = set;
         }
@@ -551,8 +551,7 @@ namespace ACE.Server.Managers
 
                     // No winner to fall back on - initialize ours rather than return a void.
                     log.Error($"LandblockManager: no cached instance for {landblock.Id.Raw:X8}, v:{variation} after a failed add - initializing the new one to avoid a void landblock.");
-                    landblock.Init(variation);
-                    return landblock;
+                    // fall through: register it in the group list below so it is ticked, watched and unloaded like any other
                 }
 
                 if (!loadedLandblocks.TryAdd(cacheKey, landblock))
@@ -563,8 +562,7 @@ namespace ACE.Server.Managers
                         return existing;
 
                     log.Error($"LandblockManager: no distinct cached instance for {landblock.Id.Raw:X8}, v:{variation} after a failed add - initializing to avoid a void landblock.");
-                    landblock.Init(variation);
-                    return landblock;
+                    // fall through: register it in the group list below so it is ticked, watched and unloaded like any other
                 }
 
                 bool res = landblockGroupPendingAdditions.TryAdd(cacheKey, landblock);

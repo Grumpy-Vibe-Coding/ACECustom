@@ -158,7 +158,7 @@ namespace ACE.Server.Managers.WeaponScaling
                 || !TryResolve(weapon, out var k, out var tierRow))
                 return 0f;
 
-            var augs = wielder.LuminanceAugmentItemCount ?? 0;
+            var augs = wielder.EffectiveItemAugCount;   // gems + Triune Weave, matching the aug-caps rule everywhere else
             return (float)(k * Math.Min(augs, tierRow.Cap)) * EvNormalization(weapon);
         }
 
@@ -355,8 +355,8 @@ namespace ACE.Server.Managers.WeaponScaling
 
             var kc = WeaponScalingManager.ResolveFromQuality(cfg.KcMin, cfg.KcMax, quality.Value);
             var count = weapon.IsMissileWeapon
-                ? player.LuminanceAugmentMissileCount ?? 0
-                : player.LuminanceAugmentMeleeCount ?? 0;
+                ? player.EffectiveMissileAugCount
+                : player.EffectiveMeleeAugCount;
             // Same per-aug crit modifier the aug crit bonus itself uses, so the peg stays honest
             // if the server ever retunes it.
             var modifier = ServerConfig.melee_missile_aug_crit_modifier.Value;

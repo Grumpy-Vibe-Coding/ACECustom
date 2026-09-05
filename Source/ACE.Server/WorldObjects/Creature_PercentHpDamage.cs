@@ -128,6 +128,10 @@ namespace ACE.Server.WorldObjects
         /// player (1.0 = no relief, floor at (1-augCap)*(1-drCap) = never immune).
         /// </summary>
         public static double GetV11ReliefMultiplier(Creature attacker, Player defender)
+            => GetV11ReliefMultiplier(attacker, defender, ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker));
+
+        /// <summary>Same, with the attacker's zone profile already resolved by the caller (one resolve per hit).</summary>
+        public static double GetV11ReliefMultiplier(Creature attacker, Player defender, ACE.Server.Managers.ZoneScaling.EvaluatedProfile zp)
         {
             if (attacker == null || defender == null)
                 return 1.0;
@@ -138,7 +142,6 @@ namespace ACE.Server.WorldObjects
             // mob inherits the zone's curves unless it authors its own, and authoring relief_* on a
             // --wcid bucket (a boss that respects player DR less, say) now actually works instead of
             // being silently ignored while the sim and the display both claimed it did.
-            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
 
             var augRelief = GetAxisRelief(zp, AugPointKeys, defender.LuminanceAugmentLifeCount ?? 0,
                 ReliefAnchor(zp, ACE.Server.Managers.ZoneScaling.ZoneStat.ReliefAugStart, ServerConfig.v11_relief_aug_start.Value),
@@ -161,12 +164,15 @@ namespace ACE.Server.WorldObjects
         /// (1.0 = full bonus; at the cap a 2x crit lands as 1.5x).
         /// </summary>
         public static double GetV11CritBonusRelief(Creature attacker, Player defender)
+            => GetV11CritBonusRelief(attacker, defender, ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker));
+
+        /// <summary>Same, with the attacker's zone profile already resolved by the caller (one resolve per hit).</summary>
+        public static double GetV11CritBonusRelief(Creature attacker, Player defender, ACE.Server.Managers.ZoneScaling.EvaluatedProfile zp)
         {
             if (attacker == null || defender == null)
                 return 1.0;
 
             // per-creature merged profile — same 2026-08-29 fix as GetV11ReliefMultiplier
-            var zp = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(attacker);
 
             var relief = GetAxisRelief(zp, CritDrPointKeys, defender.GetCritDamageResistRating(),
                 ReliefAnchor(zp, ACE.Server.Managers.ZoneScaling.ZoneStat.ReliefCritDrStart, ServerConfig.v11_relief_critdr_start.Value),
@@ -229,7 +235,7 @@ namespace ACE.Server.WorldObjects
             // v11+ relief curves (2026-07-27): linear life-aug + gear Damage-Resist reduction replaces
             // the old exponential aug-only curve (v11_pcthp_aug_threshold/reduction_r/reduction_cap and
             // the per-weenie PercentHpReduction*Override props retired - no longer read here).
-            var floor = p * maxHealth * GetV11ReliefMultiplier(attacker, defender);
+            var floor = p * maxHealth * GetV11ReliefMultiplier(attacker, defender, zoneProfile);
 
             // Crit multiplies the floor too — otherwise it vanishes once the floor dominates
             // the (heavily mitigated) normal damage component. (The old Empower floor mult was
@@ -243,7 +249,7 @@ namespace ACE.Server.WorldObjects
                 var critMult = ServerConfig.v11_pcthp_crit_mult.Value;
                 if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating))
                     critMult = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.CritDamageRating);
-                floor *= 1.0 + (critMult - 1.0) * GetV11CritBonusRelief(attacker, defender);
+                floor *= 1.0 + (critMult - 1.0) * GetV11CritBonusRelief(attacker, defender, zoneProfile);
             }
 
             // per-hit random spread so damage isn't identical every swing

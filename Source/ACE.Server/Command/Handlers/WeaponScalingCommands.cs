@@ -69,13 +69,11 @@ namespace ACE.Server.Command.Handlers
 
                 var watch = kv.Value;
                 var keepalive = (now - watch.LastSentUtc).TotalSeconds >= SyncKeepaliveSeconds;
-                if (payload == watch.LastPayload && !keepalive)
-                    continue;
-
-                watch.LastSentUtc = now;
-
+                // only the MAIN payload is gated on its own change; the ladder lines below diff on their own, so a
+                // ladder-only edit (script grade / ladder) still goes out this tick instead of at the next keepalive
                 if (payload != watch.LastPayload || keepalive)
                 {
+                    watch.LastSentUtc = now;
                     watch.LastPayload = payload;
                     ChatPacket.SendServerMessage(session, payload, ChatMessageType.Broadcast);
                 }
@@ -738,7 +736,13 @@ namespace ACE.Server.Command.Handlers
                         applied.Add($"proc arc {arcId} @ {c.ProcRate:0.##} dmg {c.ProcDmg:0}");
                     }
 
-                    if (c.ProcRing)
+                    if (c.ProcRing && wo.ProcSpell != null && wo.ProcSpellSelfTargeted == true)
+                    {
+                        // the data model has ONE targeting flag (ProcSpellSelfTargeted) for both slots; a self-targeted
+                        // slot 1 would aim the ring at the wielder, so the combination is refused rather than mis-cast
+                        skipped.Add("proc ring: slot 1 on this item is self-targeted and the ring would share that flag - refused");
+                    }
+                    else if (c.ProcRing)
                     {
                         wo.SetProperty((PropertyDataId)ZoneLootMutator.ProcSpell2PropId, ringId);
                         wo.SetProperty((PropertyFloat)ZoneLootMutator.ProcRate2PropId, c.ProcRate);

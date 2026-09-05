@@ -39,14 +39,15 @@ namespace ACE.Server.WorldObjects
 
             if (CurrentLandblock != null && Location != null)
             {
-                var nearbyObjects = CurrentLandblock.GetWorldObjectsForPhysicsHandling();
+                // one IsEmpowerSource scan per landblock per second, shared by every CanBeEmpowered creature here
+                var nearbyObjects = CurrentLandblock.GetEmpowerSources(currentUnixTime, 1.0);
                 var myGlobalPos = Location.ToGlobal(false);
 
                 foreach (var obj in nearbyObjects)
                 {
                     if (obj is Creature creature && creature.GetProperty(PropertyBool.IsEmpowerSource) == true)
                     {
-                        if (!creature.IsAlive)
+                        if (!creature.IsAlive || creature.Location == null)   // sources can be mid-removal
                             continue;
 
                         // Check group match:

@@ -507,6 +507,13 @@ namespace ACE.Server.Managers
         /// <summary>
         /// Projected to run at a reasonable rate for gameplay (30-60fps)
         /// </summary>
+        /// <summary>Runs one subsystem tick; an exception is logged and swallowed so it can never take the world thread down.</summary>
+        private static void SafeTick(string name, Action tick)
+        {
+            try { tick(); }
+            catch (Exception ex) { log.Error($"[WorldManager] {name} threw: {ex}"); }
+        }
+
         public static bool UpdateGameWorld()
         {
             if (updateGameWorldRateLimiter.GetSecondsToWaitBeforeNextEvent() > 0)
@@ -523,11 +530,9 @@ namespace ACE.Server.Managers
 
             PowerballManager.Tick();
 
-            ACE.Server.Command.Handlers.ZoneControlCommands.PushTick();
-
-            ACE.Server.Command.Handlers.WeaponScalingCommands.PushTick();
-
-            Rifts.RiftManager.Tick();
+            SafeTick("ZoneControlCommands.PushTick", ACE.Server.Command.Handlers.ZoneControlCommands.PushTick);
+            SafeTick("WeaponScalingCommands.PushTick", ACE.Server.Command.Handlers.WeaponScalingCommands.PushTick);
+            SafeTick("RiftManager.Tick", Rifts.RiftManager.Tick);
 
             ServerPerformanceMonitor.RegisterEventEnd(ServerPerformanceMonitor.MonitorType.UpdateGameWorld_Entire);
             ServerPerformanceMonitor.RegisterCumulativeEvents();

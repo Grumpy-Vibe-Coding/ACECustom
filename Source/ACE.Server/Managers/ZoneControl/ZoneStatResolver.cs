@@ -539,10 +539,8 @@ namespace ACE.Server.Managers.ZoneControl
         {
             if (wo == null)
                 return 0;
-            var zc = wo.GetProperty(PropertyInt.ZcTier) ?? 0;
-            if (zc > 0)
-                return zc;
-            return wo.GetProperty(PropertyInt.WeaponAugScaleTier) ?? 0;
+            // the MAX of both stamps, exactly as ZoneCraftGate.TierOf - a weapon carries both
+            return Math.Max(wo.GetProperty(PropertyInt.ZcTier) ?? 0, wo.GetProperty(PropertyInt.WeaponAugScaleTier) ?? 0);
         }
 
         /// <summary>

@@ -75,10 +75,14 @@ namespace ACE.Server.Tests
 
             var applyIdx = src.IndexOf("public static void ApplyToSpawn(", StringComparison.Ordinal);
             Assert.IsTrue(applyIdx > 0, "ApplyToSpawn not found in ZoneSpawnScaler");
+            // bound the search to THIS method: a guard or a resolve in a later method must not satisfy the test
+            var bodyEnd = src.IndexOf("\n        public static ", applyIdx + 1, StringComparison.Ordinal);
+            if (bodyEnd < 0) bodyEnd = src.Length;
+            var body = src.Substring(applyIdx, bodyEnd - applyIdx);
 
             // the guard must sit before the first resolve, or it guards nothing
-            var resolveIdx = src.IndexOf("ResolveForCreature", applyIdx, StringComparison.Ordinal);
-            var guardIdx = src.IndexOf("creature.Location == null", applyIdx, StringComparison.Ordinal);
+            var resolveIdx = body.IndexOf("ResolveForCreature", StringComparison.Ordinal);
+            var guardIdx = body.IndexOf("creature.Location == null", StringComparison.Ordinal);
 
             Assert.IsTrue(guardIdx > 0,
                 "ApplyToSpawn must reject a null Location loudly - a silent no-op here is invisible for months.");

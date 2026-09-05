@@ -118,12 +118,12 @@ namespace ACE.Server.Command.Handlers
             E("Readiness", "/zonecontrol mobcheckget", "[<zone>] [--wcid <id>]", "Machine twin of mobcheck ([[ZCMC]]) for the Readiness tab."),
 
             // ── Weapon scaling ────────────────────────────────────────────────
-            E("Weapon Scaling", "/weaponscale", "show | enable on|off | tier <t> cap|minwield|minwieldtriune|minwieldskillcharm <n> | tier add|remove <t> | script <name> kmin|kmax <v> | script add|remove <name> | grade ... | kc min|max <v> | sync on|off | reset | reload | tighten", "Weapon aug-scaling config (the plugin's Weapons > Scaling panel)."),
+            E("Weapon Scaling", "/weaponscale", "show | enable on|off | tier <t> cap|minwield|minwieldtriune|minwieldskillcharm <n> | tier add|remove <t> | script <name> kmin|kmax|variance <v> | script <name> ladder <anchorS>|clear | script <name> grade <S..F-> <k> | script add|remove <name> | grade ... | kc min|max <v> | sync on|off | reset | reload | tighten", "Weapon aug-scaling config (the plugin's Weapons > Scaling panel)."),
 
             // ── Character forge ───────────────────────────────────────────────
             E("Character", "/testchar", "T0 | set attrs|vitals|level|enl|augs|charms|raugs <csv> | apply skills,spells,aetheria,manastone | extra <keys> | save | report | gems | charms | print <wcid>", "Test-character builder behind the Character tab."),
             E("Character", "/asforge", "<piece|suit|jewel|all> [tier 10-25] [cards:...] | premade <tier 10-25> <avg|bis> [force]", "Forge test armor / jewelry; premade = the 18-piece suit at a tier's Avg or BiS."),
-            E("Character", "/wsforge", "<class|all> [quality 0-1000] [element] [tier 10-25]", "Forge one Weapon Scaling test weapon (or a full set)."),
+            E("Character", "/wsforge", "<class|all> [quality 0-1000] [element] [tier 10-25] [cards:key=val,...] [bag] [force]", "Forge one Weapon Scaling test weapon (or a full set)."),
 
             // Retail admin / session commands (@cloak, @smite, /createliveops, /clearcache ...) are NOT listed
             // here (owner 2026-09-03: "not zc stuff - just normal admin commands").

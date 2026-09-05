@@ -314,13 +314,14 @@ namespace ACE.Server.Entity
                     // unnoticed until a variation Default authored spawn-snapshot stats for the first time.
                     // Safe: Spawn_Scatter and Spawn_Default both open by overwriting Location outright, so
                     // this value only ever survives long enough to be resolved against.
+                    var generatorVariation = Generator.Location?.Variation;   // null while the generator has no Location yet
                     if (Generator.Location != null)
                         wo.Location = new ACE.Entity.Position(Generator.Location);
 
                     CreatureVariantHelper.MaybeApplyRandomVariant(creature, (float)ServerConfig.creature_variant_chance.Value);
-                    PrestigeManager.ApplyPrestigeScaling(creature, Generator.Location.Variation);
+                    PrestigeManager.ApplyPrestigeScaling(creature, generatorVariation);
                     Managers.ZoneControl.ZoneSpawnScaler.ApplyToSpawn(creature);
-                    Managers.Rifts.RiftManager.TryApplyRiftScaling(creature, Generator.Location.Variation);
+                    Managers.Rifts.RiftManager.TryApplyRiftScaling(creature, generatorVariation);
                 }
 
                 if (Biota.PaletteId.HasValue && Biota.PaletteId > 0)

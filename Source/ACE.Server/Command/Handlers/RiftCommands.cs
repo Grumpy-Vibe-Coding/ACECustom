@@ -324,10 +324,11 @@ namespace ACE.Server.Command.Handlers
                     var removed = 0;
                     foreach (var pool in cfg.GuardianPools)
                         removed += pool.Wcids.RemoveAll(w => w == wcid);
-                    cfg.GuardianPools.RemoveAll(g => g.Wcids.Count == 0);
-
                     if (removed > 0)
+                    {
+                        cfg.GuardianPools.RemoveAll(g => g.Wcids.Count == 0);   // prune only when something changed, then persist
                         RiftManager.SaveConfig();
+                    }
                     Reply(session, removed > 0 ? $"Removed wcid {wcid} from {removed} guardian pool(s)." : $"Wcid {wcid} was not in any guardian pool.");
                     return;
                 }
@@ -368,6 +369,24 @@ namespace ACE.Server.Command.Handlers
                 return;
             }
 
+            // validate before anything is persisted: no negatives, integer keys must be whole and in range, and the
+            // wcid must survive its uint cast (a negative wraps to a huge value that survives a restart)
+            if (double.IsNaN(val) || double.IsInfinity(val) || val < 0)
+            {
+                Reply(session, $"'{key}' must be a number of 0 or more.");
+                return;
+            }
+            var integerKey = key is "timer" or "grace" or "maxruns" or "currencywcid";
+            if (integerKey && val != Math.Floor(val))
+            {
+                Reply(session, $"'{key}' must be a whole number.");
+                return;
+            }
+            if ((key is "timer" or "grace" or "maxruns") && val > int.MaxValue || key == "currencywcid" && val > uint.MaxValue)
+            {
+                Reply(session, $"'{key}' is out of range.");
+                return;
+            }
             switch (key)
             {
                 case "timer": cfg.TimerSeconds = (int)val; break;

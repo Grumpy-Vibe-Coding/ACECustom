@@ -125,6 +125,25 @@ namespace ACE.Server.Entity
         /// These are static objects visible to all players in this variation.
         /// </summary>
         private readonly List<WorldObject> _prestigeBoundaryMarkers = new List<WorldObject>();
+
+        private double _empowerSourcesRefreshedAt = -1;
+        private List<Creature> _empowerSources = new();
+
+        /// <summary>The IsEmpowerSource creatures on this landblock, rescanned at most once per <paramref name="maxAgeSeconds"/>.
+        /// Shared by every CanBeEmpowered creature here, so the per-second aura check is O(sources) rather than a full
+        /// physics-object scan per creature. Called from the landblock's own tick thread only.</summary>
+        internal List<Creature> GetEmpowerSources(double now, double maxAgeSeconds)
+        {
+            if (now - _empowerSourcesRefreshedAt < maxAgeSeconds)
+                return _empowerSources;
+            var list = new List<Creature>();
+            foreach (var obj in GetWorldObjectsForPhysicsHandling())
+                if (obj is Creature c && c.GetProperty(ACE.Entity.Enum.Properties.PropertyBool.IsEmpowerSource) == true)
+                    list.Add(c);
+            _empowerSources = list;
+            _empowerSourcesRefreshedAt = now;
+            return list;
+        }
         private readonly List<WorldObject> _zoneBoundaryMarkers = new List<WorldObject>();
 
         private readonly ActionQueue actionQueue = new();
@@ -283,6 +302,7 @@ namespace ACE.Server.Entity
         private int initSpawnAttempts;
         private DateTime initSpawnStartedTime;
         private bool initSpawnStillRunningLogged;
+        private bool initSpawnGaveUpLogged;   // the terminal VOID log has its own latch (#30)
 
         // 2026-07-26 (F559 v11): the above only guards a task that STARTED. A landblock constructed but
         // never Init()'d has initSpawnTask == null, so the watchdog returned on its first line every
@@ -348,7 +368,11 @@ namespace ACE.Server.Entity
                               $"walkable VOID, starting spawn now.");
                 }
 
-                StartInitSpawnTask(VariationId);
+                // Init() never ran: PostInit() (physics cells, CurLandblock) has to precede the spawn task
+                if (!initCalled)
+                    Init(VariationId);
+                else
+                    StartInitSpawnTask(VariationId);
                 return;
             }
 
@@ -367,9 +391,9 @@ namespace ACE.Server.Entity
 
             if (initSpawnAttempts >= 3)
             {
-                if (!initSpawnStillRunningLogged)
+                if (!initSpawnGaveUpLogged)
                 {
-                    initSpawnStillRunningLogged = true;
+                    initSpawnGaveUpLogged = true;
                     log.Error($"[VoidHeal] Landblock {Id.Landblock:X4} (Var {VariationId?.ToString() ?? "null"}) init spawn task never completed after {initSpawnAttempts} attempts - GIVING UP, block is a VOID (faulted={initSpawnTask.IsFaulted})");
                 }
                 return;
@@ -482,7 +506,12 @@ namespace ACE.Server.Entity
                 // idempotence: the [VoidHeal] watchdog can retry the init spawn task; if a previous
                 // attempt's action already populated the block, drop this duplicate payload.
                 if (CreateWorldObjectsCompleted)
+                {
+                    // a fully built payload is being discarded: release its physics + dynamic guids
+                    foreach (var dup in factoryObjects)
+                        dup.Destroy(false);
                     return;
+                }
 
                 // for mansion linking
                 var houses = new List<House>();
@@ -584,7 +613,8 @@ namespace ACE.Server.Entity
             void SpawnMarkerAtPosition(float x, float y)
             {
                 const float cornerEpsilon = 0.25f;
-                foreach (var existing in _prestigeBoundaryMarkers)
+                // both marker systems can run on the same 11+ variation: never stack a lantern on a zone marker either
+                foreach (var existing in _prestigeBoundaryMarkers.Concat(_zoneBoundaryMarkers))
                 {
                     if (existing?.Location == null)
                         continue;
@@ -1885,16 +1915,34 @@ namespace ACE.Server.Entity
                     }
 
                     SweepLandblock(this);
-                    foreach (var adj in Adjacents.ToList())
-                        if (adj != null)
-                            SweepLandblock(adj);
 
                     if (missed > 0 && wo is Creature && ServerConfig.prestige_interaction_diag_verbose.Value)
                         log.Warn($"[GhostMob] {wo.Name}(0x{wo.Guid.Full:X8}) destroy on lb 0x{Id.Landblock:X4} v={VariationId?.ToString() ?? "null"}: " +
                                  $"delete sent to {missed} nearby same-variation player(s) missing from KnownPlayers (one-way CO healed).");
+                    // Adjacent instances tick on their own group threads and mutate their own `players` lists, so each
+                    // adjacent sweep runs ON THAT LANDBLOCK'S QUEUE with a read-only snapshot of who was already told.
+                    var alreadyNotified = new HashSet<uint>(notified);
+                    var deletedWo = wo;
+                    foreach (var adj in Adjacents.ToList())
+                    {
+                        if (adj == null)
+                            continue;
+                        var target = adj;
+                        target.EnqueueAction(new ActionEventDelegate(ActionType.WorldObjectNetworking_BroadcastOther, () =>
+                        {
+                            foreach (var p in target.players.ToList())
+                            {
+                                if (p == null || p.Guid == deletedWo.Guid || alreadyNotified.Contains(p.Guid.Full))
+                                    continue;
+                                var player = p;
+                                player.EnqueueAction(new ActionEventDelegate(ActionType.WorldObjectNetworking_BroadcastOther,
+                                    () => player.RemoveTrackedObject(deletedWo, false)));
+                            }
+                        }));
+                    }
                 }
 
-                wo.PhysicsObj.DestroyObject();
+                wo.PhysicsObj?.DestroyObject();
             }
         }
 
@@ -2038,6 +2086,8 @@ namespace ACE.Server.Entity
             var occupied = LandblockManager.OccupiedLandblocks;
             if (occupied.Count == 0)
                 return false;
+            // variation-aware: a player on the base twin must not keep every rift / prestige instance of this block alive
+            var myVariation = Managers.VariationManager.NormalizeBase(VariationId);
 
             int thisX = (Id.Landblock >> 8) & 0xFF;
             int thisY = Id.Landblock & 0xFF;
@@ -2049,7 +2099,7 @@ namespace ACE.Server.Entity
                     int ny = thisY + dy;
                     if (nx < 0 || nx > 255 || ny < 0 || ny > 255)
                         continue;
-                    if (occupied.Contains((ushort)((nx << 8) | ny)))
+                    if (occupied.Contains(((ushort)((nx << 8) | ny), myVariation)))
                         return true;
                 }
             }
@@ -2110,7 +2160,13 @@ namespace ACE.Server.Entity
                         if (pobj.Position != null)
                             pobj.Position.Variation = fwo.Location.Variation;
                         if (!fwo.AddPhysicsObj(fwo.Location.Variation))
+                        {
                             log.Warn($"[LbLife] UNLOAD {Id.Landblock:X4} v={VariationId?.ToString() ?? "null"}: re-home of 0x{fwo.Guid}:{fwo.Name} (v={fwo.Location.Variation?.ToString() ?? "null"}) did not re-enter physics");
+                            // AddPhysicsObj nulls PhysicsObj on failure; the sibling instance would NRE on its next tick,
+                            // so take the object out of the world instead of leaving a physics-less ghost behind
+                            fwo.Destroy(false);
+                            continue;
+                        }
                         rehomed++;
                     }
             }

@@ -1024,6 +1024,19 @@ namespace ACE.Server.WorldObjects
                     slotCounts.Trinket = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotTrinket, slotCounts.Trinket);
                     slotCounts.Cloak = Slot(ACE.Server.Managers.ZoneScaling.ZoneStat.LootSlotCloak, slotCounts.Cloak);
                 }
+                // LEGACY per-slot mode has no budget: its aggregate must respect the corpse cap too (the budget path
+                // clamps below). Weapons is a multiplier over the nine families.
+                if (zoneLoot != null && !zoneLoot.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.LootDropsMin))
+                {
+                    var perSlotTotal = slotCounts.Weapons * 9 + slotCounts.Helm + slotCounts.Chest + slotCounts.Shoulder + slotCounts.Bracer
+                        + slotCounts.Glove + slotCounts.Girth + slotCounts.UpperLeg + slotCounts.LowerLeg + slotCounts.Boot + slotCounts.Shield
+                        + slotCounts.Amulet + slotCounts.Ring + slotCounts.Bracelet + slotCounts.Trinket + slotCounts.Cloak;
+                    if (perSlotTotal > ZoneCorpseItemCap)
+                    {
+                        log.Warn($"[ZoneLoot] {Name} (0x{Guid}): per-slot counts total {perSlotTotal}, above the corpse cap {ZoneCorpseItemCap}; rolling a capped budget instead.");
+                        slotCounts = LootGenerationFactory.RollBudgetedCounts(slotCounts, ZoneCorpseItemCap, 1.0, 1.0, 1.0, 1.0);
+                    }
+                }
 
                 // BUDGET MODE (owner 2026-08-24): defining loot_max_drops switches from "every slot
                 // drops its own count" to "roll this many ITEMS total, distributed by category weight".
@@ -1385,14 +1398,21 @@ namespace ACE.Server.WorldObjects
 
         private static void SpawnZoneCurrency(uint wcid, int amount, Corpse corpse, List<WorldObject> dropped)
         {
-            var token = CreateZoneCurrencyToken(wcid, amount);
-            if (token == null)
-                return;
-
-            if (corpse != null)
-                corpse.TryAddToInventory(token);
-            else
-                dropped.Add(token);
+            // an authored amount above the token's MaxStackSize spawns as several full stacks - never truncated silently
+            var remaining = Math.Max(amount, 0);
+            var guard = 0;
+            while (remaining > 0 && guard++ < 64)
+            {
+                var token = CreateZoneCurrencyToken(wcid, remaining);
+                if (token == null)
+                    return;
+                var stack = Math.Max(token.StackSize ?? 1, 1);
+                if (corpse != null)
+                    corpse.TryAddToInventory(token);
+                else
+                    dropped.Add(token);
+                remaining -= stack;
+            }
         }
 
         /// <summary>Direct-delivery currency drop: straight into the killing player's inventory with a chat

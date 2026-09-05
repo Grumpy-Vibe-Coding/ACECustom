@@ -1506,6 +1506,13 @@ namespace ACE.Server.Command.Handlers.Processors
                             failed++;
                             continue;
                         }
+                        // GetTerrainZ returns the probe's own Z when there is no land cell / terrain polygon; that is a
+                        // failure to resolve, not a height - skip the row rather than nudge it by the epsilon every run
+                        if (terrainZ == pos.Pos.Z)
+                        {
+                            failed++;
+                            continue;
+                        }
 
                         // small epsilon (matches createinst) so the object spawns just above the ground rather than clipping into it
                         var newZ = terrainZ + 0.05f;
@@ -1555,9 +1562,9 @@ namespace ACE.Server.Command.Handlers.Processors
                 session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse wcid '{parameters[0]}'. Usage: /spreadinst <wcid> <count> [minVar] [maxVar] [force]", ChatMessageType.Broadcast));
                 return;
             }
-            if (!int.TryParse(parameters[1], out var count) || count <= 0)
+            if (!int.TryParse(parameters[1], out var count) || count <= 0 || count > 200)
             {
-                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse count '{parameters[1]}' (must be > 0).", ChatMessageType.Broadcast));
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't parse count '{parameters[1]}' (must be 1-200).", ChatMessageType.Broadcast));
                 return;
             }
 
@@ -1652,13 +1659,16 @@ namespace ACE.Server.Command.Handlers.Processors
                         }
 
                         var filledThisLb = false;
+                        var lbExhausted = false;   // counted once per LANDBLOCK, not once per variation
                         foreach (var v in targetVars)
                         {
+                            if (lbExhausted)
+                                break;
                             foreach (var pos in positions)
                             {
                                 if (nextGuid > lastGuid)
                                 {
-                                    guidExhausted++;
+                                    lbExhausted = true;
                                     break;
                                 }
 
@@ -1684,8 +1694,13 @@ namespace ACE.Server.Command.Handlers.Processors
                             }
                         }
 
+                        if (lbExhausted)
+                            guidExhausted++;
                         if (filledThisLb)
                             landblocksFilled++;
+                        // persist per landblock: one transaction per block instead of one giant tracked change set
+                        ctx.SaveChanges();
+                        ctx.ChangeTracker.Clear();
                     }
 
                     ctx.SaveChanges();
@@ -2177,7 +2192,8 @@ namespace ACE.Server.Command.Handlers.Processors
 
                 if (instance != null)
                 {
-                    instances = bypass;
+                    // stay on the row's own variation: the later parent-link fix-up must not mutate a sibling variation's parent
+                    instances = bypass.Where(i => i.VariationId == instance.VariationId).ToList();
                     variation = instance.VariationId;   // use the stored variation for the post-delete cache clear
                 }
             }
@@ -4576,14 +4592,15 @@ namespace ACE.Server.Command.Handlers.Processors
             const int maxResults = 25;
 
             using var ctx = new WorldDbContext();
+            var pattern = ACE.Server.Web.WeenieSearchOrdering.ContainsLikePattern(search);   // % and _ in the search are literal
 
             // left-join the display name (weenie_properties_string type 1); match on either it or the classname
             var matches = (from w in ctx.Weenie
                            join s in ctx.WeeniePropertiesString.Where(s => s.Type == (ushort)PropertyString.Name)
                                on w.ClassId equals s.ObjectId into names
                            from n in names.DefaultIfEmpty()
-                           where EF.Functions.Like(w.ClassName, $"%{search}%") ||
-                                 (n != null && EF.Functions.Like(n.Value, $"%{search}%"))
+                           where EF.Functions.Like(w.ClassName, pattern, "\\") ||
+                                 (n != null && EF.Functions.Like(n.Value, pattern, "\\"))
                            orderby w.ClassId
                            select new { w.ClassId, w.ClassName, w.Type, DisplayName = n != null ? n.Value : null })
                           .Take(maxResults + 1)

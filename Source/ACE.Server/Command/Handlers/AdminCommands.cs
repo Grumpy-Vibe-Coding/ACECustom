@@ -2957,6 +2957,7 @@ namespace ACE.Server.Command.Handlers
                         CommandHandlerHelper.WriteOutputInfo(session, "Field must be delay or radius.");
                         return;
                     }
+                    PlayerManager.BroadcastToAuditChannel(session.Player, $"/bossgroup set {group} {field} {value:0.#}");
                     CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: {field} override = {value:0.#} (runtime, instant; weenie default untouched).");
                     return;
                 }
@@ -2977,21 +2978,25 @@ namespace ACE.Server.Command.Handlers
                         CommandHandlerHelper.WriteOutputInfo(session, "Field must be delay or radius.");
                         return;
                     }
+                    PlayerManager.BroadcastToAuditChannel(session.Player, $"/bossgroup clear {group} {field}");
                     CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group}: {field} override cleared (weenie default applies).");
                     return;
                 }
                 case "enable":
                     Managers.BossGroupManager.MutateOverride(group, ov => ov.Enabled = true);
+                    PlayerManager.BroadcastToAuditChannel(session.Player, $"/bossgroup enable {group}");
                     CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group} ENABLED.");
                     return;
                 case "disable":
                     Managers.BossGroupManager.MutateOverride(group, ov => ov.Enabled = false);
+                    PlayerManager.BroadcastToAuditChannel(session.Player, $"/bossgroup disable {group}");
                     CommandHandlerHelper.WriteOutputInfo(session, $"Boss group {group} DISABLED - a live boss is left alone; it just never respawns until re-enabled.");
                     return;
                 case "respawn":
                 {
                     // clock/flag first: the smite's death event lands async and must see the pending flag
                     var kicked = Managers.BossGroupManager.ForceRespawn(group);
+                    PlayerManager.BroadcastToAuditChannel(session.Player, $"/bossgroup respawn {group} -> {kicked}");
                     var boss = Managers.BossGroupManager.GetAliveBoss(group);
                     if (boss is Creature c && !c.IsDestroyed)
                     {

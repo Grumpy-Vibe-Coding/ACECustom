@@ -520,8 +520,15 @@ namespace ACE.Server.WorldObjects
             var sourcePlayer = source as Player;
             var targetPlayer = target as Player;
 
-            if (source == null || !target.IsAlive || targetPlayer != null && (targetPlayer.Invincible || targetPlayer.ZcDamageImmune))
+            if (!target.IsAlive || targetPlayer != null && targetPlayer.Invincible)
                 return null;
+            if (targetPlayer != null && targetPlayer.ZcDamageImmune)
+            {
+                // Cheat Death window: the hit is absorbed here and never reaches DamageTarget, so the feedback the
+                // melee paths give from TakeDamage has to come from this bail-out
+                targetPlayer.ZcAnnounceAbsorb(ProjectileSource, $"{Spell.Name} ({Spell.DamageType.ToString().ToLowerInvariant()})");
+                return null;
+            }
 
             // check lifestone protection
             if (targetPlayer != null && targetPlayer.UnderLifestoneProtection)
@@ -641,20 +648,19 @@ namespace ACE.Server.WorldObjects
                     var zpFlat = ACE.Server.Managers.ZoneControl.ZoneControlManager.ResolveForCreature(sourceCreature);
                     if (zpFlat != null)
                     {
-                        var zoneReplaced = false;
                         if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage))
                         {
                             // negative authored spell_damage would heal - floor at 0
                             lifeMagicDamage = (float)Math.Max(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellDamage), 0.0);
-                            zoneReplaced = true;
                         }
                         if (zpFlat.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance))
                         {
                             var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
                             lifeMagicDamage *= (float)(1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f));
                         }
-                        // crit bonus re-derived from the replaced base (stock bonus above used the weenie base)
-                        if (zoneReplaced && criticalHit)
+                        // crit bonus re-derived from the base the hit ACTUALLY uses - after a replacement and after the
+                        // variance roll alike (spell_variance may be authored on its own)
+                        if (criticalHit)
                             critDamageBonus = lifeMagicDamage * weaponCritDamageMod;   // unified: CritX x base
                     }
                 }

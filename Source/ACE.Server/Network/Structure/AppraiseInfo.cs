@@ -776,14 +776,17 @@ namespace ACE.Server.Network.Structure
                 // 2026-08-06 (two different-tier bows appraising identically, reasonably read as
                 // "these weapons are identical").
                 var casterHolder = (wo.Wielder as Player) ?? examiner;
-                if (ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(wo, casterHolder, out var gradedElemMod))
-                    PropertiesFloat[PropertyFloat.ElementalDamageMod] = gradedElemMod;
-
                 var enchantmentBonus = ResistMaskHelper.GetElementalDamageBonus(wo);
+
+                if (ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.TryGetCasterElementalMod(wo, casterHolder, out var gradedElemMod))
+                    // the same composition combat uses: the graded mod MULTIPLIES the aura, it does not add to it
+                    PropertiesFloat[PropertyFloat.ElementalDamageMod] = ACE.Server.Managers.WeaponScaling.WeaponScalingCombat.ComposeCasterModifier(
+                        gradedElemMod, enchantmentBonus, ACE.Server.Managers.WeaponScaling.WeaponScalingManager.Current.CasterAuraRescale);
+                else if (enchantmentBonus != 0)
+                    PropertiesFloat[PropertyFloat.ElementalDamageMod] += enchantmentBonus;
 
                 if (enchantmentBonus != 0)
                 {
-                    PropertiesFloat[PropertyFloat.ElementalDamageMod] += enchantmentBonus;
 
                     ResistHighlight = ResistMaskHelper.GetHighlightMask(wo);
                     ResistColor = ResistMaskHelper.GetColorMask(wo);

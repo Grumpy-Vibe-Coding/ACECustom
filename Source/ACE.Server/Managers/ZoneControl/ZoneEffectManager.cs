@@ -27,6 +27,9 @@ namespace ACE.Server.Managers.ZoneControl
         /// <summary>Floor on the authored interval so a misconfigured 0 can't hammer every frame.</summary>
         private const double MinIntervalSeconds = 1.0;
 
+        /// <summary>Retry delay after a resolve/apply exception - one error line per half minute instead of one per second.</summary>
+        private const double FailureBackoffSeconds = 30;
+
         public static void Tick(Player player, double currentUnixTime)
         {
             if (player == null)
@@ -50,6 +53,7 @@ namespace ACE.Server.Managers.ZoneControl
             catch (Exception ex)
             {
                 log.Error($"ZoneEffectManager.Tick resolve failed for {player.Name}: {ex}");
+                player.ZoneEffectNextTick = currentUnixTime + FailureBackoffSeconds;   // bound the log volume of a persistent fault
                 return;
             }
 
@@ -85,6 +89,7 @@ namespace ACE.Server.Managers.ZoneControl
             catch (Exception ex)
             {
                 log.Error($"ZoneEffectManager.ApplyDot failed for {player.Name}: {ex}");
+                player.ZoneEffectNextTick = ACE.Common.Time.GetUnixTime() + FailureBackoffSeconds;
             }
         }
     }

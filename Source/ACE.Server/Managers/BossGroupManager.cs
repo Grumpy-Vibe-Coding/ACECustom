@@ -65,6 +65,9 @@ namespace ACE.Server.Managers
 
         private static readonly ConcurrentDictionary<int, GroupState> groups = new ConcurrentDictionary<int, GroupState>();
 
+        /// <summary>How long a polling generator stays a live election candidate; the status/wire readouts use the same window.</summary>
+        private static readonly TimeSpan CandidateFreshWindow = TimeSpan.FromMinutes(15);
+
         // ── overrides store ──────────────────────────────────────────────────
         private const string StoreKey = "bossgroup_data";
         private static readonly object storeLock = new object();
@@ -101,7 +104,12 @@ namespace ACE.Server.Managers
         {
             EnsureLoaded();
             lock (storeLock)
-                return overrides.TryGetValue(groupId, out var ov) ? ov : null;
+            {
+                if (!overrides.TryGetValue(groupId, out var ov))
+                    return null;
+                // snapshot: callers read the fields outside the lock while MutateOverride writes them under it
+                return new GroupOverride { Delay = ov.Delay, Radius = ov.Radius, Enabled = ov.Enabled };
+            }
         }
 
         /// <summary>Mutate (creating if needed) a group's override and persist. Used by /bossgroup set etc.</summary>
@@ -165,6 +173,8 @@ namespace ACE.Server.Managers
                 }
 
                 var effDelay = ov?.Delay ?? delaySeconds;
+                if (effDelay < 0)
+                    effDelay = 0;   // weenie data: DateTime.MinValue.AddSeconds(negative) would throw out of Spawn()
                 if (now < state.LastDeath.AddSeconds(effDelay))
                     return false;
 
@@ -240,7 +250,7 @@ namespace ACE.Server.Managers
         private static bool KickSpawnLocked(GroupState state)
         {
             var now = DateTime.UtcNow;
-            var freshWindow = TimeSpan.FromMinutes(15);
+            var freshWindow = CandidateFreshWindow;
             var live = new List<(uint Guid, WorldObject Gen)>();
             foreach (var kvp in state.Candidates)
             {
@@ -260,6 +270,9 @@ namespace ACE.Server.Managers
             var chain = new ActionChain();
             chain.AddAction(target, ActionType.BossGroupManager_KickSpawn, () =>
             {
+                // the action runs later on the target's queue; the generator can be reset or unloaded in between
+                if (target.IsDestroyed || target.GeneratorProfiles == null)
+                    return;
                 foreach (var profile in target.GeneratorProfiles)
                     profile.NextAvailable = DateTime.UtcNow;
                 target.Generator_Generate();
@@ -325,7 +338,7 @@ namespace ACE.Server.Managers
                 lock (state)
                 {
                     var now = DateTime.UtcNow;
-                    var freshWindow = TimeSpan.FromMinutes(15);
+                    var freshWindow = CandidateFreshWindow;
                     var candidates = state.Candidates.Count(c => now - c.Value.LastSeen <= freshWindow);
                     var effDelay = ov?.Delay ?? state.DefaultDelay;
                     var knobs = $"delay {effDelay:0}s{(ov?.Delay != null ? " (override)" : "")}" +
@@ -377,7 +390,7 @@ namespace ACE.Server.Managers
                 lock (state)
                 {
                     var now = DateTime.UtcNow;
-                    var freshWindow = TimeSpan.FromMinutes(15);
+                    var freshWindow = CandidateFreshWindow;
                     var candidates = state.Candidates.Count(c => now - c.Value.LastSeen <= freshWindow);
                     var boss = GetAliveBossLocked(state);
                     var enabled = ov == null || ov.Enabled;

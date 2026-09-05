@@ -55,11 +55,12 @@ namespace ACE.Server.WorldObjects
             var currentLBVal = (ushort)(Location.Cell >> 16);
 
             // Gate purely on Zone Control state: no bounded zone at this variation = free roam, zero cost.
-            if (!ZoneControlManager.HasBoundedZonesAt(variation))
+            if (!ZoneControlManager.HasBoundedZonesAt(variation) || currentLBVal == 0)
+            {
+                if (_zoneGuideWisp != null)
+                    CleanupZoneBoundaryEffects();   // a boundary that just went inactive must not leave its wisp behind
                 return;
-
-            if (currentLBVal == 0)
-                return;
+            }
 
             if (!ZoneControlManager.IsLandblockAllowed(variation, currentLBVal))
             {
@@ -126,8 +127,9 @@ namespace ACE.Server.WorldObjects
 
                     if (Health.Current <= 0 && !IsInDeathProcess)
                     {
-                        OnDeath(new DamageHistoryInfo(this), DamageType.Nether, false);
-                        Die();
+                        var selfInfo = new DamageHistoryInfo(this);
+                        OnDeath(selfInfo, DamageType.Nether, false);
+                        Die(selfInfo, selfInfo);   // explicit attribution: the parameterless Die() would read an empty damage history
                         CleanupZoneBoundaryEffects();
                     }
                 }));
