@@ -389,6 +389,10 @@ namespace ACE.Server.WorldObjects
         /// <param name="onCompleted">Optional callback to invoke when the save operation completes</param>
         public virtual void SaveBiotaToDatabase(bool enqueueSave, Action<bool> onCompleted)
         {
+            // Capture name and guid early to avoid lock recursion in callbacks
+            var itemName = Name;
+            var itemGuid = Guid;
+
             if (SuppressShardPersistence)
             {
                 // nothing to persist for an ephemeral object; the caller's wait is satisfied
@@ -398,14 +402,11 @@ namespace ACE.Server.WorldObjects
                 }
                 catch (Exception ex)
                 {
-                    log.Error($"Exception in suppressed save callback for {Name} (0x{Guid}): {ex.Message}");
+                    // captured values only: Name takes BiotaDatabaseLock, and a callback may still hold it
+                    log.Error($"Exception in suppressed save callback for {itemName} (0x{itemGuid}): {ex.Message}");
                 }
                 return;
             }
-
-            // Capture name and guid early to avoid lock recursion in callbacks
-            var itemName = Name;
-            var itemGuid = Guid;
             
             // Detect concurrent saves
             if (SaveInProgress)
@@ -497,10 +498,6 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// A static that should persist to the shard may be a hook with an item, or a house that's been purchased, or a housing chest that isn't empty, etc...<para />
-        /// If the world object originated from the database or has been saved to the database, this will also return true.
-        /// </summary>
-        /// <summary>
         /// Runtime-only flag: this object must NEVER be persisted to the shard, no matter what the
         /// heuristics below decide. Set on ephemeral system spawns that are re-derived from live state
         /// every boot (boundary perimeter lanterns, guide wisps). Without it, landblock unload's SaveDB
@@ -509,6 +506,10 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public bool SuppressShardPersistence;
 
+        /// <summary>
+        /// A static that should persist to the shard may be a hook with an item, or a house that's been purchased, or a housing chest that isn't empty, etc...<para />
+        /// If the world object originated from the database or has been saved to the database, this will also return true.
+        /// </summary>
         public bool IsStaticThatShouldPersistToShard()
         {
             if (SuppressShardPersistence)

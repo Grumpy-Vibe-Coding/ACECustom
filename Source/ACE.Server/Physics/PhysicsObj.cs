@@ -1178,7 +1178,7 @@ namespace ACE.Server.Physics
                 if (!physicalCollision && newCell.WaterType != LandDefs.WaterType.NotWater)
                     return ForceIntoCell(newCell, pos);
 
-                return collided ? SetPositionError.Collided : SetPositionError.NoValidPosition;
+                return physicalCollision ? SetPositionError.Collided : SetPositionError.NoValidPosition;
             }
 
             if (transition.SpherePath.CurCell == null) return SetPositionError.NoCell;
