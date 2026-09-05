@@ -15,7 +15,7 @@ VALUES ('777701004','0','0','0','0','777710002','1','You use the Catalyst to dee
      , ('777701013','0','0','0','0','777720008','1','You use the Catalyst to master the Far Shot Charm. Master Far Shot Charm is yours!','0','0','You fail to upgrade the charm.','1','1',NULL,'1','1',NULL,'0','0',NULL,'0','0',NULL,'0','2026-06-15 21:36:53');
 
 DELETE FROM `cook_book`
-WHERE (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777700020) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777710002) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777700027) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777710007) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777700025) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777710005) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777700028) OR (`source_W_C_I_D`=777700010 AND `target_W_C_I_D`=777710008);
+WHERE `recipe_Id` IN (777701004, 777701005, 777701008, 777701009, 777701010, 777701011, 777701012, 777701013);
 INSERT INTO `cook_book` (`recipe_Id`, `source_W_C_I_D`, `target_W_C_I_D`, `last_Modified`, `target_type`)
 VALUES ('777701004','777700010','777700020','2026-06-19 19:04:23',NULL)
      , ('777701005','777700010','777710002','2026-06-19 19:04:23',NULL)
