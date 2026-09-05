@@ -625,13 +625,10 @@ namespace ACE.Server.WorldObjects
                 // UNIFIED CRIT MODEL (owner 2026-08-29, "all 3 schools get the same treatment"):
                 // a crit deals CritX x the base - the old 0.5 coefficient that quietly halved
                 // Crushing Blow on every magic path is gone. mod is (CritX - 1), default 1.0,
-                // so a cardless crit = 2x, the same retail rule the melee path now follows.
+                // so a cardless crit = 2x, the same retail rule the melee path now follows. The bonus itself is
+                // derived below, once the base is final (life aug term, zone replacement, variance).
                 if (criticalHit)
-                {
                     weaponCritDamageMod = GetWeaponCritDamageMod(weapon, sourceCreature, attackSkill, target);
-
-                    critDamageBonus = lifeMagicDamage * weaponCritDamageMod;
-                }
 
                 if (sourceCreature != null && sourceCreature.EffectiveLifeAugCount >= 1)
                 {
@@ -658,10 +655,6 @@ namespace ACE.Server.WorldObjects
                             var sv = Math.Clamp(zpFlat.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.SpellVariance), 0.0, 1.0);
                             lifeMagicDamage *= (float)(1.0 - sv * ThreadSafeRandom.Next(0.0f, 1.0f));
                         }
-                        // crit bonus re-derived from the base the hit ACTUALLY uses - after a replacement and after the
-                        // variance roll alike (spell_variance may be authored on its own)
-                        if (criticalHit)
-                            critDamageBonus = lifeMagicDamage * weaponCritDamageMod;   // unified: CritX x base
                     }
                 }
 
@@ -671,6 +664,10 @@ namespace ACE.Server.WorldObjects
                 // only pass if SpellProjectile has it directly, such as 2637 - Invoking Aun Tanua
 
                 resistanceMod = (float)Math.Max(0.0f, target.GetResistanceMod(resistanceType, this, null, weaponResistanceMod));
+
+                // UNIFIED CRIT: CritX x the base the hit ACTUALLY uses - player and governed casters alike
+                if (criticalHit)
+                    critDamageBonus = lifeMagicDamage * weaponCritDamageMod;
 
                 finalDamage = (lifeMagicDamage + critDamageBonus) * elementalDamageMod * slayerMod * resistanceMod * absorbMod * attribBonus;
             }

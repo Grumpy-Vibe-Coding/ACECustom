@@ -1413,6 +1413,8 @@ namespace ACE.Server.WorldObjects
                     dropped.Add(token);
                 remaining -= stack;
             }
+            if (remaining > 0)
+                log.Warn($"[ZoneLoot] currency {wcid}: {remaining} of {amount} could not be spawned within 64 stacks - the authored amount is too large.");
         }
 
         /// <summary>Direct-delivery currency drop: straight into the killing player's inventory with a chat

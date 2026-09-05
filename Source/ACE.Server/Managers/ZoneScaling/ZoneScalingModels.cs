@@ -1143,12 +1143,13 @@ namespace ACE.Server.Managers.ZoneScaling
         /// Default -&gt; zone -&gt; wcid and happens in ZoneControlManager.</summary>
         public ZoneVariantProfile VariantForWcid(uint wcid, bool create = false)
         {
-            if (WcidOverrides.TryGetValue(wcid, out var v) && v != null)   // a null stored bucket (JSON) counts as absent
+            var map = WcidOverrides ??= new Dictionary<uint, ZoneVariantProfile>();   // persisted JSON may carry an explicit null map
+            if (map.TryGetValue(wcid, out var v) && v != null)   // a null stored bucket (JSON) counts as absent
                 return v;
             if (!create)
                 return null;
             v = new ZoneVariantProfile();
-            WcidOverrides[wcid] = v;
+            map[wcid] = v;
             return v;
         }
 

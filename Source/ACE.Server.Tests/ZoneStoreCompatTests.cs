@@ -119,6 +119,20 @@ namespace ACE.Server.Tests
         }
 
         [TestMethod]
+        public void VariantForWcid_SurvivesNullMapAndNullBucket()
+        {
+            // persisted JSON can carry an explicit null map, or a null bucket inside the map; neither may throw,
+            // both read as "absent", and create still hands back a fresh bucket
+            var nullMap = JsonConvert.DeserializeObject<ZoneScalingProfile>("{\"WcidOverrides\": null}");
+            Assert.IsNull(nullMap.VariantForWcid(12345));
+            Assert.IsNotNull(nullMap.VariantForWcid(12345, create: true));
+
+            var nullBucket = JsonConvert.DeserializeObject<ZoneScalingProfile>("{\"WcidOverrides\": {\"5\": null}}");
+            Assert.IsNull(nullBucket.VariantForWcid(5));
+            Assert.IsNotNull(nullBucket.VariantForWcid(5, create: true));
+        }
+
+        [TestMethod]
         public void LegacyStore_EffectsBindToNullableFields()
         {
             var area = JsonConvert.DeserializeObject<ControlledArea>(LegacyAreaJson);

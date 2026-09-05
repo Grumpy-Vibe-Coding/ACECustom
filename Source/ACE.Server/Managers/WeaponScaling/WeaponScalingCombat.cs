@@ -258,7 +258,7 @@ namespace ACE.Server.Managers.WeaponScaling
                 // (holder null, or a viewer short of the requirement) reads the honest minimum for
                 // any hands rather than a modifier this weapon can never actually produce. A no-op
                 // for a genuine wielder, who by definition already clears the floor.
-                var augs = Math.Max(tierRow.MinWieldAugs, holder?.LuminanceAugmentItemCount ?? 0);
+                var augs = Math.Max(tierRow.MinWieldAugs, holder?.EffectiveItemAugCount ?? 0);   // gems + Triune Weave, like every other aug read
                 k *= 1.0 + tierStep * LauncherTierSteps(WeaponScalingManager.Current, tierRow, augs);
             }
 

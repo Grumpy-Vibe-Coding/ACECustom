@@ -283,6 +283,8 @@ namespace ACE.Server.Entity
                 // swaps). Clear it so the rebuilt payload lands; restart the watchdog counters.
                 CreateWorldObjectsCompleted = false;
                 initSpawnAttempts = 0;
+                initSpawnStillRunningLogged = false;
+                initSpawnGaveUpLogged = false;   // each reload may log the watchdog outcome again
             }
 
             StartInitSpawnTask(variationId);
