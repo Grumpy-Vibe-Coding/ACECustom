@@ -1175,7 +1175,11 @@ namespace ACE.Server.Physics
                 // exactly the shallow-water case: force the object into its resolved cell so water-camp generators
                 // AND their spawned creatures populate. Solid collisions and dry no-floor failures (e.g. a spawn
                 // point in mid-air off a cliff) still fail normally.
-                if (!physicalCollision && newCell.WaterType != LandDefs.WaterType.NotWater)
+                // Placement only (enter_world), and only inside the requested landblock: a teleport or a live
+                // move keeps the full transition contract, and an edge spawn is never forced into a neighbour.
+                if (!physicalCollision && newCell.WaterType != LandDefs.WaterType.NotWater
+                    && setPos.Flags.HasFlag(SetPositionFlags.Placement)
+                    && (newCell.ID >> 16) == pos.Landblock)
                     return ForceIntoCell(newCell, pos);
 
                 return physicalCollision ? SetPositionError.Collided : SetPositionError.NoValidPosition;
