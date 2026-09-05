@@ -7,6 +7,6 @@
 --      players), and EnsureTierSeededFromEffectiveSet re-seeds empty tiers. The stub blocks both.
 -- Tier 1 (v11 / Tou Tou) had no stub before this script - it gets one here.
 DELETE FROM `prestige_allowed_landblocks` WHERE `landblock` <> 60138;
-INSERT INTO `prestige_allowed_landblocks` (`tier`, `landblock`, `is_active`, `updated_at`, `area_name`, `boundary_wcid`, `boundary_scale`, `boundary_script_id`, `is_wiped`)
-VALUES ('1','60138','0',UTC_TIMESTAMP(),'Default',NULL,NULL,NULL,'0')
+INSERT INTO `prestige_allowed_landblocks` (`tier`, `landblock`, `is_active`, `updated_at`)
+VALUES ('1','60138','0',UTC_TIMESTAMP())
 ON DUPLICATE KEY UPDATE `is_active` = 0;
