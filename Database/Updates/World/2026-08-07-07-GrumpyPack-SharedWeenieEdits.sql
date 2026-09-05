@@ -1,8 +1,8 @@
--- Carry-over: 1 shared custom wcid where the test version is authoritative — the Tou Tou
+-- Carry-over: 1 shared custom wcid where the test version is authoritative - the Tou Tou
 -- prestige recall gem 777700029 (live gems exist in players' packs). Full replace, canonical
 -- format.
 -- (The 7 benched camp gens this script used to replace were removed 2026-08-08 with the rest
--- of the Tou Tou mob layer — see 2026-08-08-01-GrumpyPack-BenchedGens-ILT-Delete.sql and
+-- of the Tou Tou mob layer - see 2026-08-08-01-GrumpyPack-BenchedGens-ILT-Delete.sql and
 -- Migration pruned-archive\toutou-mobs-2026-08-08.)
 
 DELETE FROM `weenie`

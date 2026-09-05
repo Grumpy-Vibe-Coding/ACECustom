@@ -3,7 +3,7 @@
 -- authority everywhere else. The inactive stub per tier is load-bearing twice over:
 --   1. A tier with any DB row loads ONLY its active rows -> empty set -> "no restrictions"
 --      (PrestigeManager.IsLandblockAllowed), so prestige boundary enforcement is inert.
---   2. A tier with ZERO rows falls back to the in-code default {0xEAEA} ACTIVE (would confine
+--   2. A tier with ZERO rows falls back to the in-code default [0xEAEA] ACTIVE (would confine
 --      players), and EnsureTierSeededFromEffectiveSet re-seeds empty tiers. The stub blocks both.
 -- Tier 1 (v11 / Tou Tou) had no stub before this script - it gets one here.
 DELETE FROM `prestige_allowed_landblocks` WHERE `landblock` <> 60138;

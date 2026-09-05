@@ -1,6 +1,6 @@
 -- Carry-over: instance deletions replicating the test server state.
 -- (a) 11 explicit-v0 rows on 0x0010 (variation-unattackable fix, 2026-07). These are ILT's
---     live Week 8/9 event content — owner decision 2026-08-08 (option 2): delete the
+--     live Week 8/9 event content - owner decision 2026-08-08 (option 2): delete the
 --     explicit-v0 originals AND RE-ADD THE SAME 11 OBJECTS AT NULL VARIATION below, so the
 --     content stays visible in the base world once the 0-equals-null engine fix makes
 --     explicit-v0 unreachable. Same guids, same positions, only variation_Id changes 0->NULL.
