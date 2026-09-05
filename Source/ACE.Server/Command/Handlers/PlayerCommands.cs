@@ -409,7 +409,7 @@ namespace ACE.Server.Command.Handlers
             session.Network.EnqueueSend(new GameMessageSystemChat($"Summon: {session.Player.LuminanceAugmentSummonCount:N0}", ChatMessageType.Broadcast));
             session.Network.EnqueueSend(new GameMessageSystemChat($"Melee: {session.Player.LuminanceAugmentMeleeCount:N0}", ChatMessageType.Broadcast));
             session.Network.EnqueueSend(new GameMessageSystemChat($"Missile: {session.Player.LuminanceAugmentMissileCount:N0}", ChatMessageType.Broadcast));
-            session.Network.EnqueueSend(new GameMessageSystemChat($"Triune Weave: {session.Player.TriuneWeaveCount:N0}", ChatMessageType.Broadcast));
+            session.Network.EnqueueSend(new GameMessageSystemChat($"Triune Weave: {session.Player.TriuneWeaveCount:N0} (adds +{session.Player.TriuneWeaveCount:N0} to Creature, Item, and Life)", ChatMessageType.Broadcast));
             session.Network.EnqueueSend(new GameMessageSystemChat($"Battlemage's Wrath Charm: {session.Player.GetProperty(PropertyInt64.BattlemagesWrathCharmCount) ?? 0:N0}", ChatMessageType.Broadcast));
             session.Network.EnqueueSend(new GameMessageSystemChat($"Nether Veil Charm: {session.Player.GetProperty(PropertyInt64.NetherVeilCharmCount) ?? 0:N0}", ChatMessageType.Broadcast));
             session.Network.EnqueueSend(new GameMessageSystemChat($"Crashing Steel Charm: {session.Player.GetProperty(PropertyInt64.CrashingSteelCharmCount) ?? 0:N0}", ChatMessageType.Broadcast));
