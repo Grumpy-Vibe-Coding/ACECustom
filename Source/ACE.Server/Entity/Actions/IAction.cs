@@ -14,6 +14,7 @@ namespace ACE.Server.Entity.Actions
         AllegianceManager_DoPassXP,
         Bindstone_EnqueueBroadcastMotion,
         Bindstone_SetSanctuary,
+        BossGroupManager_KickSpawn,
         Chest_Reset,
         ConfirmationManager_EnqueueAbort,
         Container_FinishClose,
@@ -84,6 +85,7 @@ namespace ACE.Server.Entity.Actions
         Player_PKLiteStartTransition,
         Player_SendNonCombatStance,
         Player_SetNonBusy,
+        Player_ZcCheatDeathExpired,   // Zone Control Cheat Death window closed notice (2026-08-23)
         PlayerAllegiance_HandleLogin,
         PlayerDatabase_SaveBiotasInParallelCallback,
         PlayerCombat_ChangeCombatMode,
@@ -213,6 +215,7 @@ namespace ACE.Server.Entity.Actions
 
         // GameMessage values map 1:1 with networking OpTypes.
         GameMessage_Unknown,
+        ZoneControl_LadderReresolve,   // live stat resolution: online worn-gear re-stamp after `ladder apply`
         GameMessage_None,
         GameMessage_InventoryRemoveObject,
         GameMessage_SetStackSize,

@@ -483,8 +483,20 @@ namespace ACE.Server.WorldObjects
         /// A static that should persist to the shard may be a hook with an item, or a house that's been purchased, or a housing chest that isn't empty, etc...<para />
         /// If the world object originated from the database or has been saved to the database, this will also return true.
         /// </summary>
+        /// <summary>
+        /// Runtime-only flag: this object must NEVER be persisted to the shard, no matter what the
+        /// heuristics below decide. Set on ephemeral system spawns that are re-derived from live state
+        /// every boot (boundary perimeter lanterns, guide wisps). Without it, landblock unload's SaveDB
+        /// picked them up as ordinary dynamics — each boot then re-spawned fresh ones beside the loaded
+        /// ghosts and re-saved, accumulating thousands of duplicate rows in the biota table.
+        /// </summary>
+        public bool SuppressShardPersistence;
+
         public bool IsStaticThatShouldPersistToShard()
         {
+            if (SuppressShardPersistence)
+                return false;
+
             if (!Guid.IsStatic())
                 return false;
 
@@ -522,6 +534,9 @@ namespace ACE.Server.WorldObjects
         /// <returns></returns>
         public bool IsDynamicThatShouldPersistToShard()
         {
+            if (SuppressShardPersistence)
+                return false;
+
             if (!Guid.IsDynamic())
                 return false;
 
