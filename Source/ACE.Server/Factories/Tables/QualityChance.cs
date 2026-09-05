@@ -208,6 +208,11 @@ namespace ACE.Server.Factories.Tables
         /// </summary>
         public static List<float> GetQualityChancesForTier(int tier)
         {
+            // a treasure_death row with tier <= 0 is malformed data: keep it on the tier-1 table
+            // (master's default) rather than letting the clamp below hand it the tier-11 table
+            if (tier < 1)
+                tier = 1;
+
             switch (tier)
             {
                 case 1:
