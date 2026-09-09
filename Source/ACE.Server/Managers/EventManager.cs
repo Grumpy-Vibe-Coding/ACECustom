@@ -21,6 +21,9 @@ namespace ACE.Server.Managers
         public static bool Debug = false;
 
         private static System.Threading.Timer _scheduleTimer;
+        private static System.Threading.Timer _slotTimer;
+        private static int _lastSlotIndex = -1;
+        private static DateTime _slotChangedAtUtc = DateTime.MinValue;
         private static int _lastMonthVal = -1;
         private static int _lastWeekVal = -1;
         private static int _lastQuarterVal = -1;
@@ -48,6 +51,14 @@ namespace ACE.Server.Managers
             {
                 CheckCalendarEvents();
                 _scheduleTimer = new System.Threading.Timer(OnScheduleTimer, null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
+
+                // Slots get their OWN timer rather than sharing the calendar one. The calendar check
+                // is hourly and early-outs unless the month/week/quarter actually changed; speeding it
+                // up to serve minute-scale slots would drag that logic along for no reason. This one
+                // ticks every 5s because the overlap window is measured in seconds, not because slots
+                // change that often - CheckSlotEvents is a no-op when nothing is due.
+                CheckSlotEvents();
+                _slotTimer = new System.Threading.Timer(OnSlotTimer, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
             }
             catch (Exception ex)
             {
@@ -279,6 +290,141 @@ namespace ACE.Server.Managers
             }
         }
 
+        private static void OnSlotTimer(object state)
+        {
+            try
+            {
+                CheckSlotEvents();
+            }
+            catch (Exception ex)
+            {
+                log.Error($"[EventManager] Error in slot scheduler timer tick: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// Picks which slot is active for the given period. Deterministic - no stored state - so a
+        /// restart lands on the same slot the clock says, and two servers agree without talking.
+        ///
+        /// Not a plain modulo: that would cycle 1,2,3... predictably. Instead each ROUND of
+        /// <paramref name="count"/> periods walks the slots in a shuffled order, using a stride that
+        /// is coprime with count so the walk visits every slot exactly once before repeating. That
+        /// gives an unpredictable order AND guarantees fair coverage - no slot is skipped or drawn
+        /// twice in a round, which plain randomness could not promise.
+        /// </summary>
+        private static int GetSlotIndex(long period, int count)
+        {
+            if (count <= 1)
+                return 0;
+
+            var round = period / count;
+            var offset = (int)(((period % count) + count) % count);
+
+            var h = Avalanche((ulong)round);
+            var start = (int)(h % (ulong)count);
+
+            // Stride must be coprime with count or the walk revisits a subset instead of all of it.
+            var stride = (int)((Avalanche(h) % (ulong)(count - 1)) + 1);
+            while (Gcd(stride, count) != 1)
+                stride = stride % (count - 1) + 1;
+
+            return (start + offset * stride) % count;
+        }
+
+        private static ulong Avalanche(ulong x)
+        {
+            // splitmix64 finalizer - cheap, and mixes adjacent inputs to distant outputs so
+            // consecutive rounds do not produce near-identical orders.
+            x += 0x9E3779B97F4A7C15UL;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
+            return x ^ (x >> 31);
+        }
+
+        private static int Gcd(int a, int b)
+        {
+            while (b != 0)
+            {
+                var t = b;
+                b = a % b;
+                a = t;
+            }
+            return a;
+        }
+
+        /// <summary>
+        /// Rotating content: keeps exactly one Slot&lt;N&gt; event running, chosen from the clock.
+        ///
+        /// Mirrors CheckCalendarEvents, but on a minute scale rather than a calendar one. Which slot
+        /// is active is a pure function of the current time, so there is no token to lose and nothing
+        /// to drift - and because it re-asserts the desired state on every tick rather than firing
+        /// once at the boundary, it repairs itself if an event is started or stopped by hand.
+        ///
+        /// The outgoing slot is held for slot_event_overlap_seconds after the incoming one starts.
+        /// Generators take 5-10s to spawn and despawn (a fixed 5s update cadence plus a two-tick
+        /// stager), so stopping the old slot at the same instant the new one starts would leave a
+        /// window where neither slot's content exists.
+        /// </summary>
+        public static void CheckSlotEvents()
+        {
+            List<string> slots;
+            lock (_eventsLock)
+            {
+                slots = Events.Keys
+                    .Where(name => System.Text.RegularExpressions.Regex.IsMatch(
+                        name, @"^Slot\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    .ToList();
+            }
+
+            if (slots.Count == 0)
+                return;     // nothing registered - the overwhelmingly common case, so bail cheaply
+
+            // Numeric order, so Slot10 sorts after Slot9 rather than after Slot1.
+            slots.Sort((a, b) => ParseSlotNumber(a).CompareTo(ParseSlotNumber(b)));
+
+            var intervalMinutes = ServerConfig.slot_event_interval_minutes.Value;
+            if (intervalMinutes < 1)
+                intervalMinutes = 1;
+
+            var period = (long)(DateTime.UtcNow - DateTime.UnixEpoch).TotalMinutes / intervalMinutes;
+            var index = GetSlotIndex(period, slots.Count);
+
+            if (index != _lastSlotIndex)
+            {
+                _lastSlotIndex = index;
+                _slotChangedAtUtc = DateTime.UtcNow;
+                log.Info($"[EventManager] Slot rotation -> {slots[index]} (period {period}, {slots.Count} slots registered)");
+            }
+
+            var overlapSeconds = ServerConfig.slot_event_overlap_seconds.Value;
+            if (overlapSeconds < 0)
+                overlapSeconds = 0;
+
+            var overlapElapsed = DateTime.UtcNow >= _slotChangedAtUtc + TimeSpan.FromSeconds(overlapSeconds);
+            var chosen = slots[index];
+
+            foreach (var name in slots)
+            {
+                var status = GetEventStatus(name);
+
+                if (name.Equals(chosen, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Only act when it is not already running, so a slot is not restarted every tick.
+                    if (status != GameEventState.On)
+                        StartEvent(name, null, null);
+                }
+                else if (status == GameEventState.On && overlapElapsed)
+                {
+                    StopEvent(name, null, null);
+                }
+            }
+        }
+
+        private static int ParseSlotNumber(string name)
+        {
+            return int.TryParse(name.Substring(4), out var n) ? n : int.MaxValue;
+        }
+
         public static void CheckCalendarEvents()
         {
             var utcNow = DateTime.UtcNow;
@@ -343,6 +489,9 @@ namespace ACE.Server.Managers
         {
             _scheduleTimer?.Dispose();
             _scheduleTimer = null;
+
+            _slotTimer?.Dispose();
+            _slotTimer = null;
         }
     }
 }

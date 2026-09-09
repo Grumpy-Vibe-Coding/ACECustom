@@ -315,5 +315,11 @@ namespace ACE.Entity.Enum.Properties
         /// the elemental_weakness_default_factor server knob. Applied after mitigation, so it's a relative reward for
         /// using the right element even against heavily-mitigated endgame mobs.</summary>
         ElementalWeaknessFactor = 9055,
+
+        /// <summary>Per-weenie cooldown, in seconds, between activations of a PressurePlate. The plate ignores any
+        /// activation within this window of its OWN last use - per OBJECT, not per player - so in a crowd only the
+        /// first player through is caught. Unset or &lt;= 0 falls back to the 2 s retail default, leaving every
+        /// existing plate unchanged. Lower it on custom plates that need to catch a group.</summary>
+        PressurePlateCooldown = 9056,
     }
 }
