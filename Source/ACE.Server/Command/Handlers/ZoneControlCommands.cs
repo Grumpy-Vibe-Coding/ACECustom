@@ -222,6 +222,17 @@ namespace ACE.Server.Command.Handlers
             if (rankErr != null) { Msg(rankErr); return; }
             var sub = args[0].ToLowerInvariant();
 
+            // --rank is stripped from EVERY verb above but only the stat-row verbs read it. Before this
+            // guard, "part <name> ... --rank boss" (or prop, spell, currency, modifier ...) silently
+            // wrote the Default row and printed success. Refuse up front so the author finds out now.
+            // The default verb checks its own sub-verb below, since it takes a variation, not a stat.
+            if (rank != ZcRank.None && !RankVerbs.Contains(sub))
+            {
+                Msg($"'{sub}' does not take --rank. Only set, clearstat, togglestat, tier and " +
+                    "default <var> set|clearstat|togglestat edit a rank row. Nothing changed.");
+                return;
+            }
+
             // Unquoted multi-word zone names: for any subcommand whose <name> is args[1], collapse the
             // LONGEST token-join that names an EXISTING zone into one arg â€” "enable Tou Tou" and
             // "set Tou Tou max_health 5000" work without quotes. create scans for its variation token
@@ -678,7 +689,7 @@ namespace ACE.Server.Command.Handlers
                         var name = args[1];
                         var area = ZoneControlManager.GetArea(name);
                         if (area == null) { Msg($"No zone '{name}' (create it first)."); return; }
-                        var stat = NormalizeStat(args[2]); if (stat == null) { Msg("Unknown stat. Stats: " + string.Join(", ", ZoneStat.All)); return; }
+                        var stat = NormalizeStat(args[2]); if (stat == null) { Msg(UnknownStatMessage(args[2])); return; }
                         if (!TryDouble(args[3], out var value)) { Msg("value must be a number."); return; }
                         if (wcid.HasValue && rank != ZcRank.None)
                         { StatRowFor(area.Profile, wcid, rank, false, out var refusal); Msg(refusal); return; }
@@ -2587,14 +2598,15 @@ namespace ACE.Server.Command.Handlers
                         // is 15 of these, all explicitly authored â€” the server never derives one.
                         if (args.Count < 2)
                         {
-                            Msg("Usage: default <variation> <show|set|clearstat|copyfrom|clear|list>");
+                            Msg("Usage: default <variation> <show|set|clearstat|togglestat|weaponcard|copyfrom|clear> | default list");
                             Msg("  default list                              variations that have a Default");
                             Msg("  default <var> show                        the Default's stats");
-                            Msg("  default <var> set <stat> <value>");
-                            Msg("  default <var> clearstat <stat>");
+                            Msg("  default <var> set <stat> <value>          [--rank r]");
+                            Msg("  default <var> clearstat <stat>            [--rank r]");
+                            Msg("  default <var> togglestat <stat> <on|off|clear> | togglestat list   [--rank r]");
+                            Msg("  default <var> weaponcard <chance_stat> <on|off|clear> | weaponcard list");
                             Msg("  default <var> copyfrom <var>              seed from another variation");
                             Msg("  default <var> clear                       drop the whole Default");
-                            Msg("  default <var> weaponcard <chance_stat> <on|off|clear> | weaponcard list");
                             return;
                         }
 
@@ -2618,6 +2630,14 @@ namespace ACE.Server.Command.Handlers
                         { Msg("variation must be >= 0 (negative variations are rift instances and never inherit a Default)."); return; }
 
                         var dop = args.Count >= 3 ? args[2].ToLowerInvariant() : "show";
+
+                        // Same trap as the top-level guard: only these sub-verbs read the rank.
+                        if (rank != ZcRank.None && dop != "set" && dop != "clearstat" && dop != "togglestat")
+                        {
+                            Msg($"'default {dop}' does not take --rank. Only default <var> set|clearstat|togglestat " +
+                                "edit a rank row. Nothing changed.");
+                            return;
+                        }
 
                         if (dop == "show")
                         {
@@ -2664,7 +2684,7 @@ namespace ACE.Server.Command.Handlers
                         {
                             if (args.Count < 5) { Msg("Usage: default <var> set <stat> <value>"); return; }
                             var dstat = NormalizeStat(args[3]);
-                            if (dstat == null) { Msg("Unknown stat. Stats: " + string.Join(", ", ZoneStat.All)); return; }
+                            if (dstat == null) { Msg(UnknownStatMessage(args[3])); return; }
                             if (!TryDouble(args[4], out var dval)) { Msg("value must be a number."); return; }
 
                             ZoneControlManager.MutateVariationDefault(dvar, d =>
@@ -2735,7 +2755,7 @@ namespace ACE.Server.Command.Handlers
 
                     case "effect":
                     {
-                        if (args.Count < 2) { Msg("Usage: effect <name> [show | dot on|off | dmg <amount> | type <fire|cold|acid|electric|nether|stamina|mana|health|percent> | interval <seconds> | suppress on|off | suppress prodigal on|off | suppress regen <pct 0-100>]"); return; }
+                        if (args.Count < 2) { Msg("Usage: effect <name> [show | dot on|off | dmg <amount> | type <fire|cold|acid|electric|nether|stamina|mana|health|percent> | interval <seconds> | suppress on|off | suppress prodigal on|off | suppress regen <pct 0-100> | clear [all|dot|suppress]]"); return; }
                         var name = args[1];
                         var area = ZoneControlManager.GetArea(name);
                         if (area == null) { Msg($"No zone '{name}'."); return; }
@@ -2802,8 +2822,24 @@ namespace ACE.Server.Command.Handlers
                                 else { Msg("Usage: effect <name> suppress on|off | suppress prodigal on|off | suppress regen <pct 0-100>"); return; }
                                 break;
                             }
+                            case "clear":
+                            {
+                                // Un-author. Every other branch only ever WRITES a field, so before this a zone
+                                // that had touched DoT could never inherit the variation Default's DoT again.
+                                var group = args.Count >= 4 ? args[3].ToLowerInvariant() : "all";
+                                switch (group)
+                                {
+                                    case "all":      apply = e => e.ClearAll(); break;
+                                    case "dot":      apply = e => e.ClearDot(); break;
+                                    case "suppress": apply = e => e.ClearSuppress(); break;
+                                    default:
+                                        Msg("Usage: effect <name> clear [all|dot|suppress]   (un-author that group; the tier Default shows through again)");
+                                        return;
+                                }
+                                break;
+                            }
                             default:
-                                Msg("Unknown effect field. Use: dot on|off | dmg <amount> | type <name|percent> | interval <seconds> | suppress ... | show");
+                                Msg("Unknown effect field. Use: dot on|off | dmg <amount> | type <name|percent> | interval <seconds> | suppress ... | clear [all|dot|suppress] | show");
                                 return;
                         }
 
@@ -3847,6 +3883,12 @@ namespace ACE.Server.Command.Handlers
         /// <summary>--rank default|regular|leader|boss (2026-09-02). Absent = None (the Default row).
         /// A present-but-unknown value is an ERROR, not None - silently editing the Default row when the
         /// operator typed "--rank lead" is exactly the invisible mistake the rank view exists to prevent.</summary>
+        /// <summary>The top-level verbs that read the --rank flag. Everything else refuses it.</summary>
+        private static readonly HashSet<string> RankVerbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "set", "clearstat", "togglestat", "tier", "default",
+        };
+
         private static ZcRank ExtractRankFlag(List<string> args, out string error)
         {
             error = null;
@@ -4783,6 +4825,51 @@ namespace ACE.Server.Command.Handlers
             return ZoneStat.All.FirstOrDefault(k => k.Equals(s, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>The chat line for a stat name NormalizeStat rejected. Suggests the closest few keys
+        /// instead of dumping all ~200 of ZoneStat.All into chat (which is what `set` and `default set`
+        /// did before 2026-09-09). Prefix and substring hits first, then small edit-distance hits for
+        /// typos like "dmg_resist_rating"; the full list stays one `/zonecontrol help` away.</summary>
+        private static string UnknownStatMessage(string typed)
+        {
+            var t = (typed ?? "").Trim().ToLowerInvariant();
+            const int max = 8;
+
+            var hits = ZoneStat.All.Where(k => k.StartsWith(t, StringComparison.Ordinal)).Take(max).ToList();
+            if (hits.Count < max && t.Length >= 3)
+                hits.AddRange(ZoneStat.All.Where(k => !hits.Contains(k) && k.Contains(t, StringComparison.Ordinal)).Take(max - hits.Count));
+            if (hits.Count < max && t.Length >= 4)
+                hits.AddRange(ZoneStat.All
+                    .Where(k => !hits.Contains(k))
+                    .Select(k => (key: k, d: EditDistance(t, k)))
+                    .Where(x => x.d <= Math.Max(2, t.Length / 4))
+                    .OrderBy(x => x.d)
+                    .Select(x => x.key)
+                    .Take(max - hits.Count));
+
+            return hits.Count == 0
+                ? $"Unknown stat '{typed}'. Nothing close - /zonecontrol help lists every stat."
+                : $"Unknown stat '{typed}'. Did you mean: {string.Join(", ", hits)}";
+        }
+
+        /// <summary>Plain Levenshtein; the inputs are short stat keys so the O(n*m) table is nothing.</summary>
+        private static int EditDistance(string a, string b)
+        {
+            var prev = new int[b.Length + 1];
+            var cur = new int[b.Length + 1];
+            for (var j = 0; j <= b.Length; j++) prev[j] = j;
+            for (var i = 1; i <= a.Length; i++)
+            {
+                cur[0] = i;
+                for (var j = 1; j <= b.Length; j++)
+                {
+                    var cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                    cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+                }
+                (prev, cur) = (cur, prev);
+            }
+            return prev[b.Length];
+        }
+
         /// <summary>Parse a CombatBodyPart by enum name (case-insensitive) or raw int; rejects Undefined.</summary>
         private static bool TryParseBodyPart(string s, out CombatBodyPart part)
         {
@@ -5108,7 +5195,7 @@ namespace ACE.Server.Command.Handlers
             {
                 if (args.Count < 3) { Msg("Usage: tier show <stat>"); return; }
                 var showStat = NormalizeStat(args[2]);
-                if (showStat == null) { Msg($"Unknown stat '{args[2]}'."); return; }
+                if (showStat == null) { Msg(UnknownStatMessage(args[2])); return; }
                 Msg($"{showStat} across the tier Defaults{RankTag(rank)}:");
                 var any = false;
                 for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
@@ -5126,7 +5213,7 @@ namespace ACE.Server.Command.Handlers
             {
                 if (args.Count < 3) { Msg("Usage: tier clear <stat>"); return; }
                 var clrStat = NormalizeStat(args[2]);
-                if (clrStat == null) { Msg($"Unknown stat '{args[2]}'."); return; }
+                if (clrStat == null) { Msg(UnknownStatMessage(args[2])); return; }
                 var cleared = 0;
                 for (var t = MinBoundedTier; t <= MaxTunedTier; t++)
                 {
@@ -5144,7 +5231,7 @@ namespace ACE.Server.Command.Handlers
 
             // tier <stat> <t11> <t25> [--curve augs|linear]
             var stat = NormalizeStat(verb);
-            if (stat == null) { Msg($"Unknown stat '{verb}'. See 'statlist'."); return; }
+            if (stat == null) { Msg(UnknownStatMessage(verb)); return; }
             if (args.Count < 4
                 || !double.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var v11)
                 || !double.TryParse(args[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var v25))

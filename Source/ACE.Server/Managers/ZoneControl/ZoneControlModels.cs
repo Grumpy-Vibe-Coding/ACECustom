@@ -137,10 +137,9 @@ namespace ACE.Server.Managers.ZoneControl
         /// Never scales a negative (degen) tick — suppression must not become a shield.</summary>
         public double? SuppressRegenMult { get; set; }
 
-        // ── Reserved for later slices (NOT applied yet) ──
-        public bool? SlowEnabled { get; set; }
-        public double? SlowPercent { get; set; }
-        public bool? CharmEnabled { get; set; }
+        // SlowEnabled / SlowPercent / CharmEnabled were reserved here from 2026-07-30 with no reader and
+        // no command - dead knobs, removed 2026-09-09. Stored JSON that still carries them loads fine
+        // (Newtonsoft ignores unknown members by default).
 
         // ── Effective reads (the defaults that used to be field initializers) ──
         public bool EffectiveDotEnabled => DotEnabled == true;
@@ -154,13 +153,13 @@ namespace ACE.Server.Managers.ZoneControl
         public double EffectiveSuppressRegenMult => System.Math.Clamp(SuppressRegenMult ?? 1.0, 0.0, 1.0);
 
         /// <summary>True if any effect is active — used to skip zones that author no effects during resolution.</summary>
-        public bool AnyActive => DotEnabled == true || SuppressEnabled == true || SlowEnabled == true || CharmEnabled == true;
+        public bool AnyActive => DotEnabled == true || SuppressEnabled == true;
 
         /// <summary>True when nothing at all is authored at this layer.</summary>
         public bool IsEmpty =>
             DotEnabled == null && DotDamage == null && DotPercent == null && DotIntervalSeconds == null
             && DotDamageType == null && SuppressEnabled == null && SuppressProdigal == null
-            && SuppressRegenMult == null && SlowEnabled == null && SlowPercent == null && CharmEnabled == null;
+            && SuppressRegenMult == null;
 
         public ZoneEffects Clone() => new ZoneEffects
         {
@@ -168,8 +167,32 @@ namespace ACE.Server.Managers.ZoneControl
             DotIntervalSeconds = DotIntervalSeconds, DotDamageType = DotDamageType,
             SuppressEnabled = SuppressEnabled, SuppressProdigal = SuppressProdigal,
             SuppressRegenMult = SuppressRegenMult,
-            SlowEnabled = SlowEnabled, SlowPercent = SlowPercent, CharmEnabled = CharmEnabled,
         };
+
+        // ── Un-authoring (2026-09-09) ──
+        // The fields are nullable so a layer can inherit, but until these existed nothing could put a
+        // field BACK to null: once a zone touched DoT it authored every DoT field forever, and the
+        // variation Default underneath was unreachable again. Each clears one group to "not authored".
+
+        /// <summary>Un-author every DoT field at this layer; the layer below shows through again.</summary>
+        public void ClearDot()
+        {
+            DotEnabled = null; DotDamage = null; DotPercent = null;
+            DotIntervalSeconds = null; DotDamageType = null;
+        }
+
+        /// <summary>Un-author every suppression field at this layer.</summary>
+        public void ClearSuppress()
+        {
+            SuppressEnabled = null; SuppressProdigal = null; SuppressRegenMult = null;
+        }
+
+        /// <summary>Un-author everything at this layer.</summary>
+        public void ClearAll()
+        {
+            ClearDot();
+            ClearSuppress();
+        }
 
         /// <summary>Per-FIELD layered merge: any authored (non-null) field on <paramref name="upper"/> wins,
         /// everything else falls through to <paramref name="lower"/>. Returns a new instance.</summary>
@@ -187,9 +210,6 @@ namespace ACE.Server.Managers.ZoneControl
                 SuppressEnabled = upper.SuppressEnabled ?? lower.SuppressEnabled,
                 SuppressProdigal = upper.SuppressProdigal ?? lower.SuppressProdigal,
                 SuppressRegenMult = upper.SuppressRegenMult ?? lower.SuppressRegenMult,
-                SlowEnabled = upper.SlowEnabled ?? lower.SlowEnabled,
-                SlowPercent = upper.SlowPercent ?? lower.SlowPercent,
-                CharmEnabled = upper.CharmEnabled ?? lower.CharmEnabled,
             };
         }
     }

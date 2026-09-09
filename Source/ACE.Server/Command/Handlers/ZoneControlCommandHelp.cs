@@ -58,10 +58,10 @@ namespace ACE.Server.Command.Handlers
             // ── Stats + ranks ─────────────────────────────────────────────────
             E("Stats", "/zonecontrol set", "<name> <stat> <value> [--wcid <id>] [--rank regular|leader|boss]", "Author a stat on the zone, one monster's bucket, or a rank row."),
             E("Stats", "/zonecontrol clearstat", "<name> <stat> [--wcid <id>] [--rank r]", "Unset a stat at that scope (it inherits again)."),
-            E("Stats", "/zonecontrol togglestat", "<name> <stat> <on|off|clear> | list", "Zone-scope only: OFF makes a stat count as unset here even if the tier authors it."),
-            E("Stats", "/zonecontrol default", "<var> <show|set|clearstat|clear|list> ...", "The Tier Default layer every zone at that variation inherits. set/clearstat take --rank."),
+            E("Stats", "/zonecontrol togglestat", "<name> <stat> <on|off|clear> | list [--rank r]", "Zone-scope only: OFF makes a stat count as unset here even if the tier authors it."),
+            E("Stats", "/zonecontrol default", "<var> <show|set|clearstat|togglestat|weaponcard|copyfrom|clear> | list", "The Tier Default layer every zone at that variation inherits. set/clearstat/togglestat take --rank; other verbs refuse it."),
             E("Stats", "/zonecontrol defaultget", "<variation>", "One-shot [[ZCD]] sync of a Tier Default."),
-            E("Stats", "/zonecontrol tier", "<stat> <t11value> <t25value> [--curve augs|linear] | show <stat> | clear <stat> | curves", "Author all 15 Tier Defaults of a stat from a T11..T25 curve."),
+            E("Stats", "/zonecontrol tier", "<stat> <t11value> <t25value> [--curve augs|linear] [--rank r] | show <stat> | clear <stat> | curves", "Author all 15 Tier Defaults of a stat from a T11..T25 curve. Only set, clearstat, togglestat, tier and default take --rank; every other verb refuses it."),
             E("Stats", "/zonecontrol simstats", "<name> --wcid <id>", "Rank-aware effective offense numbers for the Curves simulator."),
             E("Stats", "/zonecontrol resetmob", "<zone> --wcid <id>", "Remove ALL of one monster's overrides: stats, props, loot, appearance."),
 
@@ -94,7 +94,7 @@ namespace ACE.Server.Command.Handlers
 
             // ── Spells + effects ──────────────────────────────────────────────
             E("Spells", "/zonecontrol spell", "<name> <off|on|add|chance|remove|list> [spellId] [chancePct] [--wcid <id>]", "Zone-added spells and cast chances, per zone or per monster."),
-            E("Effects", "/zonecontrol effect", "<name> [show | dot on|off | dmg <n> | type <t> | interval <s> | suppress on|off | suppress prodigal on|off | suppress regen <pct>]", "Zone-wide DoT and suppression effects."),
+            E("Effects", "/zonecontrol effect", "<name> [show | dot on|off | dmg <n> | type <t> | interval <s> | suppress on|off | suppress prodigal on|off | suppress regen <pct> | clear [all|dot|suppress]]", "Zone-wide DoT and suppression effects. clear un-authors a group so the tier Default shows through again."),
 
             // ── Loot ──────────────────────────────────────────────────────────
             E("Loot", "/zonecontrol currency", "<name> <add|remove|list> [itemWcid] [amount] [chance] [direct|corpse] [--wcid <id>]", "Bonus currency drops per kill."),
