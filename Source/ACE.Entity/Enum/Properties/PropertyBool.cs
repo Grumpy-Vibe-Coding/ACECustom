@@ -321,6 +321,7 @@ namespace ACE.Entity.Enum.Properties
 
         /// <summary>Player has the Fork Charm active — Streak, Arc, and Bolt projectiles fork to nearby enemies on hit.</summary>
         HasForkCharm = 50039,
+        HasTurretCharm = 50040,
 
         /// <summary>Player is in unkillable developer mode.</summary>
         IsUnkillable = 50041,

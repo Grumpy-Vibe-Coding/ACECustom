@@ -39,6 +39,7 @@ namespace ACE.Server.WorldObjects
         public static EssenceRefillBlock      EssenceRefill      { get; } = new();
         public static UniversalSummoningBlock UniversalSummoning { get; } = new();
         public static ForkBlock               Fork               { get; } = new();
+        public static TurretBlock             Turret             { get; } = new();
 
         // ─────────────────────────────────────────────────────────────────────
         //  Startup
@@ -112,6 +113,7 @@ namespace ACE.Server.WorldObjects
                 "essencerefill"      => EssenceRefill,
                 "universalsummoning" => UniversalSummoning,
                 "fork"               => Fork,
+                "turret"             => Turret,
                 _                    => null
             };
 
@@ -588,6 +590,198 @@ CREATE TABLE IF NOT EXISTS `charm_settings` (
         // ─────────────────────────────────────────────────────────────────────
         //  Simple on/off blocks (stubs ready for future params)
         // ─────────────────────────────────────────────────────────────────────
+
+        public sealed class TurretBlock : ICharmBlock
+        {
+            public bool   Enabled      { get; private set; } = true;
+            public float  Interval     { get; private set; } = 1.0f;    // seconds between casts (owner ruling: 1 s for testing, 3-5 s later, reduced by gear)
+            public float  Lifetime     { get; private set; } = 300f;    // seconds a turret stands (owner ruling: 5 minutes)
+            public int    MaxT1        { get; private set; } = 1;       // turrets at once per charm tier
+            public int    MaxT2        { get; private set; } = 2;
+            public int    MaxT3        { get; private set; } = 3;
+            public float  Range        { get; private set; } = 60f;     // metres a turret will shoot
+            public float  OwnerRange   { get; private set; } = 150f;    // metres from the owner before the turret vanishes
+            public float  SpawnOffset  { get; private set; } = 0.75f;   // metres in front of the owner's physics radius
+            public int    MaxLosChecks { get; private set; } = 5;       // candidates ray-tested per cast, in strategy order
+            public TurretTargeting TargetingMode { get; private set; } = TurretTargeting.Nearest;
+            public int    RingMinTargets { get; private set; } = 2;     // mobs inside ring radius of the TURRET before it rings (owner: close 2+)
+            public float  ArcDistance  { get; private set; } = 25f;     // the close/far line: beyond it a target is far (arc or volley)
+            public int    PackMin      { get; private set; } = 2;       // far: mobs within packradius of the target before it volleys
+            public float  PackRadius   { get; private set; } = 10f;     // metres around the far target that count as its pack
+            public bool   Verbose      { get; private set; } = false;   // one [TURRET] log line per cast with the shape reason
+
+            public int MaxForLevel(int level) => level >= 3 ? MaxT3 : level == 2 ? MaxT2 : MaxT1;
+
+            public void Reset()
+            {
+                Enabled = true; Interval = 1.0f; Lifetime = 300f;
+                MaxT1 = 1; MaxT2 = 2; MaxT3 = 3;
+                Range = 60f; OwnerRange = 150f; SpawnOffset = 0.75f; MaxLosChecks = 5;
+                TargetingMode = TurretTargeting.Nearest;
+                RingMinTargets = 2; ArcDistance = 25f; Verbose = false; PackMin = 2; PackRadius = 10f;
+            }
+
+            private static bool ParseTargeting(string value, out TurretTargeting mode)
+            {
+                switch ((value ?? "").Trim().ToLowerInvariant())
+                {
+                    case "nearest": case "near": case "closest": mode = TurretTargeting.Nearest; return true;
+                    case "lowest": case "lowesthealth": case "weakest": mode = TurretTargeting.LowestHealth; return true;
+                    case "highest": case "highesthealth": case "strongest": mode = TurretTargeting.HighestHealth; return true;
+                    default: mode = TurretTargeting.Nearest; return false;
+                }
+            }
+
+            public string TrySet(string key, string value)
+            {
+                switch (key)
+                {
+                    case "enabled": case "on": case "off": case "true": case "false":
+                        var valueToParse = key == "enabled" ? value : key;
+                        if (!ParseBool(valueToParse, out var bv)) return $"Invalid bool: '{value}'";
+                        Enabled = bv; return $"turret.enabled = {B(Enabled)}";
+                    case "interval":
+                        if (!ParseFloat(value, out var v1)) return "Invalid float.";
+                        if (v1 < 0.25f || v1 > 60f) return "interval must be between 0.25 and 60 seconds.";
+                        Interval = v1; return $"turret.interval = {F(Interval)}";
+                    case "lifetime":
+                        if (!ParseFloat(value, out var v2)) return "Invalid float.";
+                        if (v2 < 5f || v2 > 3600f) return "lifetime must be between 5 and 3600 seconds.";
+                        Lifetime = v2; return $"turret.lifetime = {F(Lifetime)}";
+                    case "maxt1": if (!ParseInt(value, out var m1) || m1 < 1 || m1 > 10) return "maxt1 must be 1 to 10."; MaxT1 = m1; return $"turret.maxt1 = {MaxT1}";
+                    case "maxt2": if (!ParseInt(value, out var m2) || m2 < 1 || m2 > 10) return "maxt2 must be 1 to 10."; MaxT2 = m2; return $"turret.maxt2 = {MaxT2}";
+                    case "maxt3": if (!ParseInt(value, out var m3) || m3 < 1 || m3 > 10) return "maxt3 must be 1 to 10."; MaxT3 = m3; return $"turret.maxt3 = {MaxT3}";
+                    case "range":
+                        if (!ParseFloat(value, out var v3)) return "Invalid float.";
+                        if (v3 < 5f || v3 > 200f) return "range must be between 5 and 200 metres.";
+                        Range = v3; return $"turret.range = {F(Range)}";
+                    case "ownerrange":
+                        if (!ParseFloat(value, out var v4)) return "Invalid float.";
+                        if (v4 < 10f || v4 > 400f) return "ownerrange must be between 10 and 400 metres.";
+                        OwnerRange = v4; return $"turret.ownerrange = {F(OwnerRange)}";
+                    case "spawnoffset":
+                        if (!ParseFloat(value, out var v5)) return "Invalid float.";
+                        if (v5 < 0f || v5 > 5f) return "spawnoffset must be between 0 and 5 metres.";
+                        SpawnOffset = v5; return $"turret.spawnoffset = {F(SpawnOffset)}";
+                    case "maxloschecks":
+                        if (!ParseInt(value, out var v6) || v6 < 1 || v6 > 20) return "maxloschecks must be 1 to 20.";
+                        MaxLosChecks = v6; return $"turret.maxloschecks = {MaxLosChecks}";
+                    case "targeting":
+                        if (!ParseTargeting(value, out var mode)) return "targeting must be nearest, lowest or highest.";
+                        TargetingMode = mode; return $"turret.targeting = {TargetingMode.ToString().ToLowerInvariant()}";
+                    case "ringmintargets":
+                        if (!ParseInt(value, out var r1) || r1 < 1 || r1 > 20) return "ringmintargets must be 1 to 20.";
+                        RingMinTargets = r1; return $"turret.ringmintargets = {RingMinTargets}";
+                    case "arcdistance":
+                        if (!ParseFloat(value, out var a1)) return "Invalid float.";
+                        if (a1 < 0f || a1 > 200f) return "arcdistance must be between 0 and 200 metres.";
+                        ArcDistance = a1; return $"turret.arcdistance = {F(ArcDistance)}";
+                    case "verbose":
+                        if (!ParseBool(value, out var vb)) return $"Invalid bool: '{value}'";
+                        Verbose = vb; return $"turret.verbose = {B(Verbose)}";
+                    case "packmin":
+                        if (!ParseInt(value, out var p1) || p1 < 2 || p1 > 20) return "packmin must be 2 to 20.";
+                        PackMin = p1; return $"turret.packmin = {PackMin}";
+                    case "packradius":
+                        if (!ParseFloat(value, out var p2)) return "Invalid float.";
+                        if (p2 < 1f || p2 > 50f) return "packradius must be between 1 and 50 metres.";
+                        PackRadius = p2; return $"turret.packradius = {F(PackRadius)}";
+                    default: return null;
+                }
+            }
+
+            public void ApplyRaw(string key, string value)
+            {
+                switch (key)
+                {
+                    case "enabled":      if (ParseBool(value, out var bv))  Enabled = bv; break;
+                    case "interval":     if (ParseFloat(value, out var v1)) Interval = Math.Clamp(v1, 0.25f, 60f); break;
+                    case "lifetime":     if (ParseFloat(value, out var v2)) Lifetime = Math.Clamp(v2, 5f, 3600f); break;
+                    case "maxt1":        if (ParseInt(value, out var m1))   MaxT1 = Math.Clamp(m1, 1, 10); break;
+                    case "maxt2":        if (ParseInt(value, out var m2))   MaxT2 = Math.Clamp(m2, 1, 10); break;
+                    case "maxt3":        if (ParseInt(value, out var m3))   MaxT3 = Math.Clamp(m3, 1, 10); break;
+                    case "range":        if (ParseFloat(value, out var v3)) Range = Math.Clamp(v3, 5f, 200f); break;
+                    case "ownerrange":   if (ParseFloat(value, out var v4)) OwnerRange = Math.Clamp(v4, 10f, 400f); break;
+                    case "spawnoffset":  if (ParseFloat(value, out var v5)) SpawnOffset = Math.Clamp(v5, 0f, 5f); break;
+                    case "maxloschecks": if (ParseInt(value, out var v6))   MaxLosChecks = Math.Clamp(v6, 1, 20); break;
+                    case "targeting":    if (ParseTargeting(value, out var mode)) TargetingMode = mode; break;
+                    case "ringmintargets": if (ParseInt(value, out var r1)) RingMinTargets = Math.Clamp(r1, 1, 20); break;
+                    case "arcdistance":  if (ParseFloat(value, out var a1)) ArcDistance = Math.Clamp(a1, 0f, 200f); break;
+                    case "verbose":      if (ParseBool(value, out var vb))  Verbose = vb; break;
+                    case "packmin":      if (ParseInt(value, out var p1))   PackMin = Math.Clamp(p1, 2, 20); break;
+                    case "packradius":   if (ParseFloat(value, out var p2)) PackRadius = Math.Clamp(p2, 1f, 50f); break;
+                }
+            }
+
+            public string GetRaw(string key) => key switch
+            {
+                "enabled"      => B(Enabled),
+                "interval"     => F(Interval),
+                "lifetime"     => F(Lifetime),
+                "maxt1"        => MaxT1.ToString(),
+                "maxt2"        => MaxT2.ToString(),
+                "maxt3"        => MaxT3.ToString(),
+                "range"        => F(Range),
+                "ownerrange"   => F(OwnerRange),
+                "spawnoffset"  => F(SpawnOffset),
+                "maxloschecks" => MaxLosChecks.ToString(),
+                "targeting"    => TargetingMode.ToString().ToLowerInvariant(),
+                "ringmintargets" => RingMinTargets.ToString(),
+                "arcdistance"  => F(ArcDistance),
+                "verbose"      => B(Verbose),
+                "packmin"      => PackMin.ToString(),
+                "packradius"   => F(PackRadius),
+                _              => null
+            };
+
+            public IEnumerable<(string, string)> GetAllRaw() => new[]
+            {
+                ("enabled", B(Enabled)), ("interval", F(Interval)), ("lifetime", F(Lifetime)),
+                ("maxt1", MaxT1.ToString()), ("maxt2", MaxT2.ToString()), ("maxt3", MaxT3.ToString()),
+                ("range", F(Range)), ("ownerrange", F(OwnerRange)), ("spawnoffset", F(SpawnOffset)),
+                ("maxloschecks", MaxLosChecks.ToString()), ("targeting", TargetingMode.ToString().ToLowerInvariant()),
+                ("ringmintargets", RingMinTargets.ToString()), ("arcdistance", F(ArcDistance)), ("verbose", B(Verbose)),
+                ("packmin", PackMin.ToString()), ("packradius", F(PackRadius)),
+            };
+
+            public string Help() =>
+                "[Turret] Adjustable Settings\n" +
+                "  - Enabled  on / off\n" +
+                "  - interval float     - seconds between turret casts (0.25 to 60)\n" +
+                "  - lifetime float     - seconds a turret stands (5 to 3600)\n" +
+                "  - maxt1/maxt2/maxt3  - turrets allowed at once per charm tier (1 to 10)\n" +
+                "  - range float        - metres a turret will shoot (5 to 200)\n" +
+                "  - ownerrange float   - metres from the owner before a turret vanishes (10 to 400)\n" +
+                "  - spawnoffset float  - metres in front of the owner a turret is placed (0 to 5)\n" +
+                "  - maxloschecks int   - candidates line-of-sight tested per cast (1 to 20)\n" +
+                "  - targeting          - nearest | lowest | highest (target choice strategy)\n" +
+                "  - ringmintargets int - mobs inside ring radius before the turret casts a ring (1 to 20)\n" +
+                "  - arcdistance float  - metres beyond which a lone target gets the arc (0 to 200)\n" +
+                "  - verbose on/off     - log one line per turret cast with the shape reason\n" +
+                "  - packmin int        - far target: mobs within packradius of it before the turret volleys (2 to 20)\n" +
+                "  - packradius float   - metres around a far target that count as its pack (1 to 50)\n" +
+                "\n[Examples]\n" +
+                "  - /charm turret interval 3\n" +
+                "  - /charm turret targeting lowest\n" +
+                "  - /charm turret maxt3 5";
+
+            public string Dump() =>
+                "[Turret] Current Settings\n" +
+                $"  - Enabled: {B(Enabled)}\n" +
+                $"  - interval: {F(Interval)}\n" +
+                $"  - lifetime: {F(Lifetime)}\n" +
+                $"  - maxt1/maxt2/maxt3: {MaxT1}/{MaxT2}/{MaxT3}\n" +
+                $"  - range: {F(Range)}\n" +
+                $"  - ownerrange: {F(OwnerRange)}\n" +
+                $"  - spawnoffset: {F(SpawnOffset)}\n" +
+                $"  - maxloschecks: {MaxLosChecks}\n" +
+                $"  - targeting: {TargetingMode.ToString().ToLowerInvariant()}\n" +
+                $"  - ringmintargets: {RingMinTargets}\n" +
+                $"  - arcdistance: {F(ArcDistance)}\n" +
+                $"  - verbose: {B(Verbose)}\n" +
+                $"  - packmin: {PackMin}\n" +
+                $"  - packradius: {F(PackRadius)}\n";
+        }
 
         public sealed class ShrapnelBlock : ICharmBlock
         {

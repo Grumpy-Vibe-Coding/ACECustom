@@ -78,6 +78,7 @@ namespace ACE.Server.Entity.Actions
         MonsterMissile_SwitchToMeleeAttackInnerInner,
         MonsterNavigation_Sleep,
         PetDevice_Refill,
+        Turret_Cast,
         PhysicsObj_TrackObject,
         PhysicsObj_TrackObjects,
         PKModifier_EnqueueDissonanceAndReset,

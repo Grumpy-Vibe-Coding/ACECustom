@@ -172,6 +172,15 @@ namespace ACE.Server.WorldObjects
             }
 
             var spell = new Spell(spellId);
+
+            // Turret Charm (2026-09-13): a qualifying War/Void spell drops a turret INSTANTLY - no windup, no gesture, the
+            // selection is irrelevant (owner ruling). Mana and components are still paid.
+            if (casterItem == null && TurretRedirectsCast(spell))
+            {
+                PlaceTurretInstant(spell, targetGuid);
+                return;
+            }
+
             var targetCategory = GetTargetCategory(targetGuid, spell, out var target);
 
             if (target == null || target.Teleporting)
@@ -369,6 +378,13 @@ namespace ACE.Server.WorldObjects
                 return;
 
             var spell = new Spell(spellId);
+
+            // Turret Charm (2026-09-13): see HandleActionCastTargetedSpell - rings and other untargeted War/Void spells drop a turret instantly
+            if (TurretRedirectsCast(spell))
+            {
+                PlaceTurretInstant(spell);
+                return;
+            }
 
             if (spell.IsHarmful)
             {

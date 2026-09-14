@@ -784,6 +784,8 @@ namespace ACE.Entity.Enum.Properties
         /// The absolute Unix timestamp (in seconds since epoch) when the item expires.
         /// </summary>
         ItemExpirationTimestamp                 = 50060,
+        /// <summary>Turret deployer item (2026-09-13): the DamageType whose turret this item drops when used.</summary>
+        TurretDeployerElement                   = 50061,
 
         // -- ILT Ability Charm System (50000-50099) ---------------------------------
         /// <summary>On an IsAbilityCharm item: integer key into CharmAbilityRegistry (1-50).</summary>

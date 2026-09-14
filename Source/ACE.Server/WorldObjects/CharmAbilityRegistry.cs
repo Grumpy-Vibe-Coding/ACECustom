@@ -38,6 +38,7 @@ namespace ACE.Server.WorldObjects
         public const int UniversalSummoningMasteryAbilityId = 25;
         public const int AutoRebuffAbilityId      = 26;
         public const int ForkAbilityId             = 27;
+        public const int TurretAbilityId           = 28;
 
         private static readonly Dictionary<int, AbilityEntry> Registry = new()
         {
@@ -55,6 +56,7 @@ namespace ACE.Server.WorldObjects
             { UniversalSummoningMasteryAbilityId, new AbilityEntry(p => p.HasUniversalSummoningMastery, (p, v) => p.HasUniversalSummoningMastery = v, "Universal Summoning Mastery") },
             { AutoRebuffAbilityId,      new AbilityEntry(p => p.HasAutoRebuffCharm,     (p, v) => p.HasAutoRebuffCharm = v,     "Auto-Rebuff")          },
             { ForkAbilityId,            new AbilityEntry(p => p.HasForkCharm,           (p, v) => p.HasForkCharm           = v, "Fork")                 },
+            { TurretAbilityId,          new AbilityEntry(p => p.HasTurretCharm,         (p, v) => { p.HasTurretCharm = v; if (!v) p.DestroyAllTurrets(); }, "Turret") },
         };
 
         /// <summary>Returns all registered ability IDs. Prefer this over hardcoded numeric ranges.</summary>
@@ -87,6 +89,8 @@ namespace ACE.Server.WorldObjects
             { 777700300, AutoRebuffAbilityId },
             // Fork Charm (Tiers 1–3)
             { 777700027, ForkAbilityId }, { 777710007, ForkAbilityId }, { 777720007, ForkAbilityId },
+            // Turret charm (2026-09-13): T1 777700030, T2 777710009, T3 777720009
+            { 777700030, TurretAbilityId }, { 777710009, TurretAbilityId }, { 777720009, TurretAbilityId },
         };
 
         /// <summary>

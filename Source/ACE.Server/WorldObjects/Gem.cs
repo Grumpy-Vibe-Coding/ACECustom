@@ -142,6 +142,16 @@ namespace ACE.Server.WorldObjects
                 HandleAbilityCharmToggle(player);
                 return; // Do NOT consume the item
             }
+
+            // ── Turret deployer (2026-09-13) ─────────────────────────────────────────────────
+            // An item that drops a turret of its element with no client selection at all (the client will not send a
+            // targeted spell without a creature selected). Never consumed; the Turret Charm still gates it.
+            var deployerElement = GetProperty(PropertyInt.TurretDeployerElement);
+            if (deployerElement.HasValue)
+            {
+                player.UseTurretDeployer(this, (DamageType)deployerElement.Value);
+                return;
+            }
             // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
             // trying to use a dispel potion while pk timer is active

@@ -78,6 +78,11 @@ namespace ACE.Server.Command.Handlers
             ["pyreal refill"]         = "essencerefill",
 
             ["fork"]                  = "fork",
+
+            ["turret"]                = "turret",
+            ["turrets"]               = "turret",
+            ["greater turret"]        = "turret",
+            ["master turret"]         = "turret",
         };
 
         // Brief descriptions shown by /charms and /charm (no args)
@@ -90,6 +95,7 @@ namespace ACE.Server.Command.Handlers
             "  • essencerefill      — Pay pyreals to automatically refill empty summoning essence charges.\n" +
             "  • explosivearrow     — Arrows detonate on hit, dealing AOE blast damage to nearby enemies.\n" +
             "  • fork               — Spell projectiles fork to nearby enemies on hit.\n" +
+            "  • turret             — War/Void projectile spells place a turret that re-casts the spell for you.\n" +
             "  • infinitecasting    — Spell components are not consumed while spellcasting.\n" +
             "  • manabarrier        — Drains Mana before HP while taking damage.\n" +
             "  • splitcast          — Streak, Arc, and Bolt spells target multiple nearby enemies simultaneously.\n" +
@@ -244,6 +250,7 @@ namespace ACE.Server.Command.Handlers
                 "essencerefill"      => "Summon Essence Refill",
                 "universalsummoning" => "Universal Summoning",
                 "fork"               => "Fork",
+                "turret"             => "Turret",
                 _                    => charmName
             };
         }
