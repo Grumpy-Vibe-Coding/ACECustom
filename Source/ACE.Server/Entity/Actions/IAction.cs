@@ -32,6 +32,8 @@ namespace ACE.Server.Entity.Actions
         CreatureNavigation_TurnToPosition,
         CreatureNavigation_TurnToTarget,
         CreatureNetworking_DoWorldBroadcast,
+        DeveloperContent_UnsendInstCreate,
+        DeveloperContent_UnsendInstFlip,
         Door_FinalizeClose,
         Door_Reset,
         Door_SetNotBusy,

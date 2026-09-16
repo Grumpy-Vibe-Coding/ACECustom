@@ -1255,27 +1255,38 @@ namespace ACE.Server.WorldObjects
                     break;
             }
 
-            // send CO network messages for admin objects
-            if (Adminvision && oldState != Adminvision)
+            // send CO / DO network messages for admin objects
+            //
+            // Both directions are handled here (2026-09-15). Stock ACE only ever ran this block on OFF->ON and told the
+            // admin to relog to undo it; the comment it left behind blamed the client, but the OFF path was simply never
+            // written. Nothing here touches ObjMaint on purpose - the objects stay in KnownObjects, which is what lets a
+            // later /adminvision on find them again (and RemoveKnownObject would tear the inverse KnownPlayers link,
+            // the one-way "ghost" failure the [GhostMob] diagnostics exist for). Every send is to THIS session only.
+            if (oldState != Adminvision)
             {
+                // A Visibility object is withheld from clients entirely, so it is CreateObject / DeleteObject.
+                // A NoDraw / UiHidden object is held by the client either way, so it is an UpdateObject that flips
+                // the flags. An object that is both belongs to the first group only - an UpdateObject for a guid the
+                // client no longer holds is wasted at best and resurrects it at worst.
                 var adminObjs = PhysicsObj.ObjMaint.GetKnownObjectsValuesWhere(o => o.WeenieObj.WorldObject != null && o.WeenieObj.WorldObject.Visibility);
-                PhysicsObj.enqueue_objs(adminObjs);
 
-                var nodrawObjs = PhysicsObj.ObjMaint.GetKnownObjectsValuesWhere(o => o.WeenieObj.WorldObject != null && ((o.WeenieObj.WorldObject.NoDraw ?? false) || o.WeenieObj.WorldObject.UiHidden));
+                var nodrawObjs = PhysicsObj.ObjMaint.GetKnownObjectsValuesWhere(o => o.WeenieObj.WorldObject != null && !o.WeenieObj.WorldObject.Visibility
+                    && ((o.WeenieObj.WorldObject.NoDraw ?? false) || o.WeenieObj.WorldObject.UiHidden));
+
+                if (Adminvision)
+                    PhysicsObj.enqueue_objs(adminObjs);
+                else
+                {
+                    foreach (var wo in adminObjs)
+                        Session.Network.EnqueueSend(new GameMessageDeleteObject(wo.WeenieObj.WorldObject));
+                }
 
                 foreach (var wo in nodrawObjs)
-                    Session.Network.EnqueueSend(new GameMessageUpdateObject(wo.WeenieObj.WorldObject, Adminvision, Adminvision ? true : false));
-
-                // sending DO network messages for /adminvision off here doesn't work in client unfortunately?
+                    Session.Network.EnqueueSend(new GameMessageUpdateObject(wo.WeenieObj.WorldObject, Adminvision, Adminvision));
             }
 
             string state = Adminvision ? "enabled" : "disabled";
             Session.Network.EnqueueSend(new GameMessageSystemChat($"Admin Vision is {state}.", ChatMessageType.Broadcast));
-
-            if (oldState != Adminvision && !Adminvision)
-            {
-                Session.Network.EnqueueSend(new GameMessageSystemChat("Note that you will need to log out and back in before the visible items become invisible again.", ChatMessageType.Broadcast));
-            }
         }
 
         public void SendMessage(string msg, ChatMessageType type = ChatMessageType.Broadcast, WorldObject source = null)

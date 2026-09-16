@@ -14,6 +14,12 @@ namespace ACE.Server.WorldObjects
     {
         public List<LandblockInstance> LinkedInstances = new List<LandblockInstance>();
 
+        /// <summary>
+        /// The per-placement size (landblock_instance.scale) this object was spawned with, or null. Runtime only, never
+        /// saved: Landblock.AddWorldObjectInternal uses it to retry a refused spawn at the WCID's own size (2026-09-15).
+        /// </summary>
+        public float? InstanceScale;
+
         public WorldObject ParentLink;
         public List<WorldObject> ChildLinks = new List<WorldObject>();
 
@@ -45,6 +51,22 @@ namespace ACE.Server.WorldObjects
                 if (wo == null) continue;
 
                 wo.Location = new Position(link.ObjCellId, link.OriginX, link.OriginY, link.OriginZ, link.AnglesX, link.AnglesY, link.AnglesZ, link.AnglesW, false, link.VariationId);
+
+                // Per-placement size (landblock_instance.scale). Link children never go through
+                // WorldObjectFactory.CreateNewWorldObjectFromInstance, so they need it here too - before AddWorldObject,
+                // which builds the physics object and scales collision to match. (A linked plate lost its /scaleinst size
+                // on /reload-landblock without this, 2026-09-15.)
+                if (link.Scale.HasValue)
+                {
+                    wo.ObjScale = link.Scale.Value;
+                    wo.InstanceScale = link.Scale.Value;
+                }
+
+                if (link.Hidden.HasValue)
+                    wo.NoDraw = link.Hidden.Value;
+                if (link.ServerOnly.HasValue)
+                    wo.Visibility = link.ServerOnly.Value;
+
                 parent.SetLinkProperties(wo);
                 CurrentLandblock?.AddWorldObject(wo, link.VariationId);
                 if (wo.PhysicsObj != null)

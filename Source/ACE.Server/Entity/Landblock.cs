@@ -1768,6 +1768,26 @@ namespace ACE.Server.Entity
             if (wo.PhysicsObj.CurCell == null)
             {
                 var success = wo.AddPhysicsObj(VariationId);
+
+                // A saved per-placement size (landblock_instance.scale) that the spawn placement refuses must never make the
+                // object vanish: warn, and retry once at the WCID's own size (2026-09-15 - a plate saved at size 2 silently
+                // never spawned and could not be found to fix).
+                if (!success && wo.InstanceScale.HasValue)
+                {
+                    var weenie = DatabaseManager.World.GetCachedWeenie(wo.WeenieClassId);
+                    float? weenieScale = null;
+                    if (weenie?.PropertiesFloat != null && weenie.PropertiesFloat.TryGetValue(PropertyFloat.DefaultScale, out var ws))
+                        weenieScale = (float)ws;
+
+                    log.Warn($"[InstanceScale] 0x{wo.Guid}:{wo.Name} [{wo.WeenieClassId}] does not fit at its saved size {wo.InstanceScale.Value:0.##} at {wo.Location} - " +
+                             $"spawning it at its WCID size {(weenieScale ?? 1.0f):0.##} instead. Fix the row with /scaleinst 0x{wo.Guid.Full:X8} reset");
+
+                    wo.InstanceScale = null;
+                    wo.ObjScale = weenieScale;
+                    wo.PhysicsObj.SetScaleStatic(weenieScale ?? 1.0f);
+                    success = wo.AddPhysicsObj(VariationId);
+                }
+
                 if (!success)
                 {
                     wo.CurrentLandblock = null;

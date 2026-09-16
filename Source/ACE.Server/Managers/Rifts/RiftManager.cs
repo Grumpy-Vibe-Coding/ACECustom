@@ -179,6 +179,9 @@ namespace ACE.Server.Managers.Rifts
                     AnglesW = row.AnglesW, AnglesX = row.AnglesX, AnglesY = row.AnglesY, AnglesZ = row.AnglesZ,
                     IsLinkChild = row.IsLinkChild,
                     VariationId = row.VariationId,
+                    Scale = row.Scale,
+                    Hidden = row.Hidden,
+                    ServerOnly = row.ServerOnly,
                 };
 
                 foreach (var link in row.LandblockInstanceLink)

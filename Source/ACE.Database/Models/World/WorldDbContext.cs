@@ -307,6 +307,12 @@ namespace ACE.Database.Models.World
                     .HasComment("Weenie Class Id of object to spawn");
 
                 entity.Property(e => e.VariationId).HasColumnName("variation_Id");
+
+                entity.Property(e => e.Scale).HasColumnName("scale");
+
+                entity.Property(e => e.Hidden).HasColumnName("hidden");
+
+                entity.Property(e => e.ServerOnly).HasColumnName("server_only");
             });
 
             modelBuilder.Entity<LandblockInstanceLink>(entity =>

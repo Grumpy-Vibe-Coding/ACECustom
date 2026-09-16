@@ -343,6 +343,22 @@ namespace ACE.Server.Factories
                     }
                 }
 
+                // Per-placement size (landblock_instance.scale). Set before the object is added to the landblock, so
+                // WorldObject.InitPhysicsObj scales collision to match. Before the creature scalers, so a creature's
+                // ZoneControl appearance scale still applies as it does today (to be reworked onto this later).
+                if (instance.Scale.HasValue)
+                {
+                    worldObject.ObjScale = instance.Scale.Value;
+                    worldObject.InstanceScale = instance.Scale.Value;
+                }
+
+                // Per-placement visibility (owner 2026-09-15). NoDraw leaves it solid; Visibility withholds it from
+                // clients entirely - the same two flags the maze/trap content bakes into its weenies.
+                if (instance.Hidden.HasValue)
+                    worldObject.NoDraw = instance.Hidden.Value;
+                if (instance.ServerOnly.HasValue)
+                    worldObject.Visibility = instance.ServerOnly.Value;
+
                 if (worldObject is Creature creature)
                 {
                     PrestigeManager.ApplyPrestigeScaling(creature, variationId);

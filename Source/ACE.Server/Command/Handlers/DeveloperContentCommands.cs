@@ -20,6 +20,7 @@ using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
+using ACE.Server.Entity.Actions;
 using ACE.Server.Factories;
 using ACE.Server.Managers;
 using ACE.Server.Network;
@@ -4347,6 +4348,297 @@ namespace ACE.Server.Command.Handlers.Processors
             instance.VariationId = obj.Location.Variation ?? variation;
             UpdateInstanceInWorldDatabase(instance);
             //SyncInstances(session, landblock_id, instances, variation);
+        }
+
+        /// <summary>
+        /// /scaleinst &lt;guid&gt; &lt;scale|reset&gt; - the size of ONE placed object, saved to landblock_instance.scale and
+        /// applied live (2026-09-15, plan C:\AI\GrumpyUtilities\InstanceScale_Plan_2026-09-15.md).
+        ///
+        /// Live apply is the path proven with /scaletest in game: the scale property, the physics scale (collision), and an
+        /// UpdateObject to everyone who knows the object (Hook.cs:155-175). No relog.
+        ///
+        /// A size that does not fit is REFUSED with the reason (owner ruling). The check is the one /nudge uses: a physics
+        /// transition for the object at its new scale, standing where it is. A null transition, or one that moves the object
+        /// or pushes it into another landblock, means it does not fit - the old physics scale is restored and nothing is saved.
+        /// </summary>
+        [CommandHandler("scaleinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 2, "Sets the size of one placed object, saved and applied live. Refused when it does not fit.", "<guid> <scale 0.1-20 | reset>")]
+        public static void HandleScaleInst(Session session, params string[] parameters)
+        {
+            if (!uint.TryParse(parameters[0].TrimStart("0x"), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var guid))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Invalid guid: {parameters[0]}", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var reset = parameters[1].Equals("reset", StringComparison.OrdinalIgnoreCase);
+            var scale = 1.0f;
+            if (!reset && (!float.TryParse(parameters[1], NumberStyles.Float, CultureInfo.InvariantCulture, out scale) || scale < 0.1f || scale > 20f))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Invalid size: {parameters[1]} - use a number from 0.1 to 20, or reset", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var obj = session.Player.FindObject(guid, Player.SearchLocations.Landblock);
+            if (obj == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find {parameters[0]} in your landblock", ChatMessageType.Broadcast));
+                return;
+            }
+
+            if (!obj.Guid.IsStatic())
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) is not landblock instance", ChatMessageType.Broadcast));
+                return;
+            }
+
+            if (obj.PhysicsObj == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) is not a physics object", ChatMessageType.Broadcast));
+                return;
+            }
+
+            // Same row lookup as /nudge: the object's own landblock and variation.
+            var variation = obj.Location.Variation;
+            var landblock_id = (ushort)(obj.Guid.Full >> 12);
+            var instances = DatabaseManager.World.GetCachedInstancesByLandblock(landblock_id, variation);
+            var instance = instances.FirstOrDefault(i => i.Guid == obj.Guid.Full);
+            if (instance == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find instance for {obj.Name} ({obj.Guid})", ChatMessageType.Broadcast));
+                return;
+            }
+
+            // reset = the WCID's own size (the instance row goes back to NULL)
+            var weenie = DatabaseManager.World.GetCachedWeenie(obj.WeenieClassId);
+            var weenieScale = 1.0f;
+            if (weenie?.PropertiesFloat != null && weenie.PropertiesFloat.TryGetValue(PropertyFloat.DefaultScale, out var ws))
+                weenieScale = (float)ws;
+
+            var newScale = reset ? weenieScale : scale;
+            var oldScale = obj.ObjScale ?? 1.0f;
+            var oldPhysicsScale = obj.PhysicsObj.Scale;
+
+            // Fit check at the new size, standing still. Two checks, and BOTH verdicts go in the reply (2026-09-15): the
+            // /nudge move check alone accepted a size-2 plate the client then could not place, so the spawn placement check
+            // runs too. Either failing refuses the size.
+            obj.PhysicsObj.SetScaleStatic(newScale);
+
+            var here = obj.PhysicsObj.Position;
+            var transit = obj.PhysicsObj.transition(here, new Physics.Common.Position(here), true);
+
+            string moveVerdict;
+            string refusal = null;
+            if (transit == null)
+            {
+                moveVerdict = "refused";
+                refusal = "the physics refused it there (it would collide with the walls, floor or another object)";
+            }
+            else if ((transit.SpherePath.CurPos.ObjCellID >> 16) != (here.ObjCellID >> 16))
+            {
+                moveVerdict = "other landblock";
+                refusal = "it would be pushed into another landblock";
+            }
+            else if (Vector3.Distance(transit.SpherePath.CurPos.Frame.Origin, here.Frame.Origin) > 0.05f)
+            {
+                moveVerdict = "pushed";
+                refusal = "the physics would push it out of place to fit";
+            }
+            else
+                moveVerdict = "OK";
+
+            var placement = obj.PhysicsObj.ProbePlacementHere();
+            if (refusal == null && placement != Physics.Common.SetPositionError.OK)
+            {
+                refusal = placement == Physics.Common.SetPositionError.Collided
+                    ? "it would not spawn there - it collides with the walls, floor or another object"
+                    : placement == Physics.Common.SetPositionError.NoCell
+                        ? "it would not spawn there - no valid cell at that size"
+                        : "it would not spawn there - the physics finds no valid position at that size";
+            }
+
+            var checks = $"checks: move {moveVerdict}, placement {placement}";
+
+            if (refusal != null)
+            {
+                obj.PhysicsObj.SetScaleStatic(oldPhysicsScale);
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) at size {newScale:0.##} does not fit here: {refusal}. Size unchanged ({oldScale:0.##}). [{checks}]", ChatMessageType.Broadcast));
+                return;
+            }
+
+            // Save, then show it live.
+            instance.Scale = reset ? (float?)null : newScale;
+            UpdateInstanceInWorldDatabase(instance);
+
+            obj.ObjScale = newScale;                     // sent live even on reset, so the client never keeps the old size
+            obj.EnqueueBroadcast(new GameMessageUpdateObject(obj));
+
+            // The check verdicts stay on the REFUSAL line, where they say why; a success does not need them.
+            session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) size {oldScale:0.##} -> {newScale:0.##}{(reset ? " (reset to its WCID size)" : "")}, saved.", ChatMessageType.Broadcast));
+        }
+
+        /// <summary>
+        /// Shared lookup for the per-placement flag commands: the object in the player's landblock, its instance row at
+        /// its own variation (the /nudge lookup), and its weenie for "reset" values.
+        /// </summary>
+        /// <summary>
+        /// Re-sends one object to each player who knows it, honouring THAT player's admin vision.
+        ///
+        /// Owner ruling 2026-09-15: admin vision always sees a /hideinst object - live and after a reload - so you can
+        /// find something you hid. A plain EnqueueBroadcast(new GameMessageUpdateObject(obj)) cannot do that: it builds
+        /// ONE message with changenodraw off, hiding the object from admins too, while the spawn path
+        /// (Player_Tracking.TrackObject:88 passes Adminvision as changenodraw) shows it to them. That disagreement is
+        /// what made a hidden plate "come back" on /reload-landblock.
+        /// </summary>
+        private static void BroadcastAdminAware(WorldObject obj)
+        {
+            if (obj.PhysicsObj == null) return;
+
+            foreach (var player in obj.PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer())
+            {
+                // A withheld object was never sent to a non-admin - do not update what they do not have.
+                if (obj.Visibility && !player.Adminvision)
+                    continue;
+
+                player.Session.Network.EnqueueSend(new GameMessageUpdateObject(obj, player.Adminvision, player.Adminvision));
+            }
+        }
+
+        private static bool TryGetInstanceTarget(Session session, string guidText, out WorldObject obj, out LandblockInstance instance)
+        {
+            obj = null;
+            instance = null;
+
+            if (!uint.TryParse(guidText.TrimStart("0x"), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var guid))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Invalid guid: {guidText}", ChatMessageType.Broadcast));
+                return false;
+            }
+
+            obj = session.Player.FindObject(guid, Player.SearchLocations.Landblock);
+            if (obj == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find {guidText} in your landblock", ChatMessageType.Broadcast));
+                return false;
+            }
+
+            if (!obj.Guid.IsStatic())
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) is not landblock instance", ChatMessageType.Broadcast));
+                return false;
+            }
+
+            // A local copy: an out parameter cannot be used inside the lambda below.
+            var target = obj;
+            var landblock_id = (ushort)(target.Guid.Full >> 12);
+            var instances = DatabaseManager.World.GetCachedInstancesByLandblock(landblock_id, target.Location.Variation);
+            instance = instances.FirstOrDefault(i => i.Guid == target.Guid.Full);
+
+            if (instance == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find instance for {obj.Name} ({obj.Guid})", ChatMessageType.Broadcast));
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>on / off / reset, where reset means "whatever the WCID says".</summary>
+        private static bool TryParseFlagArg(Session session, string arg, WorldObject obj, PropertyBool prop, out bool? saved, out bool live)
+        {
+            saved = null;
+            live = false;
+
+            if (arg.Equals("reset", StringComparison.OrdinalIgnoreCase))
+            {
+                var weenie = DatabaseManager.World.GetCachedWeenie(obj.WeenieClassId);
+                if (weenie?.PropertiesBool != null && weenie.PropertiesBool.TryGetValue(prop, out var wv))
+                    live = wv;
+                return true;
+            }
+
+            if (arg.Equals("on", StringComparison.OrdinalIgnoreCase) || arg == "1" || arg.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                saved = true; live = true; return true;
+            }
+
+            if (arg.Equals("off", StringComparison.OrdinalIgnoreCase) || arg == "0" || arg.Equals("false", StringComparison.OrdinalIgnoreCase))
+            {
+                saved = false; live = false; return true;
+            }
+
+            session.Network.EnqueueSend(new GameMessageSystemChat($"Use on, off or reset - not {arg}", ChatMessageType.Broadcast));
+            return false;
+        }
+
+        /// <summary>
+        /// /hideinst &lt;guid&gt; &lt;on|off|reset&gt; - PropertyBool.NoDraw for ONE placed object, saved to
+        /// landblock_instance.hidden and applied live (2026-09-15, plan InstanceVisibility_Plan_2026-09-15.md).
+        ///
+        /// Hidden is NOT gone: NoDraw only stops the client DRAWING it. The object stays solid - a hidden plate still
+        /// triggers, a hidden door still blocks - and admin vision still shows it (Player.cs:1237 re-sends with
+        /// changenodraw). Live path is the proven one: set the property, broadcast UpdateObject.
+        /// </summary>
+        [CommandHandler("hideinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 2, "Hides ONE placed object (NoDraw) - still solid, still triggers. Saved.", "<guid> <on|off|reset>")]
+        public static void HandleHideInst(Session session, params string[] parameters)
+        {
+            if (!TryGetInstanceTarget(session, parameters[0], out var obj, out var instance))
+                return;
+
+            if (!TryParseFlagArg(session, parameters[1], obj, PropertyBool.NoDraw, out var saved, out var live))
+                return;
+
+            instance.Hidden = saved;
+            UpdateInstanceInWorldDatabase(instance);
+
+            obj.NoDraw = live;
+            BroadcastAdminAware(obj);
+
+            var state = saved == null ? $"reset to its WCID ({(live ? "hidden" : "drawn")})" : live ? "hidden" : "drawn";
+            session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) is now {state}, saved. It is still solid and still works; admin vision shows it.", ChatMessageType.Broadcast));
+        }
+
+        /// <summary>
+        /// /unsendinst &lt;guid&gt; &lt;on|off|reset&gt; - PropertyBool.Visibility for ONE placed object, saved to
+        /// landblock_instance.server_only. The server then never SENDS the object to a player (admin vision excepted) -
+        /// this is how the maze/trap plates are invisible, baked into their weenies today.
+        ///
+        /// Live: turning it ON broadcasts DeleteObject to everyone who has it; turning it OFF re-announces the object
+        /// (NotifyPlayers), because withheld objects are not tracked by any client and so cannot be broadcast to.
+        /// </summary>
+        [CommandHandler("unsendinst", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 2, "Withholds ONE placed object from clients entirely (Visibility) - unselectable, admin vision only. Saved.", "<guid> <on|off|reset>")]
+        public static void HandleUnsendInst(Session session, params string[] parameters)
+        {
+            if (!TryGetInstanceTarget(session, parameters[0], out var obj, out var instance))
+                return;
+
+            if (!TryParseFlagArg(session, parameters[1], obj, PropertyBool.Visibility, out var saved, out var live))
+                return;
+
+            instance.ServerOnly = saved;
+            UpdateInstanceInWorldDatabase(instance);
+
+            // The stock cloak dance (Player_Tracking.HandleCloak / DeCloak) - the ONLY sequence that gets this right.
+            // Order matters: the DeleteObject goes out BEFORE Visibility flips, so EnqueueBroadcast's own filter
+            // (WorldObject_Networking.cs:1419) still routes it to everyone who currently holds the object; the
+            // CreateObject goes out AFTER the flip, so ON reaches admin vision only and OFF reaches everybody.
+            // The delay is required: a CreateObject for a guid the client still holds is a no-op (ObjectMaint.cs:633).
+            //
+            // What this replaces (2026-09-15): setting Visibility first, then broadcasting, hid the object from
+            // nobody but admins; and NotifyPlayers() on the way back dead-ends in AddTrackedObject's already-known
+            // early-out (Player_Tracking.cs:113) - it is for an object ENTERING the world, not one already tracked.
+            // ObjMaint is deliberately left alone: the object stays in every player's KnownObjects, which is exactly
+            // what a later /adminvision on needs to find it (Player.cs:1261).
+            obj.EnqueueBroadcast(new GameMessageDeleteObject(obj));
+
+            var unsendChain = new ActionChain();
+            unsendChain.AddAction(session.Player, ACE.Server.Entity.Actions.ActionType.DeveloperContent_UnsendInstFlip, () => obj.Visibility = live);
+            unsendChain.AddDelaySeconds(.5);
+            unsendChain.AddAction(session.Player, ACE.Server.Entity.Actions.ActionType.DeveloperContent_UnsendInstCreate, () =>
+                obj.EnqueueBroadcast(new GameMessageCreateObject(obj, live, live)));
+            unsendChain.EnqueueChain();
+
+            var state = saved == null ? $"reset to its WCID ({(live ? "withheld" : "sent")})" : live ? "withheld from clients" : "sent to clients";
+            session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}) is now {state}, saved.{(live ? " Only admin vision can see or select it." : "")}", ChatMessageType.Broadcast));
         }
 
         public static Vector3? GetNudgeDir(string dir)

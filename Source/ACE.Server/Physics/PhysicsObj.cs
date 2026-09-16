@@ -1253,6 +1253,62 @@ namespace ACE.Server.Physics
             return result;
         }
 
+        /// <summary>
+        /// Would this object pass SPAWN placement at its current position with its current Scale? The same checks as
+        /// SetPosition -> SetPositionInternal -> CheckPositionInternal with Placement, run on a throwaway transition and a
+        /// copy of the position, so nothing is committed (no cell move, no shadows, no collision callbacks). The object
+        /// itself is skipped by the cell collision walk (ObjCell.FindObjCollisions), and a Placement insert still tests an
+        /// ethereal object against walls and floors. /scaleinst runs this next to the /nudge move check (2026-09-15): the
+        /// move check alone accepted a size-2 plate that the client could not place.
+        /// </summary>
+        public SetPositionError ProbePlacementHere()
+        {
+            if (Position == null)
+                return SetPositionError.InvalidArguments;
+
+            var transition = Transition.MakeTransition();
+            if (transition == null)
+                return SetPositionError.GeneralFailure;
+
+            try
+            {
+                transition.InitObject(this, ObjectInfoState.Default);
+
+                if (PartArray != null && PartArray.GetNumSphere() != 0)
+                    transition.InitSphere(PartArray.GetNumSphere(), PartArray.GetSphere(), Scale);
+                else
+                    transition.InitSphere(1, PhysicsGlobals.DummySphere, 1.0f);
+
+                var pos = new Position(Position);
+                if (pos.Variation != null)
+                    transition.VariationId = pos.Variation;
+
+                var newCell = AdjustPosition(pos, transition.SpherePath.LocalSphere[0].Center, true);
+                if (newCell == null)
+                    return SetPositionError.NoCell;
+
+                var setPos = new SetPosition { Pos = pos, Flags = SetPositionFlags.Placement };
+
+                if (!CheckPositionInternal(newCell, pos, transition, setPos))
+                {
+                    var physicalCollision = transition.CollisionInfo.CollidedWithEnvironment
+                        || (transition.CollisionInfo.CollideObject?.Count ?? 0) > 0;
+
+                    // Mirrors SetPositionInternal's shallow-water spawn tolerance, so the probe agrees with a real spawn.
+                    if (!physicalCollision && newCell.WaterType != LandDefs.WaterType.NotWater && (newCell.ID >> 16) == pos.Landblock)
+                        return SetPositionError.OK;
+
+                    return physicalCollision ? SetPositionError.Collided : SetPositionError.NoValidPosition;
+                }
+
+                return transition.SpherePath.CurCell == null ? SetPositionError.NoCell : SetPositionError.OK;
+            }
+            finally
+            {
+                transition.CleanupTransition();
+            }
+        }
+
         public SetPositionError SetPositionSimple(Position pos, bool sliding)
         {
             var setPos = new SetPosition();

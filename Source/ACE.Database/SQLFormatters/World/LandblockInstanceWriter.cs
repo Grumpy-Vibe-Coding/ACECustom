@@ -50,7 +50,14 @@ namespace ACE.Database.SQLFormatters.World
                 if (value != input[0])
                     writer.WriteLine();
 
-                writer.WriteLine("INSERT INTO `landblock_instance` (`guid`, `weenie_Class_Id`, `obj_Cell_Id`, `origin_X`, `origin_Y`, `origin_Z`, `angles_W`, `angles_X`, `angles_Y`, `angles_Z`, `is_Link_Child`, `last_Modified`, `variation_Id`)");
+                // scale / hidden / server_only are named ONLY on rows that have them: every other row keeps the exact
+                // column list it always had, so an export still imports on a database that has not run those ALTERs yet.
+                var hasScale = value.Scale.HasValue;
+                var hasHidden = value.Hidden.HasValue;
+                var hasServerOnly = value.ServerOnly.HasValue;
+
+                writer.WriteLine("INSERT INTO `landblock_instance` (`guid`, `weenie_Class_Id`, `obj_Cell_Id`, `origin_X`, `origin_Y`, `origin_Z`, `angles_W`, `angles_X`, `angles_Y`, `angles_Z`, `is_Link_Child`, `last_Modified`, `variation_Id`"
+                    + (hasScale ? ", `scale`" : "") + (hasHidden ? ", `hidden`" : "") + (hasServerOnly ? ", `server_only`" : "") + ")");
 
                 string label = null;
 
@@ -71,6 +78,9 @@ namespace ACE.Database.SQLFormatters.World
                              $"{value.IsLinkChild.ToString().PadLeft(5)}, " +
                              $"'{value.LastModified:yyyy-MM-dd HH:mm:ss}'," +
                              $"{VariantNullFix(value.VariationId)}" +
+                             (hasScale ? ", " + value.Scale.Value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) : "") +
+                             (hasHidden ? ", " + value.Hidden.Value.ToString() : "") +
+                             (hasServerOnly ? ", " + value.ServerOnly.Value.ToString() : "") +
                              $"); /* {label} */" +
                              Environment.NewLine + $"/* @teleloc 0x{value.ObjCellId:X8} [{TrimNegativeZero(value.OriginX):F6} {TrimNegativeZero(value.OriginY):F6} {TrimNegativeZero(value.OriginZ):F6}] {TrimNegativeZero(value.AnglesW):F6} {TrimNegativeZero(value.AnglesX):F6} {TrimNegativeZero(value.AnglesY):F6} {TrimNegativeZero(value.AnglesZ):F6}  {TrimNegativeZero(value.VariationId):N0} */";
 

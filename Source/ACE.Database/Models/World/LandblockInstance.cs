@@ -28,6 +28,15 @@ namespace ACE.Database.Models.World
 
         public int? VariationId { get; set; }
 
+        /// <summary>This placement's own size (PropertyFloat.DefaultScale), or null for the weenie's size.</summary>
+        public float? Scale { get; set; }
+
+        /// <summary>PropertyBool.NoDraw: not drawn, but still there and still solid. Null = as the weenie has it.</summary>
+        public bool? Hidden { get; set; }
+
+        /// <summary>PropertyBool.Visibility: never sent to players at all (admin vision excepted). Null = as the weenie has it.</summary>
+        public bool? ServerOnly { get; set; }
+
         public virtual ICollection<LandblockInstanceLink> LandblockInstanceLink { get; set; }
     }
 }
