@@ -111,12 +111,6 @@ namespace ACE.Entity.Enum.Properties
         /// </summary>
         SpellSuppressionMessage = 9017,
 
-        /// <summary>Room Assign plate (2026-09-16, plan C:\AI\ZoneControl\RoomAssign_Plan_2026-09-16.md): every room this
-        /// plate hands out, on one line - "room|0xCELL [x y z] qw qx qy qz|0xCELL,0xCELL;room|...". Its presence on a
-        /// PressurePlate's WEENIE turns the plate into a room plate (RoomAssignManager). Server-only - not an
-        /// assessment property, so it is never sent to a player who appraises the plate.</summary>
-        RoomAssignRooms = 9018,
-
         /// <summary>Zone Control live stat resolution (2026-08-22): the GRADE record of every ZC line on the
         /// piece - "key:grade;key:grade;..." with grade 0-1000 (where in the band it rolled), core four as
         /// c1..c4. The retail Gear* / AL / 502xx props are a CACHE resolved from this against the live ladder.
@@ -125,5 +119,10 @@ namespace ACE.Entity.Enum.Properties
         // (AppraiseInfo.ModifierSectionHeader), so "lines" was internal vocabulary. The ID is what
         // persists - 50100 is unchanged, so the 19 already-stamped items are untouched.
         ZcModifiers = 50100,
+
+        /// <summary>Room Assign (RoomAssignManager): every one-player room, on one line -
+        /// "room|0xCELL [x y z] qw qx qy qz|0xCELL,0xCELL;room|...". On a Portal or PressurePlate WEENIE it makes that
+        /// weenie a room source. Server-only - not an assessment property, so it is never sent to a player.</summary>
+        RoomAssignRooms = 50500,
     }
 }

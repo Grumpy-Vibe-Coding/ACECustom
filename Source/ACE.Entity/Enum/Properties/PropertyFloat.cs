@@ -319,7 +319,8 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>Per-weenie cooldown, in seconds, between activations of a PressurePlate. The plate ignores any
         /// activation within this window of its OWN last use - per OBJECT, not per player - so in a crowd only the
         /// first player through is caught. UNSET falls back to the 2 s retail default, leaving every existing plate
-        /// unchanged; an explicit 0 means no gate at all. Lower it on custom plates that need to catch a group.</summary>
-        PressurePlateCooldown = 9056,
+        /// unchanged; an explicit 0 means no gate at all. Lower it on custom plates that need to catch a group.
+        /// Owner's 50000+ range (moved from 9056 on 2026-09-16: 9056 is ZoneLootMutator's Rend Power on weapons).</summary>
+        PressurePlateCooldown = 50502,
     }
 }
