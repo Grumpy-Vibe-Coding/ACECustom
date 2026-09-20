@@ -1922,10 +1922,44 @@ namespace ACE.Server.WorldObjects.Managers
                             // Parse optional refund item ID from Message field
                             uint? refundItemId = null;
                             string stampList = emote.Message;
-                            
-                            if (emote.Message.StartsWith("REFUND:", StringComparison.OrdinalIgnoreCase))
+
+                            // Optional "TAKE:<wcid>[:<amount>]|" prefix. When present this action
+                            // consumes the turn-in itself, immediately before granting, so the two
+                            // cannot be separated. Without it the old shape still works: a separate
+                            // TakeItems action earlier in the chain, with the gap that implies.
+                            uint takeWcid = 0;
+                            var takeAmount = 1;
+
+                            if (stampList.StartsWith("TAKE:", StringComparison.OrdinalIgnoreCase))
                             {
-                                var parts = emote.Message.Split('|', 2); // Limit to 2 parts to handle stamps with pipes
+                                var takeParts = stampList.Split('|', 2);
+                                if (takeParts.Length == 2)
+                                {
+                                    var spec = takeParts[0].Substring(5).Trim().Split(':');
+
+                                    if (uint.TryParse(spec[0], out var parsedTakeWcid) && parsedTakeWcid > 0)
+                                    {
+                                        takeWcid = parsedTakeWcid;
+
+                                        if (spec.Length > 1 && int.TryParse(spec[1], out var parsedAmount) && parsedAmount > 0)
+                                            takeAmount = parsedAmount;
+
+                                        stampList = takeParts[1];
+                                    }
+                                    else
+                                    {
+                                        log.Warn($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: Invalid TAKE wcid: {takeParts[0]}");
+                                    }
+                                }
+                                else
+                                {
+                                    log.Warn($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: Invalid TAKE format. Expected 'TAKE:wcid|...'");
+                                }
+                            }
+                            
+                            if (stampList.StartsWith("REFUND:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var parts = stampList.Split('|', 2); // Limit to 2 parts to handle stamps with pipes
                                 if (parts.Length == 2)
                                 {
                                     var refundPart = parts[0].Substring(7).Trim(); // Remove "REFUND:" prefix
@@ -1992,6 +2026,14 @@ namespace ACE.Server.WorldObjects.Managers
                                     player.Session.Network.EnqueueSend(new GameMessageSystemChat("You already have all available quest stamps from this source.", ChatMessageType.Broadcast));
                                 }
                                 
+                                // With TAKE the turn-in has not been consumed yet, so the player still
+                                // has it and there is nothing to create, fit or destroy.
+                                if (takeWcid != 0)
+                                {
+                                    log.Debug($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: nothing to grant, so {takeWcid} was not taken from {player.Name}.");
+                                    break;
+                                }
+
                                 // Optional: Refund item if specified in Message field (format: "REFUND:itemid|stamps")
                                 if (refundItemId.HasValue && refundItemId.Value > 0)
                                 {
@@ -2009,9 +2051,12 @@ namespace ACE.Server.WorldObjects.Managers
                                         }
                                         else
                                         {
-                                            // Clean up the item if we couldn't add it to inventory
+                                            // Unreachable in normal play: the capacity check in BuildRewardBatch stops
+                                            // the chain before TakeItems when the refund would not fit, so the player
+                                            // keeps the item instead of reaching this point. Loud, because arriving
+                                            // here means that gate did not hold and someone is owed an item.
+                                            log.Error($"[REFUND LOST] 0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: refund token {refundItemId.Value} could not be given to {player.Name} (0x{player.Guid}) - the capacity gate should have prevented this turn-in. MANUAL RESTORE NEEDED.");
                                             refundItem.Destroy();
-                                            log.Warn($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: Failed to refund token {refundItemId.Value} to player - inventory may be full or item doesn't exist.");
                                             if (player.Session?.Network != null)
                                             {
                                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat("Warning: Could not return your token (inventory full?). Contact an admin.", ChatMessageType.Broadcast));
@@ -2038,10 +2083,40 @@ namespace ACE.Server.WorldObjects.Managers
 
                             log.Debug($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: Selected quest stamp: {selectedQuestStamp} (index {randomIndex})");
 
+                            // Take the turn-in here, immediately before the grant, so nothing can run
+                            // between them. A separate TakeItems action earlier in the chain leaves a
+                            // window where the NPC can be destroyed and the item is lost for nothing.
+                            if (takeWcid != 0)
+                            {
+                                if (!player.TryConsumeFromInventoryWithNetworking(takeWcid, takeAmount))
+                                {
+                                    log.Warn($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: {player.Name} does not have {takeAmount}x {takeWcid} - nothing taken, nothing granted.");
+                                    if (player.Session?.Network != null)
+                                    {
+                                        player.Session.Network.EnqueueSend(new GameMessageSystemChat("You do not have what that requires.", ChatMessageType.Broadcast));
+                                    }
+                                    break;
+                                }
+
+                                log.Debug($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: took {takeAmount}x {takeWcid} from {player.Name}.");
+                            }
+
                             // Grant the selected stamp
                             log.Debug($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: Granting quest stamp: {selectedQuestStamp}");
                             player.QuestManager.Stamp(selectedQuestStamp);
-                            
+
+                            // Stamp() only writes the account-level quest bonus when the CHARACTER's solve
+                            // count lands on exactly 1. Eligibility above is read from the ACCOUNT table, so
+                            // a quest this character solved long ago - with no account row - is offered,
+                            // charged for, bumped 1 -> 2, and awards nothing at all. It then stays eligible
+                            // and eats the next turn-in too. The stamp is what was paid for, so make sure
+                            // the account row exists either way.
+                            if (QuestManager.EnsureAccountQuestStamp(player, selectedQuestStamp))
+                            {
+                                log.Debug($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: wrote the missing account row for {selectedQuestStamp} ({player.Name} had solved it on this character already).");
+                                player.SendMessage($"You've stamped {selectedQuestStamp}!", ChatMessageType.Advancement);
+                            }
+
                             log.Debug($"0x{WorldObject.Guid}:{WorldObject.Name}.EmoteManager.ExecuteEmote: Successfully granted quest stamp: {selectedQuestStamp}");
                         }
                         catch (Exception ex)
@@ -4292,6 +4367,22 @@ namespace ACE.Server.WorldObjects.Managers
             for (var i = startIndex; i < emoteSet.PropertiesEmoteAction.Count; i++)
             {
                 var action = emoteSet.PropertiesEmoteAction[i];
+
+                // GrantRandomQuestStamp hands the turn-in item back when it has no stamp left to give.
+                // That refund is created inline rather than as a Give action, and its wcid lives in
+                // Message, so it has to be counted here or the batch never knows a slot is needed.
+                if ((EmoteType)action.Type == EmoteType.GrantRandomQuestStamp)
+                {
+                    // A TAKE-style action never creates an item: if it has nothing to grant it simply
+                    // does not take the turn-in. Only the older refund shape needs a slot reserved.
+                    if (!HasQuestStampTake(action.Message)
+                        && TryGetQuestStampRefundWcid(action.Message, out var refundWcid)
+                        && !batch.Add(refundWcid, 1))
+                        return batch;
+
+                    continue;
+                }
+
                 if (action.WeenieClassId == null)
                     continue;
 
@@ -4316,12 +4407,112 @@ namespace ACE.Server.WorldObjects.Managers
 
                     case EmoteType.TakeItems:
                         var takeAmount = action.StackSize ?? 1;
-                        batch.Remove(action.WeenieClassId.Value, takeAmount > 0 ? takeAmount : 1);
+                        if (takeAmount <= 0)
+                            takeAmount = 1;
+
+                        batch.Remove(action.WeenieClassId.Value, takeAmount);
+
+                        // Remove() bills a freed slot per ceil(amount / maxStackSize), which assumes whole
+                        // stacks are leaving. Taking 1 off a stack of 5,000 frees nothing - the stack just
+                        // shrinks - and that phantom slot is enough to cancel out a refund the player has
+                        // no room for. Hand the over-credit back.
+                        CorrectFreedSlots(player, batch, action.WeenieClassId.Value, takeAmount);
                         break;
                 }
             }
 
             return batch;
+        }
+
+        /// <summary>
+        /// Reads the refund wcid out of a GrantRandomQuestStamp message
+        /// ("REFUND:&lt;wcid&gt;|stamp1,stamp2,..."), matching the parse in that handler.
+        /// </summary>
+        /// <summary>True when the action consumes the turn-in itself, so no refund item is ever created.</summary>
+        private static bool HasQuestStampTake(string message) =>
+            !string.IsNullOrWhiteSpace(message) && message.StartsWith("TAKE:", StringComparison.OrdinalIgnoreCase);
+
+        private static bool TryGetQuestStampRefundWcid(string message, out uint refundWcid)
+        {
+            refundWcid = 0;
+
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            // skip a leading TAKE: section so the refund wcid is still found behind it
+            if (HasQuestStampTake(message))
+            {
+                var split = message.Split('|', 2);
+                if (split.Length != 2)
+                    return false;
+
+                message = split[1];
+            }
+
+            if (!message.StartsWith("REFUND:", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var parts = message.Split('|', 2);
+            if (parts.Length != 2)
+                return false;
+
+            var refundPart = parts[0].Substring(7).Trim();
+
+            return !string.IsNullOrWhiteSpace(refundPart) && uint.TryParse(refundPart, out refundWcid) && refundWcid > 0;
+        }
+
+        /// <summary>
+        /// Adds back the slots Remove() credited but the removal will not actually free, by looking at
+        /// the stacks the player is really holding. Removing part of a stack frees no slot at all.
+        /// </summary>
+        private static void CorrectFreedSlots(Player player, ItemsToReceive batch, uint weenieClassId, int amount)
+        {
+            var weenie = DatabaseManager.World.GetCachedWeenie(weenieClassId);
+            if (weenie == null)
+                return;
+
+            int credited, freed;
+
+            if (!weenie.IsStackable())
+            {
+                credited = amount;
+                freed = Math.Min(amount, player.GetInventoryItemsOfWCID(weenieClassId).Count);
+            }
+            else
+            {
+                var maxStack = Math.Max(1, weenie.GetMaxStackSize());
+                credited = amount / maxStack + (amount % maxStack > 0 ? 1 : 0);
+
+                var remaining = amount;
+                freed = 0;
+
+                foreach (var stack in player.GetInventoryItemsOfWCID(weenieClassId).OrderBy(s => s.StackSize ?? 1))
+                {
+                    if (remaining <= 0)
+                        break;
+
+                    var size = stack.StackSize ?? 1;
+
+                    if (remaining >= size)
+                    {
+                        freed++;            // the whole stack goes, so its slot comes free
+                        remaining -= size;
+                    }
+                    else
+                    {
+                        remaining = 0;      // partial stack: smaller, but still one slot
+                    }
+                }
+            }
+
+            var overCredit = credited - freed;
+            if (overCredit <= 0)
+                return;
+
+            if (weenie.RequiresBackpackSlotOrIsContainer())
+                batch.RequiredContainerSlots += overCredit;
+            else
+                batch.RequiredInventorySlots += overCredit;
         }
 
         /// <summary>

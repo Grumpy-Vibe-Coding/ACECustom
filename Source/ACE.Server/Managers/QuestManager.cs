@@ -1599,6 +1599,64 @@ namespace ACE.Server.Managers
             player.QuestCompletionCount = player.Account.CachedQuestBonusCount;
         }
 
+        /// <summary>
+        /// Makes sure the account-level quest bonus row for <paramref name="questName"/> exists, whatever
+        /// the character's solve count is.
+        ///
+        /// Stamp() only writes the account row when the CHARACTER's count lands on exactly 1, so a
+        /// character re-solving a quest it already had (1 -> 2) gets no quest bonus at all. That is
+        /// invisible to the player and, for anything that charges for a stamp, means they paid for
+        /// nothing. Callers that hand out a stamp as a purchased reward use this to close that gap.
+        ///
+        /// Returns true only when a row was actually written, so the caller can tell the player.
+        /// </summary>
+        public static bool EnsureAccountQuestStamp(Player player, string questName)
+        {
+            if (player == null || player.IsMule || player.Account == null || string.IsNullOrWhiteSpace(questName))
+                return false;
+
+            var name = GetQuestName(questName);
+
+            if (player.Account.HasQuestBonusAndCompletion(name))
+                return false;
+
+            try
+            {
+                var acctId = player.Account.AccountId;
+
+                using (Database.Models.Auth.AuthDbContext context = new Database.Models.Auth.AuthDbContext())
+                {
+                    var acctQuest = context.AccountQuest.Where(x => x.AccountId == acctId && x.Quest == name).FirstOrDefault();
+
+                    if (acctQuest == null)
+                    {
+                        context.AccountQuest.Add(new Database.Models.Auth.AccountQuest() { AccountId = acctId, Quest = name, NumTimesCompleted = 1 });
+                    }
+                    else if (acctQuest.NumTimesCompleted < 1)
+                    {
+                        acctQuest.NumTimesCompleted = 1;
+                        context.AccountQuest.Update(acctQuest);
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    context.SaveChanges();
+                }
+
+                player.Account.UpdateAccountQuestsCacheByQuestName(name, 1);
+                player.QuestCompletionCount = player.Account.CachedQuestBonusCount;
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                log.Error($"QuestManager.EnsureAccountQuestStamp({player.Name}, {name}) failed: {ex.Message}", ex);
+                return false;
+            }
+        }
+
         public static uint GetSpecialWeenieReward()
         {
             var list = GetSpecialWeenieRewardsList();
