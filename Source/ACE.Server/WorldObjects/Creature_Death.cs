@@ -234,6 +234,25 @@ namespace ACE.Server.WorldObjects
             OnDeath(null, DamageType.Undef);
         }
 
+        /// <summary>Ceiling on a weenie's flat kill XP: far above anything authored (a T11 boss is 5B), far below the
+        /// long sinks a typo could otherwise wrap (AvailableExperience, pet bond XP).</summary>
+        public const long MaxWeenieKillXp = 1_000_000_000_000_000;
+
+        /// <summary>
+        /// The weenie's flat kill XP before Zone Control: XpOverride64 when set above 0 (XpOverride is int32 and tops out
+        /// at 2,147,483,647, below a T11 boss's 5B), else XpOverride. A 0 or negative XpOverride64 counts as unset, so it
+        /// can never hide a valid XpOverride. A Zone Control xp_kill still wins over this at kill time. The one read shared
+        /// by OnDeath_GrantXP, the Bounty check and /deathxp.
+        /// </summary>
+        public long WeenieKillXp
+        {
+            get
+            {
+                var xp64 = GetProperty(PropertyInt64.XpOverride64) ?? 0;
+                return xp64 > 0 ? Math.Min(xp64, MaxWeenieKillXp) : (XpOverride ?? 0);
+            }
+        }
+
         /// <summary>
         /// Grants XP to players in damage history
         /// </summary>
@@ -249,7 +268,7 @@ namespace ACE.Server.WorldObjects
 
             var monsterTier = PrestigeManager.GetKillScalingMonsterTier(this);
 
-            var baseXp = (long)(XpOverride ?? 0);
+            var baseXp = WeenieKillXp;
             long? luminanceAward = LuminanceAward;
 
             // Owner ruling 2026-08-23: T11+ kill rewards are authored per zone by rank; weenie XpOverride/LuminanceAward are ignored when the zone sets them.

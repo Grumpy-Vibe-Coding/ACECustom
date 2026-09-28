@@ -2963,9 +2963,9 @@ namespace ACE.Server.Command.Handlers
                   .Append(sp.IgnorePortalRestrictions ? 1 : 0);
         }
 
-        /// <summary>"|combatdefs=..." â€” live combat-rule bool states so the plugin's GM Tools toggles
+        /// <summary>"|combatdefs=..." - live shard bool states so the plugin's GM Tools toggles
         /// show truth. Fixed order: missile_power_bar, zonecontrol_enabled, zc_weapon_zone_lock,
-        /// zc_pertier_authoring, zc_armor_zone_lock. APPEND-ONLY: the plugin indexes positionally.</summary>
+        /// zc_pertier_authoring, zc_armor_zone_lock, audit_short_numbers. APPEND-ONLY: the plugin indexes positionally.</summary>
         private static void AppendCombatDefs(StringBuilder sb)
         {
             sb.Append("|combatdefs=")
@@ -2973,7 +2973,8 @@ namespace ACE.Server.Command.Handlers
               .Append(ServerConfig.zonecontrol_enabled.Value ? '1' : '0').Append(',')
               .Append(ServerConfig.zc_weapon_zone_lock.Value ? '1' : '0').Append(',')
               .Append(ServerConfig.zc_pertier_authoring.Value ? '1' : '0').Append(',')
-              .Append(ServerConfig.zc_armor_zone_lock.Value ? '1' : '0');
+              .Append(ServerConfig.zc_armor_zone_lock.Value ? '1' : '0').Append(',')
+              .Append(ServerConfig.audit_short_numbers.Value ? '1' : '0');
         }
 
         /// <summary>"|missilepower=fast,full,mid" - the missile power ladder (owner 2026-09-12) so the Bow Power Bar
