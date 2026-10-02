@@ -930,7 +930,7 @@ namespace ACE.Server.Network.Structure
         /// is never touched, so nothing is re-rolled and existing drops re-render correctly on the
         /// next appraise. Bullets stay in STAMP ORDER (owner: no sorting - two identical pieces
         /// must read identically). The "Zone Cantrip:" prefix is a MARKER, not decoration -
-        /// FinalizeT11LongDesc's whitelist deletes any line that lacks it - so it stays in the
+        /// FinalizeZoneLongDesc's whitelist deletes any line that lacks it - so it stays in the
         /// stored text and is dropped from the render only.
         ///
         /// Weapons carry their own "Property Details:" block pinned to the top; the cantrip group

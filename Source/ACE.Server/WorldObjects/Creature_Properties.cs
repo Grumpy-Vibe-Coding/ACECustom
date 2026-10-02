@@ -115,6 +115,11 @@ namespace ACE.Server.WorldObjects
             float protModNew = EnchantmentManager.GetProtectionResistanceModNew(damageType);
             float protMod = protModOld + ((protModNew - protModOld) * newCurvePct);
 
+            // Zone Control aug curves (owner 2026-10-02): a curves-on tier's monster (or its spell) hitting a player - the
+            // protection at each spell's base strength x (1 - the tier's life curve) replaces the game's aug bonus
+            if (this is Player curvePlayer && Creature.ZoneAugCurveProfile(attacker) is ACE.Server.Managers.ZoneScaling.EvaluatedProfile curveProfile)
+                protMod = Creature.ZoneProtectionMod(curvePlayer, damageType, curveProfile);
+
             var vulnMod = EnchantmentManager.GetVulnerabilityResistanceMod(damageType);
 
             // Zone Scaler: resolve the winning zone profile for this monster once (null for players/exempt/non-endgame/
@@ -127,13 +132,13 @@ namespace ACE.Server.WorldObjects
             // weaponResistanceMod max below), so base damage, offensive augs, and weapon rending are unaffected.
             // Player defenders never hit this: Player overrides GetResistanceMod. Gate is the monster's instance
             // Variation (same convention as the v11+ percent-HP offense system) -> auto-applies to all v11+ mobs.
-            if (vulnMod > 1.0f && ServerConfig.v11_vuln_enabled.Value && !(this is Player)
+            if (vulnMod > 1.0f && ServerConfig.zc_vuln_enabled.Value && !(this is Player)
                 && ((zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap))
-                    || (ACE.Server.Managers.PrestigeManager.SystemsEnabled
-                        && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.v11_vuln_min_variation.Value)))
+                    || (ServerConfig.zc_combat_rules_enabled.Value
+                        && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.zc_vuln_min_variation.Value)))
             {
-                var vulnEff = GetProperty(PropertyFloat.VulnEffectivenessOverride) ?? ServerConfig.v11_vuln_effectiveness.Value;
-                var vulnCap = GetProperty(PropertyFloat.VulnCapOverride) ?? ServerConfig.v11_vuln_cap.Value;
+                var vulnEff = GetProperty(PropertyFloat.VulnEffectivenessOverride) ?? ServerConfig.zc_vuln_effectiveness.Value;
+                var vulnCap = GetProperty(PropertyFloat.VulnCapOverride) ?? ServerConfig.zc_vuln_cap.Value;
                 if (zoneProfile != null && zoneProfile.Has(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap))
                     vulnCap = zoneProfile.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.VulnCap);
 
@@ -189,16 +194,16 @@ namespace ACE.Server.WorldObjects
             // take even less. Player defenders never hit this (Player overrides GetResistanceMod). Prestige-gated -> dormant while
             // prestige is off. The zone damage_taken_mult stat that used to override this was REMOVED 2026-08-03 (owner):
             // redundant with damage_resist_rating.
-            if (ServerConfig.v11_mob_dmg_taken_enabled.Value && !(this is Player)
-                && ACE.Server.Managers.PrestigeManager.SystemsEnabled
-                && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.v11_mob_dmg_taken_min_variation.Value)
+            if (ServerConfig.zc_mob_dmg_taken_enabled.Value && !(this is Player)
+                && ServerConfig.zc_combat_rules_enabled.Value
+                && ACE.Server.Managers.VariationManager.GetEffectiveEndgameVariation(this) >= ServerConfig.zc_mob_dmg_taken_min_variation.Value)
             {
-                var dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.v11_mob_dmg_taken_mult.Value;
+                var dmgMult = GetProperty(PropertyFloat.MobDmgTakenOverride) ?? ServerConfig.zc_mob_dmg_taken_mult.Value;
 
                 if (GetProperty(PropertyBool.IsEmpowerSource) == true)
-                    dmgMult *= ServerConfig.v11_mob_dmg_taken_boss_mult.Value;
+                    dmgMult *= ServerConfig.zc_mob_dmg_taken_boss_mult.Value;
 
-                dmgMult = Math.Clamp(dmgMult, ServerConfig.v11_mob_dmg_taken_floor.Value, 1.0);
+                dmgMult = Math.Clamp(dmgMult, ServerConfig.zc_mob_dmg_taken_floor.Value, 1.0);
 
                 resistMod *= (float)dmgMult;
             }

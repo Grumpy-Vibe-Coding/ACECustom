@@ -1465,6 +1465,73 @@ namespace ACE.Server.WorldObjects.Managers
             return GetMultiplicativeMod(PropertyFloat.DamageVariance);
         }
 
+        // ─────────────────────────────────────────────────────────────────────────────────────────────────────
+        // Zone Control aug curves (owner 2026-10-02, ZoneAugCurves_Plan): the same totals with the cast-time
+        // luminance-aug parts taken back OUT - a tier with aug_curves on applies its own curves instead.
+        // ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>The protection multiplier for a damage type at each spell's BASE strength: the life-aug bonus a
+        /// self-cast protection got at cast (GetLifeAugProtectRating(AugmentationLevelWhenCast)) added back.</summary>
+        public float GetProtectionResistanceModNoAugs(DamageType damageType)
+        {
+            var typeFlags = EnchantmentTypeFlags.Float | EnchantmentTypeFlags.SingleStat | EnchantmentTypeFlags.Multiplicative;
+            var enchantments = GetEnchantments_TopLayer(typeFlags, (uint)GetResistanceKey(damageType));
+            var modifier = 1.0f;
+            foreach (var enchantment in enchantments)
+            {
+                var value = enchantment.StatModValue;
+                if (value < 1.0f && (enchantment.AugmentationLevelWhenCast ?? 0) > 0)
+                    value += GetLifeAugProtectRating(enchantment.AugmentationLevelWhenCast.Value);
+                if (value < 1.0f)
+                    modifier *= value;
+            }
+            return Math.Max(modifier, 0f);
+        }
+
+        /// <summary>Impenetrability etc. without the +1 armor level per item aug a self-cast buff got.</summary>
+        public int GetArmorModNoAugs()
+        {
+            var modifier = 0;
+            foreach (var enchantment in GetEnchantments_TopLayer(EnchantmentTypeFlags.Additive, (uint)PropertyInt.ArmorLevel)
+                         .Where(e => (e.StatModType & EnchantmentTypeFlags.Skill) == 0))
+            {
+                var value = enchantment.StatModValue;
+                if (value > 0 && (enchantment.AugmentationLevelWhenCast ?? 0) > 0)
+                    value = Math.Max(0f, value - enchantment.AugmentationLevelWhenCast.Value);
+                modifier += (int)value;
+            }
+            return modifier;
+        }
+
+        /// <summary>Banes without the +0.01 per item aug a self-cast bane got.</summary>
+        public float GetArmorModVsTypeNoAugs(DamageType damageType)
+        {
+            var typeFlags = EnchantmentTypeFlags.Float | EnchantmentTypeFlags.SingleStat | EnchantmentTypeFlags.Additive;
+            var modifier = 0.0f;
+            foreach (var enchantment in GetEnchantments_TopLayer(typeFlags, (uint)GetImpenBaneKey(damageType)))
+            {
+                var value = enchantment.StatModValue;
+                if (value > 0 && (enchantment.AugmentationLevelWhenCast ?? 0) > 0)
+                    value = Math.Max(0f, value - enchantment.AugmentationLevelWhenCast.Value * 0.01f);
+                modifier += value;
+            }
+            return modifier;
+        }
+
+        /// <summary>Armor Self etc. without the +1 per life aug a self-cast buff got (debuffs stay as they are).</summary>
+        public int GetBodyArmorModNoAugs()
+        {
+            var modifier = 0;
+            foreach (var enchantment in GetEnchantments_TopLayer(EnchantmentTypeFlags.BodyArmorValue))
+            {
+                var value = enchantment.StatModValue;
+                if (value > 0 && (enchantment.AugmentationLevelWhenCast ?? 0) > 0)
+                    value = Math.Max(0f, value - enchantment.AugmentationLevelWhenCast.Value);
+                modifier += (int)value;
+            }
+            return modifier;
+        }
+
         /// <summary>
         /// Returns the additive armor level modifier, ie. Impenetrability
         /// </summary>

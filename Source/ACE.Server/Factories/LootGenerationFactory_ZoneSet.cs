@@ -139,7 +139,7 @@ namespace ACE.Server.Factories
         /// to the legacy 2000 constant, preserving pre-plan behavior. Applies to ALL T11+ drops
         /// (weapons, armor, jewelry) — the gate is the tier's, not the weapon system's.
         /// </summary>
-        public static void ApplyT11WieldRequirement(WorldObject wo, int tier = 0)
+        public static void ApplyZoneWieldRequirement(WorldObject wo, int tier = 0)
         {
             if (wo == null)
                 return;
@@ -315,7 +315,7 @@ namespace ACE.Server.Factories
         /// switch is OFF (inert data; flipping Enabled later activates existing drops). Casters
         /// are stamped too — inert until the caster wire-in.
         /// </summary>
-        public static void ApplyWeaponAugScaleStamp(WorldObject wo, int tier)
+        public static void ApplyWeaponAugScaleStamp(WorldObject wo, int tier, ACE.Server.Managers.ZoneScaling.EvaluatedProfile p = null)
         {
             if (wo == null || tier < ZoneLootSetMinTier)
                 return;
@@ -324,7 +324,10 @@ namespace ACE.Server.Factories
 
             // Weighted grade roll (owner 2026-08-02): grade from the config weights table
             // (S ~1-in-1000, A 5 / B 10 / C 15 / D 25 / F 44.9 seeds), uniform within the band.
-            var quality = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.RollQuality();
+            // rank loot (owner 2026-09-29): the kill's rank row can lift the floor and set its own S odds
+            var quality = ACE.Server.Managers.WeaponScaling.WeaponScalingManager.RollQuality(
+                ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeFloorOf(p),
+                p == null ? 0 : (int)System.Math.Round(p.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.GradeSOdds, 0.0)));
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
             wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
 
@@ -341,7 +344,7 @@ namespace ACE.Server.Factories
         /// move the ZoneLootMutator provenance ("Dropped by ...") to the very bottom. Runs LAST in
         /// the Creature_Death presentation sweep. Whitelist-based: a future line-adder must either
         /// run after this or register its prefix here.</summary>
-        public static void FinalizeT11LongDesc(WorldObject wo)
+        public static void FinalizeZoneLongDesc(WorldObject wo)
         {
             var ld = wo?.LongDesc;
             if (string.IsNullOrWhiteSpace(ld))
@@ -424,7 +427,7 @@ namespace ACE.Server.Factories
         /// </summary>
         /// <param name="alwaysRolledFollows">The caller stamps the Always Rolled resists itself right after this (the /testchar
         /// forge), so the T10 resist rolls go even though no zone profile is passed.</param>
-        public static void ApplyT11GearStats(WorldObject wo, int tier,
+        public static void ApplyZoneGearStats(WorldObject wo, int tier,
             ACE.Server.Managers.ZoneScaling.EvaluatedProfile p = null, bool alwaysRolledFollows = false)
         {
             if (wo == null || tier < ZoneLootSetMinTier)
@@ -462,7 +465,7 @@ namespace ACE.Server.Factories
                     foreach (var prop in armorModVsProps)
                         if (!wo.GetProperty(prop).HasValue)
                             wo.SetProperty(prop, protBase);
-                    EqualizeT11ArmorResists(wo, tier, p);
+                    EqualizeZoneArmorResists(wo, tier, p);
                     break;
 
                 case ACE.Entity.Enum.ItemType.Clothing:
@@ -556,7 +559,7 @@ namespace ACE.Server.Factories
         /// honoured. A call with no profile cannot see a ZONE-level override - the tier Default layer is the
         /// authoritative surface for this key.
         /// </summary>
-        public static void EqualizeT11ArmorResists(WorldObject wo, int tier = 0,
+        public static void EqualizeZoneArmorResists(WorldObject wo, int tier = 0,
             ACE.Server.Managers.ZoneScaling.EvaluatedProfile p = null)
         {
             if (wo == null || (wo.ArmorLevel ?? 0) == 0)
@@ -969,7 +972,7 @@ namespace ACE.Server.Factories
         /// cannot be salvaged for material (acceptable: T11 gear is worn, not salvage fodder;
         /// ItemWorkmanship stays, so tinkering ONTO the item still works).
         /// </summary>
-        public static void ApplyT11NamePrefix(WorldObject wo)
+        public static void ApplyZoneNamePrefix(WorldObject wo)
         {
             if (wo == null)
                 return;
@@ -1038,7 +1041,7 @@ namespace ACE.Server.Factories
         /// UiEffects bits (Cold -> Frost, Electric -> Lightning, etc.). Weapons only; a weapon
         /// with no damage type (e.g. a plain caster) keeps whatever it had.
         /// </summary>
-        public static void ApplyT11ElementTint(WorldObject wo)
+        public static void ApplyZoneElementTint(WorldObject wo)
         {
             if (wo == null || !(wo is MeleeWeapon || wo is MissileLauncher || wo is Caster))
                 return;

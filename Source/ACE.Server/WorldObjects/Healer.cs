@@ -211,6 +211,8 @@ namespace ACE.Server.WorldObjects
             {
                 if (PetTrace.Enabled)
                     PetTrace.CombatHealKit(this, healer, target, vital, false, difficulty, 0, false, 0, vital.Current);
+                if (vital.Vital == PropertyAttribute2nd.MaxHealth)
+                    ACE.Server.Managers.CombatBench.OnHeal(healer, target, false, 0);   // Combat Bench pack mode: heal frequency (2026-10-01)
                 var failMsg = new GameMessageSystemChat($"You fail to heal {targetName}.{remainingMsg}", ChatMessageType.Broadcast);
                 healer.Session.Network.EnqueueSend(failMsg, stackSize);
                 if (healer != target && targetPlayer?.Session != null)
@@ -228,7 +230,10 @@ namespace ACE.Server.WorldObjects
             healer.UpdateVitalDelta(healer.Stamina, (int)-staminaCost);
             target.UpdateVitalDelta(vital, healAmount);
             if (vital.Vital == PropertyAttribute2nd.MaxHealth)
+            {
                 target.DamageHistory.OnHeal(healAmount);
+                ACE.Server.Managers.CombatBench.OnHeal(healer, target, true, healAmount);   // Combat Bench pack mode: heal frequency (2026-10-01)
+            }
 
             if (PetTrace.Enabled)
                 PetTrace.CombatHealKit(this, healer, target, vital, true, difficulty, healAmount, critical, staminaCost, traceBefore);

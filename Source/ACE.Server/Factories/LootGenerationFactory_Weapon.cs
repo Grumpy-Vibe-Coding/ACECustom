@@ -62,7 +62,7 @@ namespace ACE.Server.Factories
                 var critDamage = ThreadSafeRandom.Next(0, 1) == 1;
                 var key = critDamage ? 29 : 28;   // 28 Damage Rating, 29 Crit Damage Rating
                 var (min, max) = Managers.ZoneControl.ZoneStatResolver.EffectiveBand(key, profile.Tier);
-                var value = Managers.ZoneControl.ZoneStatResolver.ValueFor(min, max, Managers.ZoneControl.ZoneStatResolver.RollGrade(profile.Tier));
+                var value = Managers.ZoneControl.ZoneStatResolver.ValueFor(min, max, Managers.ZoneControl.ZoneStatResolver.RollGrade(profile.Tier, false, Managers.ZoneControl.ZoneStatResolver.DropFloor));
                 // Frozen at drop, so a mistyped authored band would mint permanent outliers: never above the
                 // line's own T25 catalog ceiling (138 for 28/29).
                 if (Managers.ZoneControl.ZoneModifiers.TryGet(key, out var def))

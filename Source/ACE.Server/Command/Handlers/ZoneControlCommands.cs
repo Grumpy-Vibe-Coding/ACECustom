@@ -335,7 +335,7 @@ namespace ACE.Server.Command.Handlers
                             .Append("|wcid=").Append(wcid?.ToString() ?? "")
                             .Append("|found=").Append(area != null ? 1 : 0)
                             .Append("|override=").Append(hasOverride ? 1 : 0);
-                        foreach (var stat in new[] { ZoneStat.PercentHpBase, ZoneStat.SpellDamage, ZoneStat.SpellVariance, ZoneStat.CritDamageRating })
+                        foreach (var stat in new[] { ZoneStat.PercentHpBase, ZoneStat.SpellDamage, ZoneStat.SpellVariance, ZoneStat.CritDamageRating, ZoneStat.TrueDamage })   // true_damage appended 2026-10-01 (name-matched)
                         {
                             int defined = 0;
                             double value = 0;
@@ -3079,7 +3079,7 @@ namespace ACE.Server.Command.Handlers
 
             try
             {
-                ACE.Server.Factories.LootGenerationFactory.ApplyT11GearStats(armor, 11, p: p);
+                ACE.Server.Factories.LootGenerationFactory.ApplyZoneGearStats(armor, 11, p: p);
                 if (p != null) ZoneLootMutator.MutateLootItem(armor, p, null, 11);
                 // guarantee at least one graded line on the piece regardless of the zone's roll
                 if (ZoneModifiers.TryGet(28, out var dr))
@@ -3478,32 +3478,46 @@ namespace ACE.Server.Command.Handlers
                     sb.Append("|exempt=1");
             }
 
-            // Live server-wide relief-curve defaults (v11_relief_* config, /modify-tunable) so the
+            // Live server-wide relief-curve defaults (zc_relief_* config, /modify-tunable) so the
             // plugin's Curves tab hints/graphs/simulator never drift from what combat actually uses
             // when a zone doesn't author its own anchors. Fixed order: aug s,m,c,b | dr | critdr.
             sb.Append("|reliefdefs=")
-              .Append(ServerConfig.v11_relief_aug_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_aug_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_aug_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_aug_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_dr_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_dr_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_dr_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_dr_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_critdr_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_critdr_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_critdr_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_relief_critdr_bend.Value.ToString(CultureInfo.InvariantCulture));
+              .Append(ServerConfig.zc_relief_aug_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_aug_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_aug_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_aug_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_dr_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_dr_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_dr_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_dr_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_critdr_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_critdr_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_critdr_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_relief_critdr_bend.Value.ToString(CultureInfo.InvariantCulture));
 
             // Live shard-wide tuning defaults for the plugin's Curves Server-defaults view
             // (owner-approved 2026-07-28). Fixed order: pcthp variance, pcthp crit mult,
             // vuln effectiveness, vuln cap, vuln enabled (1/0).
             sb.Append("|tunedefs=")
-              .Append(ServerConfig.v11_pcthp_variance.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_pcthp_crit_mult.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_vuln_effectiveness.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_vuln_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
-              .Append(ServerConfig.v11_vuln_enabled.Value ? '1' : '0');
+              .Append(ServerConfig.zc_pcthp_variance.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_pcthp_crit_mult.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_vuln_effectiveness.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_vuln_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_vuln_enabled.Value ? '1' : '0');
+
+            // Aug curves + True Damage server defaults (owner 2026-10-02, APPEND-ONLY new key). Fixed order: protections
+            // (life) start, max, cap, bend | armor (item) start, max, cap, bend | True Damage crit mult, variance.
+            sb.Append("|augcurvedefs=")
+              .Append(ServerConfig.zc_aug_prot_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_prot_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_prot_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_prot_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_armor_start.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_armor_max.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_armor_cap.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_aug_armor_bend.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_true_damage_crit_mult.Value.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(ServerConfig.zc_true_damage_variance.Value.ToString(CultureInfo.InvariantCulture));
 
             // Live diagnostics-bool states so the plugin's Log-section toggles show truth.
             // Fixed order: damage_event_debug_server_log, damage_event_debug_only_nonplayer_attackers,
@@ -5490,7 +5504,8 @@ namespace ACE.Server.Command.Handlers
                 ZoneStat.MeleeDefense, ZoneStat.MissileDefense, ZoneStat.MagicDefense,
                 ZoneStat.ArmorLevel, ZoneStat.AttackDamage,
                 // offense coverage (2026-09-02, mob->player lane): what makes a T11 monster HIT like one
-                ZoneStat.DamageRating, ZoneStat.CritRating, ZoneStat.CritDamageRating, ZoneStat.PercentHpBase,
+                // 2026-10-01: True Damage is the main monster damage; the %HP floor is optional, so it is not core
+                ZoneStat.DamageRating, ZoneStat.CritRating, ZoneStat.CritDamageRating, ZoneStat.TrueDamage,
             };
             r.CoreTotal = core.Length;
             r.CoreMissing = core.Where(c => !Has(c)).ToList();

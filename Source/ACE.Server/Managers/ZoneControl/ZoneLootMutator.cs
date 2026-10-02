@@ -39,7 +39,7 @@ namespace ACE.Server.Managers.ZoneControl
             // the creature's effective variation; killed = the dropping monster). Every non-coin drop gets it.
             if (!string.IsNullOrEmpty(p.ScopeKey))
             {
-                // Two-line provenance (owner 2026-08-01). FinalizeT11LongDesc and the AppraiseInfo
+                // Two-line provenance (owner 2026-08-01). FinalizeZoneLongDesc and the AppraiseInfo
                 // projection-insert anchor on the "Dropped by"/"Location:" prefixes - the three
                 // move together.
                 var variation = killed != null ? ZoneControlManager.GetEffectiveVariation(killed) : 0;
@@ -215,10 +215,12 @@ namespace ACE.Server.Managers.ZoneControl
         /// <returns>The DISPLAY value that landed (Crushing Blow: the advertised multiplier, not the
         /// stored one) - for a caller that reports what it stamped. TrySpecialRolls ignores it.</returns>
         private static double StampWeaponCard(WorldObject wo, EvaluatedProfile p,
-            ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
+            ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax, int? fixedGrade = null)
         {
             var (lo, hi) = ZoneStatResolver.WeaponDropBand(p, ws, tier);
-            var grade = ZoneStatResolver.RollGrade(tier, forceMax);
+            // fixedGrade: the forge's fixed-grade premade only (Combat Bench, 2026-09-29) - drops always roll
+            var grade = fixedGrade.HasValue ? Math.Clamp(fixedGrade.Value, 0, ZoneStatResolver.GradeMax)
+                : ZoneStatResolver.RollGrade(tier, forceMax, ZoneStatResolver.GradeFloorOf(p));
             var display = Math.Clamp(ZoneStatResolver.ValueForD(lo, hi, grade), ws.Band.Lo, ws.Band.Hi);
             // EngineValue is the ONE display -> engine conversion in the server (Crushing Blow's
             // "- 1.0"). Do not subtract anything here and do not pre-convert before calling: the
@@ -241,8 +243,8 @@ namespace ACE.Server.Managers.ZoneControl
         /// Default is authored and the ladder should rule.
         /// </summary>
         public static double StampWeaponCardForForge(WorldObject wo, EvaluatedProfile p,
-            ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax)
-            => StampWeaponCard(wo, p, ws, tier, forceMax);
+            ZoneStatResolver.WeaponSpecial ws, int tier, bool forceMax, int? fixedGrade = null)
+            => StampWeaponCard(wo, p, ws, tier, forceMax, fixedGrade);
 
         // ── pre-applied craft deltas that land on a CARD's own property ────────────────────────────
         // These two mirror the live Bandit Hilt recipe (527870063) and are stamped by the hilt block at
@@ -691,7 +693,7 @@ namespace ACE.Server.Managers.ZoneControl
 
             // WEAPON RESOLVE IDENTITY, last, once the record is final (2026-08-25).
             //
-            // Armour gets this from LootGenerationFactory.ApplyT11GearStats -> StampIdentity, but that
+            // Armour gets this from LootGenerationFactory.ApplyZoneGearStats -> StampIdentity, but that
             // method returns at its `default:` case for weapons and casters, so nothing ever stamped a
             // weapon's ZcResolvedVersion. An unstamped weapon reads 0, which is a legitimate stamp
             // value (tier ladder v0, Zone Control on), so a weapon that dropped on a v0 tier would look
@@ -767,7 +769,7 @@ namespace ACE.Server.Managers.ZoneControl
                 // Option A: T11 uniform, climbing to 10/30/60 at T25) and stamp it through the record;
                 // the prop value is ValueFor(grade) inside the effective band. Key 49 Reinforced routes
                 // to the plain Stamp inside StampGraded (earned + frozen, never in the record).
-                var grade = ZoneStatResolver.RollGrade(lootTier, forceMax);
+                var grade = ZoneStatResolver.RollGrade(lootTier, forceMax, ZoneStatResolver.GradeFloorOf(p));
                 ZoneModifiers.StampGraded(wo, def, grade, (min, max));
             }
 

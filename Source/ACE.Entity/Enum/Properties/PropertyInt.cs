@@ -835,9 +835,13 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>On a T11+ weapon: the quality percentile roll (0-1000). The server-wide
         /// weaponscaling_data config maps quality -> the k coefficient at swing time, so config
         /// edits re-price every stamped weapon live. Absent = the weapon has no scaling term.</summary>
+        // [AssessmentProperty] (owner 2026-09-29): sent in appraisal so VTank loot rules can test it numerically
+        [AssessmentProperty]
         WeaponAugScaleQuality                   = 9060,
         /// <summary>On a T11+ weapon: the loot tier it was stamped at. Selects the tier row
         /// (scaling cap / min-wield augs) in the weaponscaling_data config.</summary>
+        // [AssessmentProperty] (owner 2026-09-29): sent in appraisal so VTank loot rules can test it numerically
+        [AssessmentProperty]
         WeaponAugScaleTier                      = 9061,
 
         /// <summary>
@@ -917,6 +921,8 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>Zone Control live stat resolution (2026-08-22): the loot TIER a ZC-lined piece was
         /// stamped at. Picks the ladder row (per-variation Default bands / core anchors) that resolves
         /// its grades. Outside the 50200-50399 cantrip block on purpose - that block is summed on equip.</summary>
+        // [AssessmentProperty] (owner 2026-09-29): sent in appraisal so VTank loot rules can test it numerically
+        [AssessmentProperty]
         ZcTier = 50109,
         /// <summary>The per-tier ladder version this piece's retail props were last resolved against
         /// (ZoneControlManager.GetLadderVersion). A mismatch on equip re-resolves + re-stamps.</summary>

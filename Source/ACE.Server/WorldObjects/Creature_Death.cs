@@ -53,6 +53,13 @@ namespace ACE.Server.WorldObjects
             IsTurning = false;
             IsMoving = false;
 
+            // Combat Bench: a bench monster closes its fight and grants nothing - no kill task, XP or Bounty
+            if (CombatBench.OnBenchDeath(this))
+            {
+                StopEnrageLoops();
+                return GetDeathMessage(lastDamager, damageType, criticalHit);
+            }
+
             StopEnrageLoops();   // audit 2026-09-13 (C1): orphans the enrage action chains
 
             // Reset fog to Clear upon death only if the creature was enraged
@@ -186,14 +193,17 @@ namespace ACE.Server.WorldObjects
             var motionDeath = new Motion(MotionStance.NonCombat, MotionCommand.Dead);
             var deathAnimLength = ExecuteMotion(motionDeath);
 
+            // Combat Bench monsters drop nothing and run no death emote (gives, stamps)
+            var benchMob = CombatBench.IsBench(this);
+
             // Try to generate Siphon Lens before death emotes (which might destroy the creature)
-            if (!(this is Pet))
+            if (!(this is Pet) && !benchMob)
                 GenerateSiphonLens(topDamager);
 
-            if (EmoteManager != null)
+            if (EmoteManager != null && !benchMob)
             {
                 EmoteManager.OnDeath(lastDamager);
-            }            
+            }
 
             var dieChain = new ActionChain();
 
@@ -674,6 +684,9 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (CombatBench.IsBenchMob(this))   // Combat Bench: no corpse, no loot
+                return;
+
             if (NoCorpse)
             {
                 if (killer != null && killer.IsOlthoiPlayer) return;
@@ -1134,8 +1147,11 @@ namespace ACE.Server.WorldObjects
                         zoneLoot.Get(ACE.Server.Managers.ZoneScaling.ZoneStat.LootWeightCloak, 1.0));
                 }
 
+                // rank loot (owner 2026-09-29): the kill's grade floor reaches the value rolls inside item creation
+                var dropFloor = ACE.Server.Managers.ZoneControl.ZoneStatResolver.GradeFloorOf(zoneLoot);
                 if (slotCounts.Any)
-                    items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, slotCounts));
+                    using (ACE.Server.Managers.ZoneControl.ZoneStatResolver.ScopeDropFloor(dropFloor))
+                        items.AddRange(LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, slotCounts));
 
                 // Armor v2 slot special (owner 2026-08-21): ONE roll per KILL, retail-rare model
                 // (1 in special_odds; IsZcBoss divides by special_boss_mult, IsZcLeader by
@@ -1193,7 +1209,9 @@ namespace ACE.Server.WorldObjects
                                     case ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialSlotId.Cloak: one.Cloak = 1; break;
                                     default: one.Chest = 1; break;
                                 }
-                                var spawned = LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, one);
+                                List<WorldObject> spawned;
+                                using (ACE.Server.Managers.ZoneControl.ZoneStatResolver.ScopeDropFloor(dropFloor))
+                                    spawned = LootGenerationFactory.CreateZoneLootSet(effectiveTreasure, one);
                                 specialPiece = spawned.FirstOrDefault(i => ACE.Server.Managers.ZoneControl.ZoneModifiers.SpecialPieceMatches(i, slotId));
                                 items.AddRange(spawned);
                             }
@@ -1227,7 +1245,7 @@ namespace ACE.Server.WorldObjects
                     // stamps layer ON TOP of it rather than being clobbered.
                     var isSpecial = specialPiece != null && ReferenceEquals(wo, specialPiece);
                     if (effectiveTreasure.Tier >= LootGenerationFactory.ZoneLootSetMinTier)
-                        LootGenerationFactory.ApplyT11GearStats(wo, effectiveTreasure.Tier, p: zoneLoot);
+                        LootGenerationFactory.ApplyZoneGearStats(wo, effectiveTreasure.Tier, p: zoneLoot);
 
                     // Zone Control loot: post-roll per-item mutations (weapon stats, AL, workmanship, coins,
                     // value, and the low-chance special-property rolls)
@@ -1241,7 +1259,7 @@ namespace ACE.Server.WorldObjects
                             ? (sBand.Min, sBand.Max) : ACE.Server.Managers.ZoneControl.ZoneModifiers.CatalogBandAt(specialDef, effectiveTreasure.Tier);
                         if (sMin > sMax) (sMin, sMax) = (sMax, sMin);
                         // specials join the grade model (owner 2026-08-22): graded roll, recorded in ZcModifiers
-                        var sGrade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.RollGrade(effectiveTreasure.Tier, false);
+                        var sGrade = ACE.Server.Managers.ZoneControl.ZoneStatResolver.RollGrade(effectiveTreasure.Tier, false, dropFloor);
                         ACE.Server.Managers.ZoneControl.ZoneModifiers.StampGraded(wo, specialDef, sGrade, (sMin, sMax));
                     }
 
@@ -1251,20 +1269,20 @@ namespace ACE.Server.WorldObjects
                     {
                         // ALL inherited wield reqs removed, replaced by the per-tier item-aug gate
                         LootGenerationFactory.StripWieldRequirements(wo);
-                        LootGenerationFactory.ApplyT11WieldRequirement(wo, effectiveTreasure.Tier);
+                        LootGenerationFactory.ApplyZoneWieldRequirement(wo, effectiveTreasure.Tier);
 
                         // Weapon aug-scaling identity: quality roll + tier (weapons/casters only)
-                        LootGenerationFactory.ApplyWeaponAugScaleStamp(wo, effectiveTreasure.Tier);
+                        LootGenerationFactory.ApplyWeaponAugScaleStamp(wo, effectiveTreasure.Tier, zoneLoot);
 
                         // one uniform resist value across all eight elements. Pass the tier AND the
                         // zone profile: without the profile the armor_prot_equalize switch resolves
                         // from the tier Default only, so a ZONE-level override would be silently
                         // ignored on this path while working everywhere else.
-                        LootGenerationFactory.EqualizeT11ArmorResists(wo, effectiveTreasure.Tier, zoneLoot);
+                        LootGenerationFactory.EqualizeZoneArmorResists(wo, effectiveTreasure.Tier, zoneLoot);
 
                         // description cleanup LAST: drop inherited weenie flavor text, keep our
                         // lines in order, provenance ("Dropped by") to the very bottom
-                        LootGenerationFactory.FinalizeT11LongDesc(wo);
+                        LootGenerationFactory.FinalizeZoneLongDesc(wo);
 
                         // Live stat resolution self-check: the record must resolve to exactly what
                         // was stamped (grades are the truth, props the cache). Cheap, once per piece.
@@ -1276,10 +1294,10 @@ namespace ACE.Server.WorldObjects
                         // last) without touching the default layout.
 
                         // "T11 - [base name]" (material cleared -- the client would prefix it)
-                        LootGenerationFactory.ApplyT11NamePrefix(wo);
+                        LootGenerationFactory.ApplyZoneNamePrefix(wo);
 
                         // name tinted by damage element (trial 2026-07-20, may revert)
-                        LootGenerationFactory.ApplyT11ElementTint(wo);
+                        LootGenerationFactory.ApplyZoneElementTint(wo);
                     }
 
                     if (corpse != null)

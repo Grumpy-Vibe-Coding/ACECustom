@@ -558,7 +558,7 @@ namespace ACE.Server.Command.Handlers
         // TWType = the loot pipeline's weapon type for this class, used by the tier-10 forge
         // path to run the bench weenie through the SAME mutation scripts a real T10 drop rolls
         // (owner 2026-08-15: T10 forge output must match the existing T10 loot table range).
-        private static readonly (string Key, uint Wcid, string CleanName, ACE.Server.Factories.Enum.TreasureWeaponType TWType)[] ForgeClasses =
+        internal static readonly (string Key, uint Wcid, string CleanName, ACE.Server.Factories.Enum.TreasureWeaponType TWType)[] ForgeClasses =
         {
             ("sword",     30566, "Sword", ACE.Server.Factories.Enum.TreasureWeaponType.Sword),      // swordsabra — single strike
             ("sword_ms",   6853, "Rapier", ACE.Server.Factories.Enum.TreasureWeaponType.SwordMS),   // swordrapier — multi-strike
@@ -581,7 +581,7 @@ namespace ACE.Server.Command.Handlers
             ("wand",      29265, "Sceptre", ACE.Server.Factories.Enum.TreasureWeaponType.Caster),       // wandslashing (gets EDM 1.5)
         };
 
-        private static DamageType? ParseElement(string s)
+        internal static DamageType? ParseElement(string s)
         {
             return s?.ToLowerInvariant() switch
             {
@@ -627,6 +627,9 @@ namespace ACE.Server.Command.Handlers
             // premade (owner 2026-09-01): the drop-equivalent four-card set for the tier; when set, every
             // other key in the clause is ignored. bis = band top, avg = the drop's own random grade.
             public bool Premade; public bool PremadeBis = true;
+            // premadegrade=0-1000 (Combat Bench, owner 2026-09-29): every premade card at this ONE fixed grade instead of
+            // bis/avg - repeatable forges, and the bench matches it to the weapon's quality (grade B = 850 on both)
+            public int? PremadeGrade;
         }
 
         private const ImbuedEffectType ForgeAllRends =
@@ -684,6 +687,11 @@ namespace ACE.Server.Command.Handlers
                             default: return $"cards: premade must be bis or avg, got '{val}'";
                         }
                         break;
+                    case "premadegrade":
+                        if (val == null || !int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pg) || pg < 0 || pg > 1000)
+                            return $"cards: premadegrade must be 0-1000, got '{val}'";
+                        cards.PremadeGrade = pg;
+                        break;
                     default: return $"cards: unknown key '{key}'";
                 }
             }
@@ -710,7 +718,7 @@ namespace ACE.Server.Command.Handlers
             // premade wins outright - it IS a card set, and mixing hand-set keys into it would make
             // the weapon something no drop at the tier can be (owner 2026-09-01)
             if (c.Premade)
-                return ApplyPremadeCards(wo, c.PremadeBis, tier);
+                return ApplyPremadeCards(wo, c.PremadeBis, tier, c.PremadeGrade);
 
             var isMelee = wo is MeleeWeapon;
             var isMissile = wo is MissileLauncher;
@@ -906,7 +914,7 @@ namespace ACE.Server.Command.Handlers
 
         /// <summary>Stamps the four premade cards and returns the forge note, e.g.
         /// " | premade bis T11: Rending Fire 2.13x, Slayer(all) 2.10x, Biting Strike 0.40, Crushing Blow 4.00x".</summary>
-        private static string ApplyPremadeCards(WorldObject wo, bool bis, int tier)
+        private static string ApplyPremadeCards(WorldObject wo, bool bis, int tier, int? grade = null)
         {
             var p = TierDefaultProfile(tier, out var authored);
             var landed = new List<string>();
@@ -919,7 +927,7 @@ namespace ACE.Server.Command.Handlers
             {
                 wo.ImbuedEffect |= rend;
                 ZoneLootMutator.ApplyRendUnderlay(wo, rend);
-                var power = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecRendPower, tier, bis);
+                var power = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecRendPower, tier, bis, grade);
                 landed.Add($"Rending {rend.ToString().Replace("Rending", "")} {power:0.00}x");
             }
             else
@@ -927,18 +935,18 @@ namespace ACE.Server.Command.Handlers
 
             // 2. Slayer of all creatures (forge-only flag; the drop path never sets it)
             wo.SetProperty(PropertyBool.SlayerAllCreatures, true);
-            var slayer = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecSlayer, tier, bis);
+            var slayer = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecSlayer, tier, bis, grade);
             landed.Add($"Slayer(all) {slayer:0.00}x");
 
             // 3. Biting Strike (crit chance, a 0..1 fraction)
-            var bite = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecBite, tier, bis);
+            var bite = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecBite, tier, bis, grade);
             landed.Add($"Biting Strike {bite:0.00}");
 
             // 4. Crushing Blow - the wrapper returns the DISPLAY multiplier; what it stored is display - 1
-            var crush = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecCrush, tier, bis);
+            var crush = ZoneLootMutator.StampWeaponCardForForge(wo, p, ZoneStatResolver.SpecCrush, tier, bis, grade);
             landed.Add($"Crushing Blow {crush:0.00}x");
 
-            var note = $" | premade {(bis ? "bis" : "avg")} T{tier}: " + string.Join(", ", landed);
+            var note = $" | premade {(grade.HasValue ? $"grade {grade}" : bis ? "bis" : "avg")} T{tier}: " + string.Join(", ", landed);
             if (!authored)
                 note += " [no tier Default authored - ladder bands]";
             if (skipped.Count > 0)
@@ -1019,10 +1027,10 @@ namespace ACE.Server.Command.Handlers
             // them in mutation; this covers the T11+ bench path.
             ACE.Server.Factories.LootGenerationFactory.ApplyStandardWeaponMods(wo, tier);
             // T10 = the basic tier, no aug wield gate (same rule as /asforge armor). A minwield-0
-            // tier row would NOT give that: ApplyT11WieldRequirement falls back to the global gate.
+            // tier row would NOT give that: ApplyZoneWieldRequirement falls back to the global gate.
             if (tier >= 11)
             {
-                ACE.Server.Factories.LootGenerationFactory.ApplyT11WieldRequirement(wo, tier);
+                ACE.Server.Factories.LootGenerationFactory.ApplyZoneWieldRequirement(wo, tier);
                 wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleQuality, quality);
                 wo.SetProperty(ACE.Entity.Enum.Properties.PropertyInt.WeaponAugScaleTier, tier);
             }
@@ -1034,8 +1042,9 @@ namespace ACE.Server.Command.Handlers
 
             // premade weapons carry the mode in the name so a BiS and an Avg at one tier never collide
             // on the duplicate guard below (the "(BiS)" convention /asforge premade already uses)
+            // a fixed-grade premade (the Combat Bench's) is "Bench", so it never re-uses a random-roll Avg of the same quality
             var tag = (tier == 10 ? "Test T10" : $"Test q{quality}")
-                + (cards != null && cards.Premade ? (cards.PremadeBis ? " BiS" : " Avg") : "");
+                + (cards != null && cards.Premade ? (cards.PremadeGrade.HasValue ? " Bench" : cards.PremadeBis ? " BiS" : " Avg") : "");
 
             if (element != null)
             {

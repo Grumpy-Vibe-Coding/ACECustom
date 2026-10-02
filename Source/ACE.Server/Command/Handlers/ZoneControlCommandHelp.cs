@@ -36,7 +36,7 @@ namespace ACE.Server.Command.Handlers
             E("Zones", "/zonecontrol rename", "<old> <new...>", "Rename a zone."),
             E("Zones", "/zonecontrol enable", "<name>", "Turn a zone on (its stats, props and effects apply)."),
             E("Zones", "/zonecontrol disable", "<name>", "Turn a zone off without deleting it."),
-            E("Zones", "/zonecontrol setvar", "<name> <variation>", "Move a zone to another variation (11+ = prestige layers)."),
+            E("Zones", "/zonecontrol setvar", "<name> <variation>", "Move a zone to another variation (11-25 = the Zone Control tiers)."),
             E("Zones", "/zonecontrol clonezone", "<zone> <variation|lo-hi>", "Clone a zone to other variations, e.g. clonezone Tou Tou 12-25."),
             E("Zones", "/zonecontrol addlb", "<name> <hex|here> [more...]", "Add landblocks to a zone (comma lists ok: F559,F55A)."),
             E("Zones", "/zonecontrol removelb", "<name> <hex>", "Remove one landblock from a zone."),

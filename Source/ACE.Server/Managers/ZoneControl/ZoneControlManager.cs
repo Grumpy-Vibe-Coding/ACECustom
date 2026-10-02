@@ -868,7 +868,10 @@ namespace ACE.Server.Managers.ZoneControl
                 return null;
 
             var rank = RankOf(best, creature);
-            return best.Wcid.TryGetValue(creature.WeenieClassId, out var wp) ? wp[(int)rank] : best.ByRank[(int)rank];
+            var profile = best.Wcid.TryGetValue(creature.WeenieClassId, out var wp) ? wp[(int)rank] : best.ByRank[(int)rank];
+            // Combat Bench matrix (owner 2026-10-02): test-only stat overrides on a bench-spawned monster, never stored.
+            // A no-op (one empty-dictionary check) unless a matrix run is going.
+            return CombatBench.ApplyOverlay(creature, rank, profile);
         }
 
         /// <summary>The winning ZoneRef for a creature from the lock-free snapshot, or null: no enabled zone
@@ -1038,6 +1041,11 @@ namespace ACE.Server.Managers.ZoneControl
         /// </summary>
         public static EvaluatedProfile ResolveZoneDefaultForPlayer(Player player)
             => GoverningZoneRef(player)?.Default;
+
+        /// <summary>The governing zone's profile for one RANK at the player's spot - what a monster of that rank dying
+        /// here would drop with (no per-WCID bucket). /bench lootsim (2026-09-29). Null outside every enabled zone.</summary>
+        public static EvaluatedProfile ResolveZoneRankForPlayer(Player player, ZcRank rank)
+            => GoverningZoneRef(player)?.ByRank[(int)rank];
 
         /// <summary>
         /// The enabled zone that governs where this object stands, at its effective variation: most-specific wins (the zone
