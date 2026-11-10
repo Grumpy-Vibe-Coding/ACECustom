@@ -1772,7 +1772,10 @@ namespace ACE.Server.Entity
                 // A saved per-placement size (landblock_instance.scale) that the spawn placement refuses must never make the
                 // object vanish: warn, and retry once at the WCID's own size (2026-09-15 - a plate saved at size 2 silently
                 // never spawned and could not be found to fix).
-                if (!success && wo.InstanceScale.HasValue)
+                // A placement failure destroys and nulls wo.PhysicsObj, so the retry rebuilds it (InitPhysicsObj reads
+                // ObjScale). The variation-mismatch refusal leaves the PhysicsObj alive - size is not the cause there, and
+                // re-initing would register a second PhysicsObj under the same guid - so it is not retried.
+                if (!success && wo.PhysicsObj == null && wo.InstanceScale.HasValue)
                 {
                     var weenie = DatabaseManager.World.GetCachedWeenie(wo.WeenieClassId);
                     float? weenieScale = null;
@@ -1784,7 +1787,7 @@ namespace ACE.Server.Entity
 
                     wo.InstanceScale = null;
                     wo.ObjScale = weenieScale;
-                    wo.PhysicsObj.SetScaleStatic(weenieScale ?? 1.0f);
+                    wo.InitPhysicsObj(VariationId);
                     success = wo.AddPhysicsObj(VariationId);
                 }
 
