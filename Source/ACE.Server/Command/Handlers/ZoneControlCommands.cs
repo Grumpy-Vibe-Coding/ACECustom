@@ -3194,7 +3194,7 @@ namespace ACE.Server.Command.Handlers
                 sb.Append("|sess=").Append(sp.Adminvision ? 1 : 0).Append(',')
                   .Append(sp.Attackable ? 1 : 0).Append(',')
                   .Append(sp.IsUnkillable ? 1 : 0).Append(',')
-                  .Append(sp.CloakStatus != CloakStatus.Off ? 1 : 0).Append(',')
+                  .Append(sp.CloakStatus == CloakStatus.On || sp.CloakStatus == CloakStatus.Ghost ? 1 : 0).Append(',')   // cloaked = hidden (on / ghost); player / creature / hybrid / undef are visible (2026-11-06)
                   .Append(sp.IgnorePortalRestrictions ? 1 : 0);
         }
 

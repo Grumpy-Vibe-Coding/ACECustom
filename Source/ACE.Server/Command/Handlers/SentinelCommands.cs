@@ -89,6 +89,8 @@ namespace ACE.Server.Command.Handlers
                         return;
 
                     session.Player.SetProperty(PropertyInt.CloakStatus, (int)CloakStatus.On);
+                    // creature / hybrid set Attackable and nothing set it back: monsters attacked the invisible admin (2026-11-06)
+                    session.Player.Attackable = false;
                     session.Player.HandleCloak();
 
                     CommandHandlerHelper.WriteOutputInfo(session, $"You are now cloaked.\nYou are now ethereal and can pass through doors.", ChatMessageType.Broadcast);
@@ -101,6 +103,7 @@ namespace ACE.Server.Command.Handlers
                     // so it has to be the state we are moving INTO. Already cloaked (On -> Ghost) and it just
                     // redoes the self-side view.
                     session.Player.SetProperty(PropertyInt.CloakStatus, (int)CloakStatus.Ghost);
+                    session.Player.Attackable = false;   // as "on" (2026-11-06)
                     session.Player.HandleCloak();
 
                     CommandHandlerHelper.WriteOutputInfo(session, $"You are now a ghost: invisible to everyone else and able to pass through doors, but you can still see yourself.", ChatMessageType.Broadcast);
