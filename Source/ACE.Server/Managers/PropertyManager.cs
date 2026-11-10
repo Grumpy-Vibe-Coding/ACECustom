@@ -903,6 +903,10 @@ namespace ACE.Server.Managers
         public static ConfigProperty<double> spellcast_max_angle { get; private set; } = new(20.0, "for advanced player spell casting, the maximum angle to target release a spell projectile. retail seemed to default to value of around 20, although some players seem to prefer a higher 45 degree angle");
         public static ConfigProperty<double> trophy_drop_rate { get; private set; } = new(1.0, "Modifier for trophies dropped on creature death");
         public static ConfigProperty<double> unlocker_window { get; private set; } = new(10.0, "The number of seconds a player unlocking a chest has exclusive access to first opening the chest.");
+        public static ConfigProperty<bool> trader_enabled { get; private set; } = new(true, "Player Traders: if disabled, /trader and every player trader refuse");
+        public static ConfigProperty<long> trader_listings_per_category { get; private set; } = new(100, "Player Traders: items a trader may hold per vendor-window category (Armor, Weapons ...); 255 items in all at most");
+        public static ConfigProperty<long> trader_luminance_unit { get; private set; } = new(1000000000, "Player Traders: how much Luminance one unit of a Luminance trader's price is (owner 10-28: 1 = 1 billion)");
+        public static ConfigProperty<double> trader_dismiss_days { get; private set; } = new(14.0, "Player Traders: a trader is put away (stock kept) when no character of its account has logged in for this many days");
         public static ConfigProperty<double> vendor_unique_rot_time { get; private set; } = new(300, "the number of seconds before unique items sold to vendors disappear");
         public static ConfigProperty<double> vitae_penalty { get; private set; } = new(0.05, "the amount of vitae penalty a player gets per death");
         public static ConfigProperty<double> vitae_penalty_max { get; private set; } = new(0.40, "the maximum vitae penalty a player can have");

@@ -40,6 +40,14 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            // Player Traders: a player's trader sells its owner's stock for banked coins / Luminance, after a Yes / No
+            if (vendor is PlayerTrader trader)
+            {
+                TraderManager.HandleBuy(this, trader, items);
+                SendUseDoneEvent();
+                return;
+            }
+
             // if this succeeds, it automatically calls player.FinalizeBuyTransaction()
             vendor.BuyItems_ValidateTransaction(items, this);
 
@@ -133,6 +141,14 @@ namespace ACE.Server.WorldObjects
             if (vendor == null)
             {
                 SendUseDoneEvent(WeenieError.NoObject);
+                return;
+            }
+
+            // Player Traders: "selling" to your own trader stocks it (nothing is paid); nobody else can sell to a trader
+            if (vendor is PlayerTrader trader)
+            {
+                TraderManager.HandleStock(this, trader, itemProfiles);
+                SendUseDoneEvent();
                 return;
             }
 

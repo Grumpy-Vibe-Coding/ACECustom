@@ -322,6 +322,10 @@ namespace ACE.Server.WorldObjects
 
         public void EquipInventoryItems(bool weaponsOnly = false)
         {
+            // Player Traders: a trader's inventory is its owner's stock for sale - it never wears it
+            if (this is PlayerTrader)
+                return;
+
             var items = weaponsOnly ? SelectWieldedWeapons() : SelectWieldedTreasure();
 
             if (items == null) return;

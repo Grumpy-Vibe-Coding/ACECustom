@@ -56,6 +56,12 @@ namespace ACE.Entity.Enum.Properties
         // 50000+ block (matches the PropertyInt/PropertyBool charm-system ids)
         /// <summary>Charm of the Triune Weave: each point grants +1 Creature, +1 Item, and +1 Life augmentation on top of the (capped) gem-bought counts.</summary>
         TriuneWeaveCount       = 50000,
+
+        /// <summary>Player Traders (2026-10-28): on a trader, the account that owns it (one trader per account). Server-only.</summary>
+        TraderAccount          = 50711,
+        /// <summary>Player Traders: on an item in a trader's stock, its price in the trader's currency (0 / missing = not for sale yet).
+        /// Server-only - the item's real Value is never changed; the price is only written as Value into the trader's window.</summary>
+        TraderPrice            = 50713,
         // School charm counters. Each adds to its own school's effective augmentation count at
         // bonus-application sites, which is how a player passes the 4,000 cap: the cap bounds what
         // luminance can buy, and a charm is a separate path bought with Prestige Coins. Purchases,

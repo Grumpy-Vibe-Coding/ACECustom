@@ -28,6 +28,9 @@ namespace ACE.Server.WorldObjects
     {
         private readonly object balanceLock = new object();
 
+        /// <summary>Player Traders (2026-10-28): a sale debits the buyer's bank and credits the seller's under the same lock as /bank.</summary>
+        internal object BalanceLock => balanceLock;
+
         // Banking system constants
         private const int PYREAL_MAX_STACK = 25000;
         private const int ENLIGHTENED_COIN_MAX_STACK = 25000;

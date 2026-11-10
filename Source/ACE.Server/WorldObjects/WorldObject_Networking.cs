@@ -97,7 +97,7 @@ namespace ACE.Server.WorldObjects
                 writer.Write((ushort?)AmmoType ?? 0);
 
             if ((weenieFlags & WeenieHeaderFlag.Value) != 0)
-                writer.Write(Value ?? 0);
+                writer.Write(TraderManager.WindowPrice(this) ?? Value ?? 0);   // Player Traders: the listing price, in the trader's window only
 
             if ((weenieFlags & WeenieHeaderFlag.Usable) != 0)
                 writer.Write((uint?)ItemUseable ?? 0u);

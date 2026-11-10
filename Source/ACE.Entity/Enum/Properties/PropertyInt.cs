@@ -910,6 +910,10 @@ namespace ACE.Entity.Enum.Properties
         /// </summary>
         VariationScaledSpawnStep = 50111,
 
+        /// <summary>Player Traders (2026-10-28): on a trader, the currency its items sell for (1 = Enlightened Coins, 2 = Luminance,
+        /// in units of trader_luminance_unit). Server-only. 50710-50719 free in every enum, branch and DB.</summary>
+        TraderCurrency = 50712,
+
         /// <summary>TEST HOOK (pairs with PropertyBool.ForceEndgameSystems): the ENDGAME CONTENT variation this
         /// creature should SIMULATE when force-enabled at a non-endgame variation. Drives percent-HP growth and
         /// the v11 combat gates. Unset — or any value below 11 — resolves to v11, i.e. the dummy behaves exactly

@@ -54,6 +54,8 @@ namespace ACE.Server.Factories
                 case WeenieType.Scroll:
                     return new Scroll(weenie, guid);
                 case WeenieType.Vendor:
+                    if (weenie.WeenieClassId == TraderManager.TraderWcid)
+                        return new PlayerTrader(weenie, guid);
                     return new Vendor(weenie, guid);
                 case WeenieType.Coin:
                     return new Coin(weenie, guid);
@@ -171,6 +173,8 @@ namespace ACE.Server.Factories
                 case WeenieType.Scroll:
                     return new Scroll(biota);
                 case WeenieType.Vendor:
+                    if (biota.WeenieClassId == TraderManager.TraderWcid)
+                        return new PlayerTrader(biota);
                     return new Vendor(biota);
                 case WeenieType.Coin:
                     return new Coin(biota);

@@ -28,6 +28,7 @@ namespace ACE.Server.Managers
         public const string TransferTypeGroundDrop = "Ground Drop";
         public const string TransferTypeChestDeposit = "Chest Deposit";
         public const string TransferTypeChestWithdrawal = "Chest Withdrawal";
+        public const string TransferTypeTraderSale = "Trader Sale";   // Player Traders (2026-10-28): a buyer's purchase from a player's trader
         
         // Value calculation constants
         private const int DefaultItemValue = 100;

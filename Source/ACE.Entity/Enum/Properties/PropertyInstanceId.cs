@@ -73,6 +73,10 @@ namespace ACE.Entity.Enum.Properties
         LastSplitArrowProjectile         = 46,
         LastSplitArrowShooter            = 47,
 
+        /// <summary>Player Traders (2026-10-28): on a trader, the character that placed it (sales are paid to that character's bank).
+        /// Server-only.</summary>
+        TraderOwner                      = 50710,
+
         PCAPRecordedObjectIID            = 8000,
         PCAPRecordedParentIID            = 8008
     }
