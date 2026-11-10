@@ -97,6 +97,8 @@ namespace ACE.Server.Entity
 
         public static readonly HashSet<ushort> ValleyOfDeathLandblocks =
         [
+            // Row 0x48 / 0x49 (2026-10-07): the south edge - Valley of Death's own "Death Valley Generator" spawners stand here
+            0x2848, 0x2849, 0x2949,
             // Row 0x4A
             0x284A, 0x294A, 0x2A4A, 0x2B4A, 0x2C4A, 0x2D4A, 0x2E4A, 0x2F4A, 0x304A, 0x314A, 0x324A,
             // Row 0x4B
