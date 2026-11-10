@@ -508,6 +508,9 @@ namespace ACE.Database
             {
                 var locationPointers = context.BiotaPropertiesPosition.AsNoTracking().Where(i => i.PositionType == (ushort)PositionType.Location).Select(i => i.ObjectId).ToHashSet();
 
+                // Account Vault storage pages rest out of the world (no Container, Wielder or Location) - their items point at them
+                var vaultPages = context.BiotaPropertiesInt.AsNoTracking().Where(i => i.Type == (ushort)PropertyInt.VaultPageNumber).Select(i => i.ObjectId).ToHashSet();
+
                 var results = new List<uint>();
 
                 foreach (var kvp in biotas)
@@ -517,7 +520,7 @@ namespace ACE.Database
                         continue;
 
                     // exclude objects that have either a container, wielder, or location
-                    if (containerPointers.ContainsKey(kvp.Key) || wielderPointers.ContainsKey(kvp.Key) || locationPointers.Contains(kvp.Key))
+                    if (containerPointers.ContainsKey(kvp.Key) || wielderPointers.ContainsKey(kvp.Key) || locationPointers.Contains(kvp.Key) || vaultPages.Contains(kvp.Key))
                         continue;
 
                     results.Add(kvp.Key);

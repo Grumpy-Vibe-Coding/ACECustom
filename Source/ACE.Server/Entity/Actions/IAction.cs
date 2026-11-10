@@ -491,6 +491,7 @@ namespace ACE.Server.Entity.Actions
         MonsterArchetype_SwapWeapons,       // monster archetypes: a missile + melee monster swaps bow <-> melee after the stance change
         Charm_RefreshLevels,                // charm coin ledger: a price curve change re-levels an online player's charms on their own thread
         TierRewards_PrestigeCoins,          // tier rewards: a T11+ kill's Prestige Coins handed to the top damager's own thread
+        Vault_Page,                         // Account Vault: page open / close / idle check / stray clean-up on the world queue
     }
     public static class ActionTypeConverter
     {

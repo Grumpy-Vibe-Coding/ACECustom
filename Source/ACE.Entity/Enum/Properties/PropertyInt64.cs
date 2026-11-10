@@ -118,6 +118,9 @@ namespace ACE.Entity.Enum.Properties
         /// </summary>
         DeedsQb          = 56000,
 
+        /// <summary>Account Vault (2026-10-28): on an ACCOUNT Vault Page, the account id that owns it. Server-only.</summary>
+        VaultAccount     = 50700,
+
         // Pet Bonding System (Combat Pet Devices) — [AssessmentProperty] for identify + plugin PublicUpdateProperty*
         /// <summary>Current bond XP toward next level on a PetDevice.</summary>
         [AssessmentProperty]

@@ -74,7 +74,10 @@ namespace ACE.Entity.Enum.Properties
         LastSplitArrowShooter            = 47,
 
         PCAPRecordedObjectIID            = 8000,
-        PCAPRecordedParentIID            = 8008
+        PCAPRecordedParentIID            = 8008,
+
+        /// <summary>Account Vault (2026-10-28): on an ATTUNED Vault Page, the character that owns it. Server-only.</summary>
+        VaultCharacter                   = 50701
     }
 
 }

@@ -367,6 +367,10 @@ namespace ACE.Server.WorldObjects
             // Dressing Room: an attendant offers to lock in what the player is wearing as their look.
             if (worldObject is Player dressingRoomPlayer && GetProperty(PropertyBool.DressingRoomAttendant) == true)
                 DressingRoom.HandleUse(dressingRoomPlayer, this);
+
+            // Account Vault: the storage NPC opens the player's storage index (one token per page).
+            if (worldObject is Player vaultPlayer && GetProperty(PropertyBool.VaultButler) == true)
+                VaultManager.UseQuartermaster(vaultPlayer, this);
         }
 
         public override void OnCollideObject(WorldObject target)

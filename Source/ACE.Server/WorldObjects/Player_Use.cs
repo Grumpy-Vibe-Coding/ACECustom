@@ -645,6 +645,15 @@ namespace ACE.Server.WorldObjects
 
             var item = FindObject(itemGuid, SearchLocations.MyInventory | SearchLocations.MyEquippedItems | SearchLocations.Landblock);
 
+            // Account Vault: a double-clicked page token in the open storage index opens that page (only tokens are looked up there)
+            var pageToken = item ?? FindObject(itemGuid, SearchLocations.LastUsedContainer);
+            if (VaultManager.IsPageToken(pageToken))
+            {
+                VaultManager.OnTokenTaken(this, pageToken);
+                SendUseDoneEvent();
+                return;
+            }
+
             Player otherOnlineForDiag = null;
             if (PlayerManager.GetOnlinePlayer(itemGuid) is Player op && op != this)
                 otherOnlineForDiag = op;

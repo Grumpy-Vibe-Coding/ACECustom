@@ -1004,6 +1004,10 @@ namespace ACE.Entity.Enum.Properties
         /// <summary>Blacksmithing: what the tool is for. Hone stone: the ForgeMath.ForgeLine number it hones. Dye: the colour
         /// family (ForgeDyes.Family; 0 = any).</summary>
         ForgeToolArg = 52005,
+
+        /// <summary>Account Vault (2026-10-28): on a Vault Page, its page number (account pages 1..vault_max_pages, attuned
+        /// pages 1..vault_max_attuned_pages). Server-only - not an assessment property. 50700-50703 free in every enum, branch and DB.</summary>
+        VaultPageNumber = 50702,
     }
 
     public static class PropertyIntExtensions

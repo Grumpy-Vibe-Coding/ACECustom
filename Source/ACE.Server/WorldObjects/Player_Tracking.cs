@@ -73,6 +73,10 @@ namespace ACE.Server.WorldObjects
             if (worldObject.Visibility && !Adminvision)
                 return;
 
+            // Account Vault: a strongbox, the Ledger and a summoned Quartermaster are seen by their own player only
+            if (VaultManager.HiddenFrom(this, worldObject))
+                return;
+
             if (!VariationManager.SameVariationForVisibility(
                     VariationManager.GetEffectiveVariationForVisibility(this),
                     VariationManager.GetEffectiveVariationForVisibility(worldObject)))

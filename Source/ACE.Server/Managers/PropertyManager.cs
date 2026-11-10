@@ -457,6 +457,17 @@ namespace ACE.Server.Managers
         public static ConfigProperty<bool> house_15day_account { get; private set; } = new(true, "if disabled, houses can be purchased with accounts created less than 15 days old");
         public static ConfigProperty<bool> house_30day_cooldown { get; private set; } = new(true, "if disabled, houses can be purchased without waiting 30 days between each purchase");
         public static ConfigProperty<bool> house_hook_limit { get; private set; } = new(true, "if disabled, house hook limits are ignored");
+        public static ConfigProperty<bool> vault_enabled { get; private set; } = new(true, "Account Vault: if disabled, /storage and the Quartermaster refuse, and no page opens");
+        public static ConfigProperty<bool> vault_debug_log { get; private set; } = new(false, "Account Vault: log every step of the storage move queue (testing)");
+        public static ConfigProperty<bool> vault_anywhere { get; private set; } = new(false, "Account Vault: if enabled, /storage works anywhere; otherwise a Quartermaster must be within vault_butler_range");
+        public static ConfigProperty<long> vault_max_pages { get; private set; } = new(50, "Account Vault: account pages per account (100 items each)");
+        public static ConfigProperty<long> vault_max_attuned_pages { get; private set; } = new(2, "Account Vault: attuned pages per character (100 items each)");
+        public static ConfigProperty<double> vault_open_gap_seconds { get; private set; } = new(2.0, "Account Vault: the shortest time between two page opens on one account");
+        public static ConfigProperty<double> vault_butler_range { get; private set; } = new(10.0, "Account Vault: how near (meters) a Quartermaster must be for /storage");
+        public static ConfigProperty<double> vault_sort_cooldown_minutes { get; private set; } = new(10.0, "Account Vault: the shortest time between two /storage sort runs on one account");
+        public static ConfigProperty<double> vault_idle_close_seconds { get; private set; } = new(300.0, "Account Vault: an open page with no item moved for this long closes itself");
+        public static ConfigProperty<double> vault_box_distance { get; private set; } = new(2.5, "Account Vault: how far (meters, centre to centre) a strongbox or the Ledger is set down from the player; capped at what is still in reach (about 2.8 for the Gauntlet Vault model)");
+        public static ConfigProperty<double> vault_box_angle { get; private set; } = new(45.0, "Account Vault: degrees to the player's right of straight ahead where a strongbox or the Ledger is set down (0 = straight ahead, where a summoned Quartermaster stands)");
         public static ConfigProperty<bool> house_hookgroup_limit { get; private set; } = new(true, "if disabled, house hook group limits are ignored");
         public static ConfigProperty<bool> house_per_char { get; private set; } = new(false, "if TRUE, allows 1 house per char instead of 1 house per account");
         public static ConfigProperty<bool> house_purchase_requirements { get; private set; } = new(true, "if disabled, requirements to purchase/rent house are not checked");

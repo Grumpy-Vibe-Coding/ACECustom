@@ -479,6 +479,14 @@ namespace ACE.Entity.Enum.Properties
         /// Server-only - not an assessment property.</summary>
         DeedsOff = 56001,
 
+        /// <summary>Account Vault (2026-10-28): on an NPC WEENIE, marks a Vault Butler. Using it opens the player's Account
+        /// Vault (page 1). Server-only - not an assessment property.</summary>
+        VaultButler = 50703,
+
+        /// <summary>Account Vault (2026-10-28): on a strongbox, its name (PropertyString.VaultPageLabel) was given by /storage sort, not
+        /// by the player - the next sort may change it. A strongbox the player named is left out of the sort. Server-only.</summary>
+        VaultPageAutoLabel = 50705,
+
         // -- ILT Player UI Preferences -> see PropertyInt.DamageNumberFormat (50101) --
     }
 }

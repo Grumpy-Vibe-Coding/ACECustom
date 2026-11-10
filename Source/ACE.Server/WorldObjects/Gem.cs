@@ -49,6 +49,13 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public override void ActOnUse(WorldObject activator)
         {
+            // Account Vault: the Quartermaster's Bell does exactly what /storage summon does (its checks and messages; never used up)
+            if (activator is Player bellRinger && WeenieClassId == VaultManager.QuartermasterBellWcid)
+            {
+                VaultManager.Summon(bellRinger);
+                return;
+            }
+
             // Monster Capture System - POC: Handle capture crystals
             if (activator is Player player && MonsterCapture.IsCaptureCrystal(this))
             {

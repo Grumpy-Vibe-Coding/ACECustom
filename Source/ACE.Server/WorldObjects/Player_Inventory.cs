@@ -1006,6 +1006,14 @@ namespace ACE.Server.WorldObjects
                 return false;
             }
 
+            // Account Vault: a page token in the storage index is a link - taking it opens that page; the token never moves
+            if (VaultManager.IsPageToken(item))
+            {
+                VaultManager.OnTokenTaken(this, item);
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid));
+                return false;
+            }
+
             if (!item.Guid.IsDynamic() || item is Creature || item.Stuck)
             {
                 log.WarnFormat("Player 0x{0:X8}:{1} tried to move item 0x{2:X8}:{3}.", Guid.Full, Name, item.Guid.Full, item.Name);
@@ -1028,7 +1036,7 @@ namespace ACE.Server.WorldObjects
                 return false;
             }
 
-            if (container is Corpse)
+            if (container is Corpse || container is VaultIndex)   // the storage index only lists pages - it is never saved
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, $"You cannot put {item.Name} in that.")); // Custom error message
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid));
@@ -1043,7 +1051,8 @@ namespace ACE.Server.WorldObjects
 
             if (containerRootOwner != this) // Is our target on the landscape?
             {
-                if (itemRootOwner == this && item.IsAttunedOrContainsAttuned)
+                // Account Vault: attuned items may go onto the character's own open attuned storage page, nowhere else
+                if (itemRootOwner == this && item.IsAttunedOrContainsAttuned && !(container is VaultPage attunedPage && attunedPage.AcceptsAttunedFrom(this)))
                 {
                     Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid, WeenieError.AttunedItem));
                     return false;
@@ -2694,7 +2703,7 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            if (container is Corpse)
+            if (container is Corpse || container is VaultIndex)   // the storage index only lists pages
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, $"You cannot put {stack.Name} in that.")); // Custom error message
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, stackId));
@@ -2723,7 +2732,7 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            if (stack.IsAttunedOrContainsAttuned && stackRootOwner == this && containerRootOwner != this)
+            if (stack.IsAttunedOrContainsAttuned && stackRootOwner == this && containerRootOwner != this && !(container is VaultPage attunedPage && attunedPage.AcceptsAttunedFrom(this)))
             {
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, stackId));
                 return;

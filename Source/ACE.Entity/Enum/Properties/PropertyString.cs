@@ -172,5 +172,8 @@ namespace ACE.Entity.Enum.Properties
         /// Control kills, per quest - "questname|base|fraction;..." (base = the quest's NumTimesCompleted when the fraction was
         /// saved; a fraction whose base no longer matches is stale and ignored). Cleared whenever the quest restarts. Server-only.</summary>
         KillTaskFractions = 57000,
+
+        /// <summary>Account Vault (2026-10-28): on a storage page, the name its owner gave it (/storage name 3 Bows). Server-only.</summary>
+        VaultPageLabel = 50704,
     }
 }
