@@ -8112,10 +8112,37 @@ namespace ACE.Server.Command.Handlers
             return msg;
         }
 
-        [CommandHandler("movetome", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, "Moves the last appraised object to the current player location.")]
+        [CommandHandler("movetome", AccessLevel.Admin, CommandHandlerFlag.RequiresWorld, "Moves the last appraised object, or the object with the given guid, to the current player location.", "[guid] - hex (0x8000ABCD) or decimal; found in any loaded landblock, so it can be moved from another landblock")]
         public static void HandleMoveToMe(Session session, params string[] parameters)
         {
-            var obj = CommandHandlerHelper.GetLastAppraisedObject(session);
+            // a guid finds the object in ANY loaded landblock (the appraisal lookup only searches the admin's own landblock and its
+            // neighbours): appraise a monster, teleport away, /movetome <guid>. A landblock with no player near unloads after 5 minutes
+            // and takes its objects with it. No audit line, as before: moving objects around would flood the audit channel.
+            WorldObject obj;
+            if (parameters.Length > 0 && !string.IsNullOrWhiteSpace(parameters[0]))
+            {
+                var text = parameters[0].Trim();
+                var isHex = text.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+                if (!(isHex ? uint.TryParse(text.Substring(2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var guid)
+                            : uint.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out guid)))
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"movetome: \"{text}\" is not a guid (use 0x8000ABCD or a decimal number)", ChatMessageType.Broadcast));
+                    return;
+                }
+                obj = null;
+                foreach (var lb in LandblockManager.loadedLandblocks.Values)
+                {
+                    obj = lb.GetObject(new ObjectGuid(guid), false);
+                    if (obj != null) break;
+                }
+                if (obj == null)
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"movetome: no object 0x{guid:X8} in any loaded landblock (it may have unloaded or died)", ChatMessageType.Broadcast));
+                    return;
+                }
+            }
+            else
+                obj = CommandHandlerHelper.GetLastAppraisedObject(session);
 
             if (obj == null)
                 return;

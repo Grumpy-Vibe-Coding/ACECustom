@@ -333,10 +333,11 @@ namespace ACE.Server.Managers
 
         /// <summary>
         /// Nudge (owner 2026-09-21): a placed wall or generator moved by a small step along an axis, or turned, after a
-        /// pin put it in place. dx/dy in game units (north = +y), turn in degrees (clockwise seen from above). The move is
-        /// refused when the spot would leave every indoor cell of the dungeon - a wall cannot be nudged into rock.
+        /// pin put it in place. dx/dy in game units (north = +y), turn in degrees (clockwise seen from above), dz up (+) or
+        /// down (-) (2026-11-13, the Zone Control Nudge card's Up / Down). The move is refused when the spot would leave every
+        /// indoor cell of the dungeon - a wall cannot be nudged into rock, nor up through a ceiling or down through a floor.
         /// </summary>
-        public static List<string> BuilderNudge(Player player, uint guid, float dx, float dy, float turn)
+        public static List<string> BuilderNudge(Player player, uint guid, float dx, float dy, float turn, float dz = 0f)
         {
             var lines = new List<string>();
 
@@ -362,7 +363,7 @@ namespace ACE.Server.Managers
 
             var x = row.OriginX + dx;
             var y = row.OriginY + dy;
-            var z = row.OriginZ;
+            var z = row.OriginZ + dz;
 
             // Which indoor cell the new spot is in: the same one first, then any cell of the dungeon at this height.
             var dat = BuilderDatCells(landblock);
@@ -375,7 +376,7 @@ namespace ACE.Server.Managers
 
             if (cell == 0)
             {
-                lines.Add($"That step would put 0x{guid:X8} outside every cell of the dungeon ({x:0.##}, {y:0.##}). Nothing moved.");
+                lines.Add($"That step would put 0x{guid:X8} outside every cell of the dungeon ({x:0.##}, {y:0.##}, {z:0.##}). Nothing moved.");
                 return lines;
             }
 
@@ -391,8 +392,64 @@ namespace ACE.Server.Managers
             DatabaseManager.World.GetCachedWeenie(row.WeenieClassId)?.PropertiesString?.TryGetValue(PropertyString.Name, out name);
             lines.Add($"{name ?? row.WeenieClassId.ToString(CultureInfo.InvariantCulture)} 0x{guid:X8} nudged"
                 + (Math.Abs(dx) > 0.001f || Math.Abs(dy) > 0.001f ? $" by {dx:0.##} east, {dy:0.##} north" : "")
-                + (Math.Abs(turn) > 0.01f ? $" and turned {turn:0.#} degrees" : "") + $" - now at [{x:0.##} {y:0.##}] in cell 0x{cell & 0xFFFF:X4}.");
+                + (Math.Abs(dz) > 0.001f ? $" {(dz > 0 ? "up" : "down")} {Math.Abs(dz):0.##}" : "")
+                + (Math.Abs(turn) > 0.01f ? $" and turned {turn:0.#} degrees" : "") + $" - now at [{x:0.##} {y:0.##} {z:0.##}] in cell 0x{cell & 0xFFFF:X4}.");
             return lines;
+        }
+
+        /// <summary>
+        /// Remove (2026-11-13, the Zone Control Nudge card): checks that guid is a wall or generator PLACED IN THIS DUNGEON - the
+        /// dungeon worked on, at v3 or up, its landblock and variation - with no linked children, and hands back its row and
+        /// its live object (null when the landblock is not loaded). The delete itself is /removeinst's own path
+        /// (ZoneControlCommands). Exact by guid: /removeinst &lt;wcid&gt; takes the NEAREST of that weenie, which with 33 walls
+        /// of one weenie in a dungeon can be the wrong one. False (said in lines) when it may not be removed.
+        /// </summary>
+        public static bool BuilderRemoveTarget(Player player, uint guid, List<string> lines, out LandblockInstance row, out WorldObject live)
+        {
+            row = null;
+            live = null;
+
+            if (!BuilderResolve(player, out var sourceWcid, out var rooms, out var variation, out var error, forWrite: true))
+            {
+                lines.Add(error);
+                return false;
+            }
+
+            if (!BuilderMayWrite(variation, lines))
+                return false;
+
+            int links;
+            using (var context = new WorldDbContext())
+            {
+                row = context.LandblockInstance.FirstOrDefault(i => i.Guid == guid);
+                links = context.LandblockInstanceLink.Count(l => l.ParentGuid == guid);
+            }
+
+            var landblock = rooms[0].LandingCell >> 16;
+            if (row == null || row.ObjCellId >> 16 != landblock || VariationManager.NormalizeBase(row.VariationId) != VariationManager.NormalizeBase(variation))
+            {
+                lines.Add($"0x{guid:X8} is not a placed object of this dungeon (0x{landblock:X4} v:{variation ?? 0}). Nothing removed.");
+                return false;
+            }
+
+            // Only what the builder places: a wall (door) or a generator - never the dungeon's portal, plate or anything else.
+            var weenie = DatabaseManager.World.GetCachedWeenie(row.WeenieClassId);
+            var isGenerator = weenie?.PropertiesGenerator != null && weenie.PropertiesGenerator.Count > 0;
+            var isDoor = weenie?.WeenieType == WeenieType.Door;
+            if (row.WeenieClassId == sourceWcid || (!isGenerator && !isDoor))
+            {
+                lines.Add($"0x{guid:X8} ({row.WeenieClassId}) is not a wall or a generator - only those are removed here. Nothing removed.");
+                return false;
+            }
+
+            if (links > 0)
+            {
+                lines.Add($"0x{guid:X8} has {links} linked object(s). Appraise it and use /removeinst, which asks first. Nothing removed.");
+                return false;
+            }
+
+            live = BuilderLiveObject(guid, row.ObjCellId, variation);
+            return true;
         }
 
         /// <summary>The landblock a source's rooms are on, 0 when it has no parsed list.</summary>

@@ -56,14 +56,14 @@ namespace ACE.Server.Command.Handlers
             // fresh map lines after its reply (owner 2026-09-21: the plugin used to wait 0.7 s and ask - the delay you
             // felt on every click). The plugin reads whatever map lines arrive, asked for or not.
             var mapChanges = verb == "add" || verb == "remove" || verb == "land" || verb == "cell" || verb == "place"
-                || verb == "monster" || verb == "select" || verb == "nudge";
+                || verb == "monster" || verb == "select" || verb == "nudge" || verb == "removeobj";
 
             // Verbs that write the world database or change who gets a room are Admin-only (review 2026-09-24): /zonecontrol
             // itself is Developer, and Room Assign's staff rule is Admin, so a Developer building would count as a player.
             // goto and entrance too: a teleport into any chamber with no claim is a staff tool.
             var adminVerb = verb == "goto" || verb == "entrance"
                 || verb == "add" || verb == "remove" || verb == "land" || verb == "cell" || verb == "place"
-                || verb == "monster" || verb == "nudge" || verb == "zoneshare" || verb == "bounty" || verb == "killreward"
+                || verb == "monster" || verb == "nudge" || verb == "removeobj" || verb == "zoneshare" || verb == "bounty" || verb == "killreward"
                 || verb == "admin" || verb == "fill" || verb == "clear" || verb == "markers" || (verb == "doors" && arg == "show");
             if (adminVerb && session.AccessLevel < ACE.Entity.Enum.AccessLevel.Admin)
             {
@@ -186,7 +186,7 @@ namespace ACE.Server.Command.Handlers
                             || !float.IsFinite(nudgeX) || !float.IsFinite(nudgeY)
                             || Math.Abs(nudgeX) > MaxNudgeMeters || Math.Abs(nudgeY) > MaxNudgeMeters)
                         {
-                            Msg($"/zonecontrol dungeon nudge <guid> <east> <north> [turn degrees] - move a placed wall or generator a little (at most {MaxNudgeMeters} m each way).");
+                            Msg($"/zonecontrol dungeon nudge <guid> <east> <north> [turn degrees] [up] - move a placed wall or generator a little (at most {MaxNudgeMeters} m each way; up < 0 = down).");
                             break;
                         }
 
@@ -198,7 +198,48 @@ namespace ACE.Server.Command.Handlers
                         }
                         nudgeTurn = Math.Clamp(nudgeTurn, -360f, 360f);
 
-                        All(RoomAssignManager.BuilderNudge(player, nudgeGuid, nudgeX, nudgeY, nudgeTurn));
+                        // Up / Down (2026-11-13, the Zone Control Nudge card): an optional height step, the same bounds as the others
+                        var nudgeUp = 0f;
+                        if (args.Count > 6 && (!float.TryParse(args[6], NumberStyles.Float, CultureInfo.InvariantCulture, out nudgeUp) || !float.IsFinite(nudgeUp) || Math.Abs(nudgeUp) > MaxNudgeMeters))
+                        {
+                            Msg($"The up step must be a number of metres, -{MaxNudgeMeters} to {MaxNudgeMeters} (below 0 = down).");
+                            break;
+                        }
+
+                        All(RoomAssignManager.BuilderNudge(player, nudgeGuid, nudgeX, nudgeY, nudgeTurn, nudgeUp));
+                        break;
+
+                    case "removeobj":
+                        // removeobj <guid hex> (2026-11-13, the Zone Control Nudge card's Remove): a placed wall or generator of this
+                        // dungeon, by its exact guid - /removeinst <wcid> takes the NEAREST of a weenie, the wrong wall when a dungeon
+                        // has many of one. Deleted through /removeinst's own path (row, live object, cache, audit line).
+                        if (!uint.TryParse((Arg(2) ?? "").Replace("0x", "").Replace("0X", ""), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var removeGuid))
+                        {
+                            Msg("/zonecontrol dungeon removeobj <guid> - remove a placed wall or generator of this dungeon (the Nudge card's Remove).");
+                            break;
+                        }
+
+                        var removeLines = new List<string>();
+                        if (!RoomAssignManager.BuilderRemoveTarget(player, removeGuid, removeLines, out var removeRow, out var removeLive))
+                        {
+                            All(removeLines);
+                            break;
+                        }
+
+                        if (removeLive != null)
+                            Processors.DeveloperContentCommands.RemoveInstanceWorldObject(session, removeLive, true, () => { });
+                        else
+                        {
+                            // not loaded: the row alone (it would come back on the next load otherwise)
+                            if (Processors.DeveloperContentCommands.DeleteInstanceFromWorldDatabase(removeRow))
+                            {
+                                ACE.Database.DatabaseManager.World.ClearCachedInstancesByLandblock((ushort)(removeRow.ObjCellId >> 16), removeRow.VariationId);
+                                Msg($"Removed {removeRow.WeenieClassId} (0x{removeGuid:X8}) from landblock instances (its landblock is not loaded).");
+                                PlayerManager.BroadcastToAuditChannel(player, $"{player.Name} has removed [WeenieID]: {removeRow.WeenieClassId} [GUID]: (0x{removeGuid:X8}) from landblock instances");
+                            }
+                            else
+                                Msg($"DB DELETE FAILED for 0x{removeGuid:X8} - see the server log.");
+                        }
                         break;
 
                     case "monster":
