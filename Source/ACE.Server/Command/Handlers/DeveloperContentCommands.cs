@@ -2396,7 +2396,8 @@ namespace ACE.Server.Command.Handlers.Processors
             RemoveInstanceWorldObject(session, wo, confirmed, () => RemoveInstanceByWcid(session, wcid, true));
         }
 
-        private static void RemoveInstanceWorldObject(Session session, WorldObject wo, bool confirmed, Action reconfirm)
+        // internal (2026-11-13): /zonecontrol dungeon removeobj <guid> deletes through this same path
+        internal static void RemoveInstanceWorldObject(Session session, WorldObject wo, bool confirmed, Action reconfirm)
         {
             if (wo.Location == null)
             {
