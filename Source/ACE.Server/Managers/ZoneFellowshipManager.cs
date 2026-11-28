@@ -597,6 +597,135 @@ namespace ACE.Server.Managers
                     : new List<(uint, string, int, double)>();
         }
 
+        /// <summary>One member of an area fellowship as anti-leech sees them right now (<see cref="LeechView"/>).</summary>
+        public sealed class LeechRow
+        {
+            public uint Guid;
+            public string Name;
+            public double Damage;       // over the area's window, inside the area
+            public double Pct;          // of an even share of the fellowship's damage (total / members)
+            public bool InArea;         // false = in the 2-minute grace outside the area: no share of others' kills anyway
+            public bool Cut;            // anti-leech would cut them from a fellow's kill now
+            public int Cuts;            // times cut since the server started or the counts were cleared
+            public double LastCutAgo;   // seconds, -1 = never
+        }
+
+        /// <summary>An area fellowship held now and its members (<see cref="LeechView"/>).</summary>
+        public sealed class LeechAreaView
+        {
+            public Area Area;
+            public double Total;
+            public List<LeechRow> Rows = new();
+        }
+
+        /// <summary>
+        /// The live leecher table (owner 2026-11-28 "something that will show leechers, in Zone Control and just as a dev command"):
+        /// every area fellowship held now with each member's damage over the area's window, as DropLeeches judges a kill - the % of
+        /// an even share, cut or not - and their cut count. Cut first, then lowest share. <paramref name="areaName"/> = one area.
+        /// </summary>
+        public static List<LeechAreaView> LeechView(string areaName = null)
+        {
+            var held = new List<(string Key, Fellowship Fellowship)>();
+            lock (_lock)
+                foreach (var kv in _fellowships)
+                    held.Add((kv.Key, kv.Value));
+
+            var want = string.IsNullOrWhiteSpace(areaName) ? null : KeyOf(areaName);
+            var now = Time.GetUnixTime();
+            var views = new List<LeechAreaView>();
+            foreach (var (key, fellowship) in held)
+            {
+                if (want != null && key != want) continue;
+                var area = AreaByKey(key);
+                if (area == null) continue;
+
+                // the members DropLeeches counts: online, still in this fellowship (read only - no drop-list processing here)
+                var members = new List<Player>();
+                foreach (var kv in fellowship.FellowshipMembers)
+                    if (kv.Value.TryGetTarget(out var p) && p?.Session?.Player != null && p.Fellowship == fellowship)
+                        members.Add(p);
+                if (members.Count == 0) continue;
+
+                Dictionary<uint, (string Name, int Cuts, double Last)> cuts = null;
+                lock (_lock)
+                    if (_cuts.TryGetValue(key, out var byGuid)) cuts = new(byGuid);
+
+                var view = new LeechAreaView { Area = area };
+                foreach (var m in members)
+                {
+                    var d = RollingDamage(m, area.LeechWindowMinutes, key);
+                    view.Total += d;
+                    var c = cuts != null && cuts.TryGetValue(m.Guid.Full, out var cc) ? cc : default;
+                    view.Rows.Add(new LeechRow
+                    {
+                        Guid = m.Guid.Full, Name = m.Name, Damage = d, InArea = m.AutoFellowAreaKey == key,
+                        Cuts = c.Cuts, LastCutAgo = c.Cuts > 0 ? now - c.Last : -1,
+                    });
+                }
+                var evenShare = view.Total / view.Rows.Count;
+                foreach (var r in view.Rows)
+                {
+                    r.Pct = evenShare > 0 ? r.Damage * 100.0 / evenShare : 0;
+                    // DropLeeches: only with anti-leech on, some damage done and two or more sharing
+                    r.Cut = area.AntiLeech && view.Total > 0 && view.Rows.Count >= 2 && r.Pct < area.LeechPercent;
+                }
+                view.Rows = view.Rows.OrderByDescending(r => r.Cut).ThenBy(r => r.Pct).ThenBy(r => r.Name).ToList();
+                views.Add(view);
+            }
+            return views.OrderBy(v => v.Area.Name).ToList();
+        }
+
+        /// <summary>The <see cref="LeechView"/> as chat lines (/leechers).</summary>
+        public static List<string> LeechLines(string areaName = null)
+        {
+            var lines = new List<string>();
+            var views = LeechView(areaName);
+            if (views.Count == 0)
+            {
+                lines.Add(string.IsNullOrWhiteSpace(areaName) ? "Nobody is in an Auto Fellow area fellowship right now." : $"Nobody is in the '{areaName}' area fellowship right now (/zonecontrol afarea list).");
+                return lines;
+            }
+            foreach (var v in views)
+            {
+                var a = v.Area;
+                var cut = v.Rows.Count(r => r.Cut);
+                lines.Add($"{a.Name}: {v.Rows.Count} in the fellowship, anti-leech {(a.AntiLeech ? $"ON ({a.LeechPercent:0.#}% of an even share over {a.LeechWindowMinutes} min)" : "off")}"
+                    + (a.AntiLeech ? $" - {cut} cut now" : ""));
+                foreach (var r in v.Rows)
+                {
+                    var status = !r.InArea ? "OUT " : r.Cut ? "CUT " : "ok  ";
+                    lines.Add($"  {status} {r.Name}: {r.Pct:0.0}% ({r.Damage:N0} dmg)"
+                        + (r.Cuts > 0 ? $", cut x{r.Cuts:N0}, last {Ago(r.LastCutAgo)}" : ""));
+                }
+            }
+            lines.Add("OUT = outside the area (no share of others' kills).  x = times cut since the server started or Clear Counts.");
+            return lines;
+        }
+
+        /// <summary>
+        /// [[ZCLEECH]]area~antiLeech(1|0)~pct~window~total~guid:name:damage:pct:inArea:cut:cuts:lastAgo;...|...  (lastAgo -1 = never).
+        /// Its own tag (2026-11-28) so the [[ZCAF]] line stays as it is. Rows come cut first, then lowest share.
+        /// </summary>
+        public static string LeechWire()
+        {
+            var sb = new StringBuilder("[[ZCLEECH]]");
+            var first = true;
+            foreach (var v in LeechView())
+            {
+                if (!first) sb.Append('|');
+                first = false;
+                var a = v.Area;
+                sb.Append(Clean(a.Name)).Append('~').Append(a.AntiLeech ? 1 : 0)
+                  .Append('~').Append(a.LeechPercent.ToString("0.##", CultureInfo.InvariantCulture))
+                  .Append('~').Append(a.LeechWindowMinutes)
+                  .Append('~').Append(((long)v.Total).ToString(CultureInfo.InvariantCulture))
+                  .Append('~').Append(string.Join(";", v.Rows.Select(r => string.Join(":",
+                      r.Guid, Clean(r.Name), ((long)r.Damage).ToString(CultureInfo.InvariantCulture), r.Pct.ToString("0.0", CultureInfo.InvariantCulture),
+                      r.InArea ? 1 : 0, r.Cut ? 1 : 0, r.Cuts, (long)r.LastCutAgo))));
+            }
+            return sb.ToString();
+        }
+
         // ------------------------------------------------------------------------------------------------------------------
         // The panel's line and the admin commands (/zonecontrol afarea ...)
         // ------------------------------------------------------------------------------------------------------------------

@@ -160,6 +160,20 @@ namespace ACE.Server.Command.Handlers
                 HandleZoneControlCore(session, parameters);
         }
 
+        /// <summary>
+        /// /leechers [area] (owner 2026-11-28 "something that will show leechers, in Zone Control and just as a dev command"): every
+        /// Auto Fellow area fellowship member now - their % of an even share of the fellowship's damage, CUT / ok / OUT, times cut.
+        /// Zone Control's Leechers view shows the same table (/zonecontrol leechers).
+        /// </summary>
+        [CommandHandler("leechers", AccessLevel.Developer, CommandHandlerFlag.None, 0,
+            "Auto Fellow leechers now: each area fellowship member's share of the damage, cut or not, and times cut.", "[area name]")]
+        public static void HandleLeechers(Session session, params string[] parameters)
+        {
+            var area = parameters == null || parameters.Length == 0 ? null : string.Join(" ", parameters).Trim().Trim('"');
+            foreach (var line in ZoneFellowshipManager.LeechLines(area))
+                CommandHandlerHelper.WriteOutputInfo(session, line, ChatMessageType.Broadcast);
+        }
+
         private static void HandleZoneControlCore(Session session, params string[] parameters)
         {
             void Msg(string s) => ChatPacket.SendServerMessage(session, s, ChatMessageType.Broadcast);
@@ -306,6 +320,11 @@ namespace ACE.Server.Command.Handlers
                             SendChunked(session, ZoneFellowshipManager.AreasWire());
                         return;
                     }
+
+                    case "leechers":
+                        // the Zone Control Leechers view (2026-11-28): the live /leechers table as one line, no chat
+                        SendChunked(session, ZoneFellowshipManager.LeechWire());
+                        return;
 
                     case "arealist":
                     {

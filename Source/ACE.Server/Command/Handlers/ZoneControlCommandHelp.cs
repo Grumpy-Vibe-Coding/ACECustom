@@ -50,6 +50,7 @@ namespace ACE.Server.Command.Handlers
             E("Zones", "/zonecontrol here", "", "Which zone governs where you stand, and at what variation."),
             E("Zones", "/zonecontrol show", "<name> [--wcid <id>]", "Print a zone's authored stats (or one monster's merged view)."),
             E("Zones", "/zonecontrol reload", "", "Re-read the whole Zone Control store from the shard DB."),
+            E("Zones", "/leechers", "[area name]", "Auto Fellow leechers now: every area fellowship member's % of an even share of damage, CUT / ok / OUT, and times cut."),
 
             // ── Sync / plugin plumbing ─────────────────────────────────────────
             E("Plugin Sync", "/zonecontrol get", "[<name>] [--wcid <id>]", "One-shot [[ZC]] sync of a zone (bare get = session state only)."),
@@ -59,6 +60,7 @@ namespace ACE.Server.Command.Handlers
             E("Plugin Sync", "/zonecontrol propsof", "<wcid> <i|f|b|l>:<id>,...", "A weenie's own values for a list of properties (the Props tab's hints)."),
             E("Plugin Sync", "/zonecontrol selinfo", "", "What you have selected in game (wcid, name, creature or not)."),
             E("Plugin Sync", "/zonecontrol findmob", "<text or wcid>", "Search creature weenies by name or id."),
+            E("Plugin Sync", "/zonecontrol leechers", "", "The Leechers view's [[ZCLEECH]] line: the live /leechers table for every area fellowship."),
             E("Plugin Sync", "/zonecontrol help", "[--wire | <stat> | <text>]", "This list. <stat> = what that stat does, how to set it and undo it; <text> filters the list; --wire feeds the Chat Commands tab."),
 
             // ── Stats + ranks ─────────────────────────────────────────────────
